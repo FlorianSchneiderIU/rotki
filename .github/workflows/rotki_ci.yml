@@ -313,9 +313,6 @@ jobs:
     runs-on: self-hosted
     # only after the always-running jobs; don't depend on conditional jobs
     needs: [ 'check-changes', 'check-typos' ]
-    if: ${{ github.event_name == 'push'
-            && needs.check-changes.result == 'success'
-            && needs.check-typos.result == 'success' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
