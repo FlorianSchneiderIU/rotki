@@ -311,6 +311,9 @@ jobs:
   build-docker:
     name: 'Deploy latest container on runner'
     runs-on: self-hosted
+    # Wait for everything else, then run only on push if all succeeded
+    needs: [ 'check-changes', 'lint-frontend', 'unittest-frontend', 'docs', 'lint-colibri', 'lint-backend', 'test-backend', 'test-e2e', 'code-analyze-frontend', 'code-analyze-backend' ]
+    if: ${{ github.event_name == 'push' && success() }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -324,25 +327,21 @@ jobs:
       - name: Replace running container
         env:
           CONTAINER_NAME: rotki
-          HOST_PORT: "8080"     # change if needed
-          APP_PORT: "8080"      # internal port exposed by your app
+          HOST_PORT: "8084"     # change if needed
+          APP_PORT: "80"      # internal port exposed by your app
         run: |
-          # Stop & remove old container if present
           docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && \
             docker rm -f "${CONTAINER_NAME}" || true
 
-          # Run updated container, keep it alive across reboots
           docker run -d \
             --name "${CONTAINER_NAME}" \
             --restart unless-stopped \
             -p ${HOST_PORT}:${APP_PORT} \
             rotki:latest
-
-
   done:
     name: 'Success check'
     if: ${{ always() }}
-    needs: [ 'check-changes', 'lint-frontend', 'unittest-frontend', 'docs', 'lint-colibri', 'lint-backend', 'test-backend', 'test-e2e' ]
+    needs: [ 'check-changes', 'lint-frontend', 'unittest-frontend', 'docs', 'lint-colibri', 'lint-backend', 'test-backend', 'test-e2e', 'build-docker' ]
     runs-on: ubuntu-latest
     steps:
       - name: Check if any task failed
