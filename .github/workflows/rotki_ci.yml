@@ -308,6 +308,37 @@ jobs:
       contents: read
       actions: write
 
+  build-docker:
+    name: 'Deploy latest container on runner'
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Build image (tag as latest)
+        run: |
+          docker build --pull --no-cache -t rotki:latest .
+
+      - name: Replace running container
+        env:
+          CONTAINER_NAME: rotki
+          HOST_PORT: "8080"     # change if needed
+          APP_PORT: "8080"      # internal port exposed by your app
+        run: |
+          # Stop & remove old container if present
+          docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && \
+            docker rm -f "${CONTAINER_NAME}" || true
+
+          # Run updated container, keep it alive across reboots
+          docker run -d \
+            --name "${CONTAINER_NAME}" \
+            --restart unless-stopped \
+            -p ${HOST_PORT}:${APP_PORT} \
+            rotki:latest
+
+
   done:
     name: 'Success check'
     if: ${{ always() }}
