@@ -123,7 +123,7 @@ class ExternalService(SerializableEnumNameMixin):
         return BLOCKSCOUT_TO_CHAINID.get(self)
 
     def premium_only(self) -> bool:
-        return self == ExternalService.GNOSIS_PAY
+        return False  # All services available to all users
 
 
 class ExternalServiceApiCredentials(NamedTuple):

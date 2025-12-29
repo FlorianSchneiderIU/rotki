@@ -17,7 +17,7 @@ export function useEthStakingAccess(): UseEthStakingAccessReturn {
 
   const { isFeatureAllowed } = usePremiumHelper();
 
-  const allowed = isFeatureAllowed(PremiumFeature.ETH_STAKING_VIEW);
+  const allowed = ref<boolean>(true); // All users can now access ETH staking view
 
   const enabled = isModuleEnabled(module);
 

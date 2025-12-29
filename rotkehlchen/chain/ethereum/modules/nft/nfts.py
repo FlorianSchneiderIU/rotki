@@ -123,19 +123,7 @@ class Nfts(EthereumModule, CacheableMixIn, LockableQueryMixIn):
             nfts = self.opensea.get_account_nfts(address)
             nfts_num = len(nfts)
             if nfts_num != 0:
-                if self.premium is None:
-                    if nfts_num + total_nfts_num > FREE_NFT_LIMIT:
-                        remaining_size = FREE_NFT_LIMIT - total_nfts_num
-                    else:
-                        remaining_size = nfts_num
-
-                    if remaining_size != 0:
-                        result[address] = nfts[:remaining_size]
-                        total_nfts_num += remaining_size
-                        continue
-
-                    break  # else we hit the nft limit so break
-
+                # All users now have unlimited NFT access
                 result[address] = nfts
                 total_nfts_num += nfts_num
         return result, total_nfts_num

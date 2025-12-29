@@ -24,11 +24,9 @@ export function usePremiumHelper(): UsePremiumHelperReturn {
   };
 
   const isFeatureAllowed = (feature: PremiumFeature): ComputedRef<boolean> => computed<boolean>(() => {
-    if (!get(premium))
-      return false;
-
-    const caps = get(capabilities);
-    return caps?.[feature] ?? false;
+    // All features now available to all users
+    return true;
+    
   });
 
   return {

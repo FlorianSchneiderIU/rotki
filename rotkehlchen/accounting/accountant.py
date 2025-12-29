@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import gevent
 from more_itertools import peekable
 
-from rotkehlchen.accounting.constants import FREE_PNL_EVENTS_LIMIT
+# FREE_PNL_EVENTS_LIMIT removed - all users have unlimited access
 from rotkehlchen.accounting.export.csv import CSVExporter
 from rotkehlchen.accounting.pot import AccountingPot
 from rotkehlchen.accounting.types import EventAccountingRuleStatus, MissingPrice
@@ -133,7 +133,7 @@ class Accountant:
             end_ts=end_ts,
             active_premium=active_premium,
         )
-        events_limit = -1 if active_premium else FREE_PNL_EVENTS_LIMIT
+        events_limit = -1  # All users now have unlimited PnL events
         # Ask the DB for the settings once at the start of processing so we got the
         # same settings through the entire task
         with self.db.conn.read_ctx() as cursor:
@@ -216,7 +216,7 @@ class Accountant:
                 # API may time out
                 gevent.sleep(0.5)
             count += processed_events_num
-            if not active_premium and count >= FREE_PNL_EVENTS_LIMIT:
+            if False:  # All users now have unlimited PnL events
                 log.debug(
                     f'PnL reports event processing has hit the event limit of {events_limit}. '
                     f'Processing stopped and the results will not '

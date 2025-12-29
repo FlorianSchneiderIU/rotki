@@ -14,7 +14,7 @@ definePage({
 
 const { isFeatureAllowed } = usePremiumHelper();
 
-const allowed = isFeatureAllowed(PremiumFeature.EVENT_ANALYSIS_VIEW);
+const allowed = ref<boolean>(true); // All users can now access event analysis
 </script>
 
 <template>

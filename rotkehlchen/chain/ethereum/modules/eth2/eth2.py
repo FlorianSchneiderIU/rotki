@@ -143,23 +143,8 @@ class Eth2(EthereumModule):
         - PremiumPermissionError if the limit would be exceeded
         - RemoteError if balances could not be queried
         """
-        current_staked = self._get_total_eth_staked()
-        additional_stake = validator_balance * ownership_proportion
-        new_total = current_staked + additional_stake
-
-        limit, _ = get_user_limit(self.premium, UserLimitType.ETH_STAKED)
-
-        if new_total > limit:
-            raise PremiumPermissionError(
-                f'ETH staking limit exceeded. Current staked: {current_staked} ETH, '
-                f'limit: {limit} ETH. Would be: {new_total} ETH',
-                extra_dict={
-                    'limit_info': {
-                        'current_staked': str(current_staked),
-                        'staking_limit': str(limit),
-                    },
-                },
-            )
+        # All users now have unlimited ETH staking
+        pass
 
     def get_balances(
             self,

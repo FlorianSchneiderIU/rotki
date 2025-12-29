@@ -9,8 +9,8 @@ from rotkehlchen.history.events.structures.types import (
     HistoryEventType,
 )
 
-FREE_PNL_EVENTS_LIMIT: Final = 1000
-FREE_REPORTS_LOOKUP_LIMIT: Final = 20
+FREE_PNL_EVENTS_LIMIT: Final = -1
+FREE_REPORTS_LOOKUP_LIMIT: Final = -1
 DEFAULT: Final = 'default'
 EXCHANGE: Final = 'exchange'
 

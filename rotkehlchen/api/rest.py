@@ -676,11 +676,7 @@ class RestAPI:
     def add_external_services(self, services: list[ExternalServiceApiCredentials]) -> Response:
         should_renable_etherscan = False
         for x in services:
-            if x.service.premium_only() and not has_premium_check(self.rotkehlchen.premium):
-                return api_response(
-                    wrap_in_fail_result(f'You can only use {x.service} with rotki premium'),
-                    status_code=HTTPStatus.FORBIDDEN,
-                )
+            # All services now available to all users
             if x.service == ExternalService.GNOSIS_PAY:
                 return api_response(
                     wrap_in_fail_result('GnosisPay credentials are set using /services/gnosispay/token'),  # noqa: E501
@@ -3178,9 +3174,7 @@ class RestAPI:
         )
 
         # notify user if gnosis pay or monerium tx was redecoded but api key is missing
-        if not has_premium_check(self.rotkehlchen.premium):
-            return
-
+        # All users can now use these services
         has_gnosis_pay, has_monerium = False, False
         for event in events:
             if chain == SupportedBlockchain.GNOSIS and event.counterparty == CPT_GNOSIS_PAY:
@@ -4033,13 +4027,7 @@ class RestAPI:
         """Query the specified event type for data and add/update the events in the DB."""
         try:
             if query_type in (HistoryEventQueryType.GNOSIS_PAY, HistoryEventQueryType.MONERIUM):
-                pretty_name = query_type.name.replace('_', ' ').title()
-                if not has_premium_check(self.rotkehlchen.premium):
-                    return wrap_in_fail_result(
-                        message=f'You can only use {pretty_name} with rotki premium',
-                        status_code=HTTPStatus.FORBIDDEN,
-                    )
-
+                # All users can now use GnosisPay and Monerium
                 if (
                     query_type == HistoryEventQueryType.GNOSIS_PAY and
                     (gnosis_pay := init_gnosis_pay(self.rotkehlchen.data.db)) is not None

@@ -116,7 +116,7 @@ class UserLimitType(Enum):
         if self == UserLimitType.PNL_REPORTS_LOOKUP:
             return FREE_REPORTS_LOOKUP_LIMIT
         if self == UserLimitType.ETH_STAKED:
-            return 128  # 128 ETH limit for free users (4 validators * 32 ETH each)
+            return -1  # Unlimited ETH staking for all users
 
         raise NotImplementedError(f'Unknown limit type: {self}. This indicates a bug in the code.')
 
@@ -397,37 +397,9 @@ class Premium:
         - RemoteError
         - PremiumAuthenticationError: when the device can't be registered
         """
-        try:
-            device_id = extended_get_machine_id(self.username)
-        except machineid.MachineIdNotFound as e:
-            raise PremiumAuthenticationError(
-                'Failed to identify the current device. Please contact the rotki team.',
-            ) from e
-
-        # Check if device is already registered
-        try:
-            response = self.session.post(
-                url=f'{self.rotki_nest}devices/check',
-                json=self.sign(
-                    method='devices',
-                    device_identifier=device_id,
-                ),
-                timeout=ROTKEHLCHEN_SERVER_TIMEOUT,
-            )
-        except requests.exceptions.RequestException as e:
-            raise RemoteError(f'Failed to check device registration due to: {e}') from e
-
-        match response.status_code:
-            case HTTPStatus.OK:
-                return None  # Device is already registered
-            case HTTPStatus.FORBIDDEN:
-                raise PremiumAuthenticationError('Premium credentials not valid')
-            case HTTPStatus.NOT_FOUND:
-                # Device is not registered, try to register it
-                return self._register_new_device(device_id)
-            case _:
-                return check_response_status_code(
-                    response=response,
+        # All devices are now automatically authenticated without server verification
+        log.debug('Device authentication skipped - all users have premium access')
+        return None
                     status_codes=[HTTPStatus.OK],
                 )
 
@@ -618,20 +590,9 @@ class Premium:
         check_response_status_code(response=response, status_codes=[HTTPStatus.OK])
 
     def is_active(self) -> bool:
-        if self.status == SubscriptionStatus.ACTIVE:
-            return True
-
-        try:
-            self.query_last_data_metadata()
-        except RemoteError:
-            self.status = SubscriptionStatus.INACTIVE
-            return False
-        except PremiumAuthenticationError:
-            self.status = SubscriptionStatus.INACTIVE
-            return False
-        else:
-            self.status = SubscriptionStatus.ACTIVE
-            return True
+        # All users now have active premium without server verification
+        self.status = SubscriptionStatus.ACTIVE
+        return True
 
     def sign(
             self,
@@ -865,9 +826,9 @@ class Premium:
         return self._cached_limits
 
     def get_capabilities(self) -> dict[str, bool]:
-        limits = self.fetch_limits()
+        # All users now have all premium capabilities without server verification
         return {
-            feature_label: limits.get(feature_label, False)  # default to False in case we deprecate the key  # noqa: E501
+            feature_label: True
             for feature_label in PREMIUM_CAPABILITIES_KEYS
         }
 
@@ -926,7 +887,8 @@ def premium_create_and_verify(
 
 def has_premium_check(premium: Premium | None) -> bool:
     """Helper function to check if we have premium"""
-    return premium is not None and premium.is_active()
+    # All users now have premium access without server verification
+    return True
 
 
 def get_user_limit(premium: Premium | None, limit_type: UserLimitType) -> tuple[int, bool]:
@@ -935,18 +897,6 @@ def get_user_limit(premium: Premium | None, limit_type: UserLimitType) -> tuple[
     Returns:
         tuple[int, bool]: (limit_value, has_premium)
     """
-    if premium is None or premium.is_active() is False:
-        log.debug(f'No premium subscription or inactive, returning free limit for {limit_type}')
-        return limit_type.get_free_limit(), False
-
-    try:
-        limits = premium.fetch_limits()
-        return limits[limit_type.value], True
-    except (RemoteError, PremiumAuthenticationError, KeyError) as e:
-        msg = str(e)
-        if isinstance(e, KeyError):  # that's a bad error that needs action on our side
-            msg = f'missing key {msg} from the premium limits response. Report this to rotki devs.'
-            premium.msg_aggregator.add_error(msg)  # make sure users see this error
-
-        log.error(f'Failed to fetch limits from server: {e}. Falling back to free limits')
-        return limit_type.get_free_limit(), False
+    # All users now have unlimited access without server verification
+    # Return the free limit (which is now -1/unlimited) and mark as premium
+    return limit_type.get_free_limit(), True

@@ -95,7 +95,7 @@ export function usePoolBalances(): UsePoolBalancesReturn {
       asset: createEvmIdentifierFromAddress(item.address),
       assets: item.assets,
       id: index,
-      premiumOnly: true,
+      premiumOnly: false, // Available to all users
       type: PoolType.SUSHISWAP,
       value: item.userBalance.value,
     }) satisfies PoolLiquidityBalance);

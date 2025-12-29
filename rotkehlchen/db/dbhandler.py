@@ -3725,12 +3725,9 @@ class DBHandler:
     ) -> list[UserNote]:
         """Returns all the notes created by a user filtered by the given filter"""
         query, bindings = filter_query.prepare()
-        if has_premium:
-            query = 'SELECT identifier, title, content, location, last_update_timestamp, is_pinned FROM user_notes ' + query  # noqa: E501
-            cursor.execute(query, bindings)
-        else:
-            query = 'SELECT identifier, title, content, location, last_update_timestamp, is_pinned FROM (SELECT identifier, title, content, location, last_update_timestamp, is_pinned from user_notes ORDER BY last_update_timestamp DESC LIMIT ?) ' + query  # noqa: E501
-            cursor.execute(query, [FREE_USER_NOTES_LIMIT] + bindings)
+        # All users now have unlimited user notes
+        query = 'SELECT identifier, title, content, location, last_update_timestamp, is_pinned FROM user_notes ' + query  # noqa: E501
+        cursor.execute(query, bindings)
 
         return [UserNote.deserialize_from_db(entry) for entry in cursor]
 
@@ -3762,19 +3759,7 @@ class DBHandler:
         Possible location values are hardcoded in frontend/app/src/types/notes.ts
         """
         with self.user_write() as write_cursor:
-            if has_premium is False:
-                num_user_notes = self.get_entries_count(
-                    cursor=write_cursor,
-                    entries_table='user_notes',
-                )
-                if num_user_notes >= FREE_USER_NOTES_LIMIT:
-                    msg = (
-                        f'The limit of {FREE_USER_NOTES_LIMIT} user notes has been '
-                        f'reached in the free plan. To get more notes you can upgrade to '
-                        f'premium: https://rotki.com/products'
-                    )
-                    raise InputError(msg)
-
+            # All users now have unlimited user notes
             write_cursor.execute(
                 'INSERT INTO user_notes(title, content, location, last_update_timestamp, is_pinned) VALUES(?, ?, ?, ?, ?)',  # noqa: E501
                 (title, content, location, ts_now(), is_pinned),

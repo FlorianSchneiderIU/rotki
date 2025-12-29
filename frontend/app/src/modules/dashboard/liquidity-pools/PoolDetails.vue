@@ -18,7 +18,7 @@ interface PoolDetailsProps {
 }
 
 const props = withDefaults(defineProps<PoolDetailsProps>(), {
-  premiumOnly: true,
+  premiumOnly: false, // All pools accessible to all users
 });
 
 const sort = ref<DataTableSortData<AssetBalanceWithPrice>>({
