@@ -43,10 +43,10 @@ describe('forms/SwapEventForm', () => {
       asset: 'ETH',
       autoNotes: 'Swap 0.01 ETH in Binance',
       entryType: 'swap event',
-      eventIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
       eventSubtype: 'spend',
       eventType: 'trade',
       extraData: null,
+      groupIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
       identifier: 2737,
       location: 'binance',
       locationLabel: null,
@@ -58,10 +58,10 @@ describe('forms/SwapEventForm', () => {
       asset: 'USD',
       autoNotes: 'Receive 20 USD after a swap in Binance',
       entryType: 'swap event',
-      eventIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
       eventSubtype: 'receive',
       eventType: 'trade',
       extraData: null,
+      groupIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
       identifier: 2738,
       location: 'binance',
       locationLabel: null,
@@ -73,10 +73,10 @@ describe('forms/SwapEventForm', () => {
       asset: 'USD',
       autoNotes: 'Spend 1 USD as Binance swap fee',
       entryType: 'swap event',
-      eventIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
       eventSubtype: 'fee',
       eventType: 'trade',
       extraData: null,
+      groupIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
       identifier: 2739,
       location: 'binance',
       locationLabel: null,
@@ -152,13 +152,12 @@ describe('forms/SwapEventForm', () => {
 
     expect(wrapper.find('[data-cy=has-fee]').exists()).toBe(true);
     expect((wrapper.find('[data-cy=has-fee]').element as HTMLInputElement).checked).toBeUndefined();
-    expect(wrapper.find('[data-cy=fee-amount]').exists()).toBe(true);
-    expect(wrapper.find('[data-cy=fee-asset]').exists()).toBe(true);
+    expect(wrapper.find('[data-cy=fee-add]').exists()).toBe(true);
     expect(wrapper.find('[data-cy=advanced-accordion]').exists()).toBe(true);
 
     expect(wrapper.find('[data-cy=spend-notes]').exists()).toBe(true);
     expect(wrapper.find('[data-cy=receive-notes]').exists()).toBe(true);
-    expect(wrapper.find('[data-cy=fee-notes]').exists()).toBe(false);
+    expect(wrapper.find('[data-cy=fee-notes-1]').exists()).toBe(false);
   });
 
   it('should validate the form and call addHistoryEvent on save', async () => {
@@ -193,6 +192,7 @@ describe('forms/SwapEventForm', () => {
     expect(addHistoryEventMock).toHaveBeenCalledTimes(1);
     expect(addHistoryEventMock).toHaveBeenCalledWith({
       entryType: HistoryEventEntryType.SWAP_EVENT,
+      fees: undefined,
       location: 'kraken',
       receiveAmount: '0.05',
       receiveAsset: 'BTC',
@@ -220,19 +220,16 @@ describe('forms/SwapEventForm', () => {
   it('should enable fee-related fields when "Has Fee" checkbox is toggled', async () => {
     wrapper = createWrapper();
 
-    const feeAmount = wrapper.find('[data-cy=fee-amount] input');
-    const feeAsset = wrapper.find('[data-cy=fee-asset] input');
+    const feeAddButton = wrapper.find('[data-cy=fee-add]');
     const feeToggle = wrapper.find('[data-cy=has-fee] input');
 
-    expect(feeAmount.attributes('disabled')).toBe('');
-    expect(feeAsset.attributes('disabled')).toBe('');
+    expect(feeAddButton.attributes('disabled')).toBe('');
 
     await feeToggle.setValue(true);
     await vi.advanceTimersToNextTimerAsync();
 
-    expect(feeAmount.attributes('disabled')).toBeUndefined();
-    expect(feeAsset.attributes('disabled')).toBeUndefined();
-    expect(wrapper.find('[data-cy=fee-notes]').exists()).toBe(true);
+    expect(feeAddButton.attributes('disabled')).toBeUndefined();
+    expect(wrapper.find('[data-cy=fee-notes-1]').exists()).toBe(true);
   });
 
   it('calls editHistoryEvent when editing an event', async () => {
@@ -244,11 +241,13 @@ describe('forms/SwapEventForm', () => {
 
     await vi.advanceTimersToNextTimerAsync();
 
-    const feeAmount = wrapper.find('[data-cy=fee-amount] input');
-    await feeAmount.setValue('2');
+    // Edit the fee amount in SimpleFeeEntry (existing fee from data)
+    const feeAmountInputs = wrapper.findAll('[data-cy=fee-amount] input');
+    expect(feeAmountInputs.length).toBeGreaterThan(0);
+    await feeAmountInputs[0].setValue('2');
 
     const receiveNotes = wrapper.find('[data-cy=receive-notes] textarea:not([aria-hidden="true"])');
-    const feeNotes = wrapper.find('[data-cy=fee-notes] textarea:not([aria-hidden="true"])');
+    const feeNotes = wrapper.find('[data-cy=fee-notes-1] textarea:not([aria-hidden="true"])');
     await receiveNotes.setValue('receive');
     await feeNotes.setValue('fee');
 
@@ -264,10 +263,8 @@ describe('forms/SwapEventForm', () => {
     expect(editHistoryEventMock).toHaveBeenCalledWith(
       expect.objectContaining({
         entryType: 'swap event',
-        eventIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
-        feeAmount: '2',
-        feeAsset: 'USD',
-        identifier: 2737,
+        fees: [{ amount: '2', asset: 'USD' }],
+        identifiers: [2737, 2738, 2739],
         location: 'binance',
         receiveAmount: '20',
         receiveAsset: 'USD',
@@ -278,6 +275,155 @@ describe('forms/SwapEventForm', () => {
       } satisfies EditSwapEventPayload),
     );
     expect(addHistoryEventMock).toHaveBeenCalledTimes(0);
+  });
+
+  it('should handle multiple fees with individual notes', async () => {
+    const dataWithMultipleFees: GroupEventData<SwapEvent> = {
+      eventsInGroup: [{
+        amount: bigNumberify('0.01'),
+        asset: 'ETH',
+        autoNotes: 'Swap 0.01 ETH in Binance',
+        entryType: 'swap event',
+        groupIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
+        eventSubtype: 'spend',
+        eventType: 'trade',
+        extraData: null,
+        identifier: 2737,
+        location: 'binance',
+        locationLabel: null,
+        sequenceIndex: 0,
+        timestamp: 1742901211000,
+        userNotes: 'spend note',
+      }, {
+        amount: bigNumberify('20'),
+        asset: 'USD',
+        autoNotes: 'Receive 20 USD after a swap in Binance',
+        entryType: 'swap event',
+        groupIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
+        eventSubtype: 'receive',
+        eventType: 'trade',
+        extraData: null,
+        identifier: 2738,
+        location: 'binance',
+        locationLabel: null,
+        sequenceIndex: 1,
+        timestamp: 1742901211000,
+        userNotes: 'receive note',
+      }, {
+        amount: bigNumberify('1'),
+        asset: 'USD',
+        autoNotes: 'Spend 1 USD as Binance swap fee',
+        entryType: 'swap event',
+        groupIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
+        eventSubtype: 'fee',
+        eventType: 'trade',
+        extraData: null,
+        identifier: 2739,
+        location: 'binance',
+        locationLabel: null,
+        sequenceIndex: 2,
+        timestamp: 1742901211000,
+        userNotes: 'fee note 1',
+      }, {
+        amount: bigNumberify('0.5'),
+        asset: 'BTC',
+        autoNotes: 'Spend 0.5 BTC as Binance swap fee',
+        entryType: 'swap event',
+        groupIdentifier: '24bf5c3b2031b1224d7f0e642fde058ac8316039969762b67981372229fe1a7f',
+        eventSubtype: 'fee',
+        eventType: 'trade',
+        extraData: null,
+        identifier: 2740,
+        location: 'binance',
+        locationLabel: null,
+        sequenceIndex: 3,
+        timestamp: 1742901211000,
+        userNotes: 'fee note 2',
+      }],
+      type: 'edit-group',
+    };
+
+    wrapper = createWrapper({
+      props: {
+        data: dataWithMultipleFees,
+      },
+    });
+
+    await vi.advanceTimersToNextTimerAsync();
+
+    // Verify both fee note textareas are rendered
+    expect(wrapper.find('[data-cy=fee-notes-1]').exists()).toBe(true);
+    expect(wrapper.find('[data-cy=fee-notes-2]').exists()).toBe(true);
+
+    // Verify fee entries are loaded
+    const feeAmountInputs = wrapper.findAll('[data-cy=fee-amount] input');
+    expect(feeAmountInputs.length).toBe(2);
+
+    // Edit the fee notes
+    const feeNotes1 = wrapper.find('[data-cy=fee-notes-1] textarea:not([aria-hidden="true"])');
+    const feeNotes2 = wrapper.find('[data-cy=fee-notes-2] textarea:not([aria-hidden="true"])');
+    await feeNotes1.setValue('updated fee note 1');
+    await feeNotes2.setValue('updated fee note 2');
+
+    await vi.advanceTimersToNextTimerAsync();
+
+    const saveMethod = wrapper.vm.save;
+
+    editHistoryEventMock.mockResolvedValueOnce({ success: true });
+
+    const saveResult = await saveMethod();
+    expect(saveResult).toBe(true);
+    expect(editHistoryEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entryType: 'swap event',
+        fees: [{ amount: '1', asset: 'USD' }, { amount: '0.5', asset: 'BTC' }],
+        identifiers: [2737, 2738, 2739, 2740],
+        location: 'binance',
+        receiveAmount: '20',
+        receiveAsset: 'USD',
+        spendAmount: '0.01',
+        spendAsset: 'ETH',
+        timestamp: 1742901211000,
+        userNotes: ['spend note', 'receive note', 'updated fee note 1', 'updated fee note 2'],
+      } satisfies EditSwapEventPayload),
+    );
+  });
+
+  it('should auto-generate uniqueId when not provided on new event', async () => {
+    const mockUUID = '550e8400-e29b-41d4-a716-446655440000';
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue(mockUUID);
+
+    wrapper = createWrapper();
+    await vi.advanceTimersToNextTimerAsync();
+
+    const datetimePicker = wrapper.find('[data-cy=datetime] input');
+    const locationField = wrapper.find('[data-cy=location] input');
+    const spendAmountField = wrapper.find('[data-cy=spend-amount] input');
+    const spendAssetField = wrapper.find('[data-cy=spend-asset] input');
+    const receiveAmountField = wrapper.find('[data-cy=receive-amount] input');
+    const receiveAssetField = wrapper.find('[data-cy=receive-asset] input');
+
+    const now = dayjs();
+    const nowInMs = now.valueOf();
+    await datetimePicker.setValue(dayjs(nowInMs).format('DD/MM/YYYY HH:mm:ss.SSS'));
+    await locationField.setValue('kraken');
+    await spendAmountField.setValue('100');
+    await spendAssetField.setValue('ETH');
+    await receiveAmountField.setValue('0.05');
+    await receiveAssetField.setValue('BTC');
+    // Note: uniqueId field is left empty
+
+    await vi.advanceTimersToNextTimerAsync();
+
+    addHistoryEventMock.mockResolvedValueOnce({ success: true });
+
+    const saveResult = await wrapper.vm.save();
+    expect(saveResult).toBe(true);
+    expect(addHistoryEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uniqueId: mockUUID,
+      }),
+    );
   });
 
   it('should handle server validation errors', async () => {

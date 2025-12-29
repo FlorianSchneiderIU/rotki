@@ -3,6 +3,7 @@ import rotki from '@rotki/eslint-config';
 import { translationKeys } from '@rotki/ui-library';
 
 export default rotki({
+  ignores: ['app/backend-icons.generated.ts'],
   vue: true,
   typescript: {
     tsconfigPath: 'tsconfig.json',
@@ -15,9 +16,6 @@ export default rotki({
       }],
       '@rotki/no-dot-ts-imports': 'error',
     },
-  },
-  cypress: {
-    testDirectory: path.join('app', 'tests', 'e2e'),
   },
   imports: {
     overrides: {
@@ -40,11 +38,6 @@ export default rotki({
       '@intlify/vue-i18n/no-deprecated-i18n-component': 'error',
     },
     enableNoUnusedKeys: 'ci',
-  },
-}, {
-  files: ['**/src/**/*.@(ts|vue|js)'],
-  rules: {
-    'perfectionist/sort-objects': 'error',
   },
 }, {
   files: ['**/src/**/*.ts'],

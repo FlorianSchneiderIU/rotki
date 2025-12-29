@@ -5,14 +5,12 @@ import { type AssetBalance, Zero } from '@rotki/common';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import DateDisplay from '@/components/display/DateDisplay.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
-import CollectionHandler from '@/components/helper/CollectionHandler.vue';
 import RowAppend from '@/components/helper/RowAppend.vue';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
 import { useBinanceSavings } from '@/modules/balances/exchanges/use-binance-savings';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useGeneralSettingsStore } from '@/store/settings/general';
 import { useStatusStore } from '@/store/status';
-import { CURRENCY_USD } from '@/types/currencies';
 import { Section } from '@/types/status';
 
 const props = defineProps<{
@@ -60,7 +58,7 @@ const {
 });
 
 const receivedTableSort = ref<DataTableSortData<AssetBalance>>({
-  column: 'usdValue',
+  column: 'value',
   direction: 'desc' as const,
 });
 
@@ -75,7 +73,7 @@ const receivedTableHeaders = computed<DataTableColumn<AssetBalance>[]>(() => [{
   sortable: true,
 }, {
   align: 'end',
-  key: 'usdValue',
+  key: 'value',
   label: t('common.value_in_symbol', {
     symbol: get(currencySymbol),
   }),
@@ -97,7 +95,7 @@ const tableHeaders = computed<DataTableColumn<ExchangeSavingsEvent>[]>(() => [{
   sortable: true,
 }, {
   align: 'end',
-  key: 'usdValue',
+  key: 'value',
   label: t('common.value_in_symbol', {
     symbol: get(currencySymbol),
   }),
@@ -112,7 +110,7 @@ watch(loading, async (isLoading, wasLoading) => {
     await fetchData();
 });
 
-onMounted(async () => {
+watchImmediate(currencySymbol, async () => {
   await fetchData();
 });
 </script>
@@ -139,10 +137,10 @@ onMounted(async () => {
         <template #item.amount="{ row }">
           <AmountDisplay :value="row.amount" />
         </template>
-        <template #item.usdValue="{ row }">
+        <template #item.value="{ row }">
           <AmountDisplay
-            :value="row.usdValue"
-            :fiat-currency="CURRENCY_USD"
+            :value="row.value"
+            force-currency
           />
         </template>
         <template
@@ -155,9 +153,9 @@ onMounted(async () => {
             class="[&>td]:p-4"
           >
             <AmountDisplay
-              v-if="collection.totalUsdValue"
-              :fiat-currency="CURRENCY_USD"
-              :value="collection.totalUsdValue"
+              v-if="collection.totalValue"
+              force-currency
+              :value="collection.totalValue"
               show-currency="symbol"
             />
           </RowAppend>
@@ -169,40 +167,36 @@ onMounted(async () => {
         {{ t('exchange_balances.received_interest_history') }}
       </template>
 
-      <CollectionHandler :collection="collection">
-        <template #default="{ data }">
-          <RuiDataTable
-            v-model:sort="sort"
-            v-model:pagination.external="pagination"
-            outlined
-            dense
-            :cols="tableHeaders"
-            :rows="data"
-            row-attr="asset"
-            :loading="isLoading"
-          >
-            <template #item.asset="{ row }">
-              <AssetDetails :asset="row.asset" />
-            </template>
-            <template #item.amount="{ row }">
-              <AmountDisplay :value="row.amount" />
-            </template>
-            <template #item.usdValue="{ row }">
-              <AmountDisplay
-                :key="row.timestamp"
-                :amount="row.amount"
-                :value="Zero"
-                :price-asset="row.asset"
-                :fiat-currency="CURRENCY_USD"
-                :timestamp="row.timestamp"
-              />
-            </template>
-            <template #item.timestamp="{ row }">
-              <DateDisplay :timestamp="row.timestamp" />
-            </template>
-          </RuiDataTable>
+      <RuiDataTable
+        v-model:sort="sort"
+        v-model:pagination.external="pagination"
+        outlined
+        dense
+        :cols="tableHeaders"
+        :rows="collection.data"
+        row-attr="asset"
+        :loading="isLoading"
+      >
+        <template #item.asset="{ row }">
+          <AssetDetails :asset="row.asset" />
         </template>
-      </CollectionHandler>
+        <template #item.amount="{ row }">
+          <AmountDisplay :value="row.amount" />
+        </template>
+        <template #item.value="{ row }">
+          <AmountDisplay
+            :key="row.timestamp"
+            :amount="row.amount"
+            :value="Zero"
+            :price-asset="row.asset"
+            force-currency
+            :timestamp="row.timestamp"
+          />
+        </template>
+        <template #item.timestamp="{ row }">
+          <DateDisplay :timestamp="row.timestamp" />
+        </template>
+      </RuiDataTable>
     </RuiCard>
   </div>
 </template>

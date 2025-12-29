@@ -9,9 +9,13 @@ const GITHUB_BASE_URL = 'https://github.com/rotki/rotki/';
 // Cannot be checked with fetch because it always returns 400
 export const TWITTER_URL = 'https://twitter.com/rotkiapp';
 
+export const SUPPORT_EMAIL = 'support@rotki.com';
+
 // Cannot be checked with fetch because it always returns 403, because it needs authentication,
 // and will be redirected to the register page instead
 export const etherscanLink = 'https://etherscan.io/myapikey';
+
+export const heliusLink = 'https://dev.helius.xyz/dashboard/app';
 
 export const blockscoutLinks = {
   ethereum: 'https://eth.blockscout.com/account/api-key',
@@ -24,6 +28,9 @@ export const blockscoutLinks = {
 
 export const externalLinks = {
   premium: `${BASE_URL}products`,
+  premiumDevices: `${DOCS_BASE_URL}premium/devices`,
+  sponsor: `${BASE_URL}sponsor/mint`,
+  manageSubscriptions: `${BASE_URL}home/subscription`,
   usageGuide: USAGE_GUIDE_URL,
   usageGuideSection: {
     dockerWarning: `${USAGE_GUIDE_URL}using-rotki-from-mobile#docker`,
@@ -48,6 +55,8 @@ export const externalLinks = {
   github: GITHUB_BASE_URL,
   githubIssues: `${GITHUB_BASE_URL}issues`,
   githubNewIssue: `${GITHUB_BASE_URL}issues/new/choose`,
+  githubNewBugReport: `${GITHUB_BASE_URL}issues/new?template=bug_report.md`,
+  gmailCompose: 'https://mail.google.com/mail/?view=cm',
   releases: `${GITHUB_BASE_URL}releases`,
   releasesVersion: `${GITHUB_BASE_URL}releases/tag/v$version`,
   metamaskDownload: 'https://metamask.io/download/',
@@ -59,4 +68,5 @@ export const externalLinks = {
   coingeckoApiKey: 'https://www.coingecko.com/en/api/pricing',
   defillamaApiKey: 'https://defillama.com/pro-api',
   alchemyApiKey: 'https://docs.alchemy.com/reference/api-overview',
+  beaconChainApiKey: 'https://beaconcha.in/user/settings',
 };

@@ -47,7 +47,7 @@ export interface AccountExtraParams {
   readonly groupHeader?: boolean;
 }
 
-export interface AccountExpansion {
+interface AccountExpansion {
   readonly expansion?: 'accounts' | 'assets';
 }
 
@@ -56,8 +56,8 @@ export interface BlockchainAccountWithBalance<T extends BlockchainAccountData = 
   readonly type: 'account';
   readonly category?: string;
   readonly amount: BigNumber;
-  readonly usdValue: BigNumber;
-  readonly includedUsdValue?: BigNumber;
+  readonly value: BigNumber;
+  readonly includedValue?: BigNumber;
 }
 
 export type EthereumValidator = ValidatorData & Balance;
@@ -72,8 +72,8 @@ export interface BlockchainAccountGroupWithBalance<T extends BlockchainAccountDa
   readonly type: 'group';
   readonly category?: string;
   readonly amount?: BigNumber;
-  readonly usdValue: BigNumber;
-  readonly includedUsdValue?: BigNumber;
+  readonly value: BigNumber;
+  readonly includedValue?: BigNumber;
   readonly nativeAsset?: string;
   readonly aggregatedAssets?: AssetBalance[];
   readonly chains: string[];
@@ -156,7 +156,7 @@ export interface DeleteBlockchainAccountParams {
   readonly accounts: string[];
 }
 
-export interface BasicBlockchainAccountPayload {
+interface BasicBlockchainAccountPayload {
   readonly blockchain: string;
   readonly xpub?: XpubPayload;
   readonly accounts?: string[];
@@ -177,12 +177,7 @@ export interface XpubAccountPayload extends Omit<AccountPayload, 'address'> {
 
 export interface ExchangeBalancePayload {
   readonly location: string;
-  readonly ignoreCache: boolean;
-}
-
-export interface BlockchainBalancePayload {
-  readonly blockchain?: string | string[];
-  readonly ignoreCache: boolean;
+  readonly ignoreCache?: boolean;
 }
 
 export interface AllBalancePayload {

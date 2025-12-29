@@ -5,9 +5,9 @@ import pytest
 from rotkehlchen.accounting.accountant import Accountant
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.accounting.pnl import PNL, PnlTotals
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.modules.eth2.structures import ValidatorDetails, ValidatorType
 from rotkehlchen.chain.evm.accounting.structures import BaseEventSettings
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_EUR
 from rotkehlchen.db.accounting_rules import DBAccountingRules
@@ -41,7 +41,7 @@ from rotkehlchen.types import (
 history5 = history1 + create_swap_events(
     timestamp=TimestampMS(1512693374000),  # cryptocompare hourly BTC/EUR price: 537.805
     location=Location.KRAKEN,
-    event_identifier='atradeidentifier',
+    group_identifier='atradeidentifier',
     spend=AssetAmount(asset=A_BTC, amount=FVal('20')),
     receive=AssetAmount(asset=A_EUR, amount=FVal('13503.35') * FVal('20')),
 )
@@ -104,11 +104,11 @@ def test_include_gas_costs(accountant, google_service):
     history = [*create_swap_events(
         timestamp=TimestampMS(1539388574000),
         location=Location.EXTERNAL,
-        event_identifier='1xyz',
+        group_identifier='1xyz',
         spend=AssetAmount(asset=A_EUR, amount=FVal('1687')),
         receive=AssetAmount(asset=A_ETH, amount=FVal(10)),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=TimestampMS(1569924574000),
         location=Location.ETHEREUM,
@@ -138,14 +138,14 @@ def test_ignored_assets(accountant, google_service):
         *create_swap_events(
             timestamp=TimestampMS(1476979735000),
             location=Location.KRAKEN,
-            event_identifier='10xyz',
+            group_identifier='10xyz',
             spend=AssetAmount(asset=A_EUR, amount=FVal('9.76775956284') * FVal(10)),
             receive=AssetAmount(asset=A_DASH, amount=FVal(10)),
             fee=AssetAmount(asset=A_DASH, amount=FVal('0.0011')),
         ), *create_swap_events(
         timestamp=TimestampMS(1496979735000),
         location=Location.KRAKEN,
-        event_identifier='11xyz',
+        group_identifier='11xyz',
         spend=AssetAmount(asset=A_DASH, amount=FVal(5)),
         receive=AssetAmount(asset=A_EUR, amount=FVal('128.09') * FVal(5)),
         fee=AssetAmount(asset=A_EUR, amount=FVal('0.015')),
@@ -165,14 +165,14 @@ def test_margin_events_affect_gained_lost_amount(accountant, google_service):
     history = create_swap_events(
         timestamp=TimestampMS(1476979735000),
         location=Location.KRAKEN,
-        event_identifier='1xyz',
+        group_identifier='1xyz',
         spend=AssetAmount(asset=A_EUR, amount=FVal('578.505') * FVal(5)),
         receive=AssetAmount(asset=A_BTC, amount=FVal(5)),
         fee=AssetAmount(asset=A_BTC, amount=FVal('0.0012')),
     ) + create_swap_events(  # 2519.62 - 0.02 - ((0.0012*578.505)/5 + 578.505)
         timestamp=TimestampMS(1476979735000),
         location=Location.KRAKEN,
-        event_identifier='2xyz',
+        group_identifier='2xyz',
         spend=AssetAmount(asset=A_BTC, amount=ONE),
         receive=AssetAmount(asset=A_EUR, amount=FVal('2519.62')),
         fee=AssetAmount(asset=A_EUR, amount=FVal('0.02')),
@@ -247,13 +247,13 @@ def test_not_calculate_past_cost_basis(accountant, expected, google_service):
     history = create_swap_events(
         timestamp=TimestampMS(1446979735000),  # 08/11/2015
         location=Location.EXTERNAL,
-        event_identifier='1xyz',
+        group_identifier='1xyz',
         spend=AssetAmount(asset=A_EUR, amount=FVal('268.678317859') * FVal(5)),
         receive=AssetAmount(asset=A_BTC, amount=FVal(5)),
     ) + create_swap_events(
         timestamp=TimestampMS(1488373504000),  # 29/02/2017
         location=Location.KRAKEN,
-        event_identifier='2xyz',
+        group_identifier='2xyz',
         spend=AssetAmount(asset=A_BTC, amount=FVal(2)),
         receive=AssetAmount(asset=A_EUR, amount=FVal('1146.22') * FVal(2)),
         fee=AssetAmount(asset=A_EUR, amount=FVal('0.01')),

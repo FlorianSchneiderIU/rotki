@@ -1,17 +1,17 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.constants import DELEGATE_CHANGED
 from rotkehlchen.chain.evm.decoding.interfaces import (
     GovernableDecoderInterface,
     MerkleClaimDecoderInterface,
 )
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_DIVA
 from rotkehlchen.constants.misc import ZERO
@@ -23,7 +23,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 from .constants import CPT_DIVA, DIVA_ADDRESS
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -38,7 +38,7 @@ class DivaDecoder(GovernableDecoderInterface, MerkleClaimDecoderInterface):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -50,10 +50,10 @@ class DivaDecoder(GovernableDecoderInterface, MerkleClaimDecoderInterface):
         )
         self.diva = A_DIVA.resolve_to_evm_token()
 
-    def _decode_delegation_change(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_delegation_change(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode a change in the delegated address"""
         if context.tx_log.topics[0] != DELEGATE_CHANGED:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         delegator = bytes_to_address(context.tx_log.topics[1])
         delegate = bytes_to_address(context.tx_log.topics[3])
@@ -74,7 +74,7 @@ class DivaDecoder(GovernableDecoderInterface, MerkleClaimDecoderInterface):
             notes=f'Change DIVA Delegate from {delegator} to {delegate}',
             counterparty=CPT_DIVA,
         )
-        return DecodingOutput(events=[event], refresh_balances=False)
+        return EvmDecodingOutput(events=[event], refresh_balances=False)
 
     # -- DecoderInterface methods
 

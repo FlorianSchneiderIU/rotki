@@ -1,5 +1,6 @@
 import typing
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import Enum, StrEnum, auto
 from typing import (
@@ -17,10 +18,12 @@ from typing import (
 )
 
 from eth_typing import ChecksumAddress
+from eth_utils.address import to_checksum_address
 from hexbytes import HexBytes as Web3HexBytes
 
+from rotkehlchen.chain.solana.validation import is_valid_solana_address
 from rotkehlchen.constants import ZERO
-from rotkehlchen.errors.misc import InputError
+from rotkehlchen.errors.misc import AddressNotSupported, InputError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.utils.hexbytes import HexBytes
@@ -31,6 +34,11 @@ from rotkehlchen.utils.mixins.enums import (
 )
 
 from rotkehlchen.chain.substrate.types import SubstrateAddress  # isort:skip
+# Import directly from substrateinterface to avoid cyclic import via our substrate utils
+from substrateinterface.utils.ss58 import is_valid_ss58_address
+
+from rotkehlchen.chain.bitcoin.bch.validation import is_valid_bitcoin_cash_address
+from rotkehlchen.chain.bitcoin.validation import is_valid_btc_address
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import Asset
@@ -96,7 +104,6 @@ class ExternalService(SerializableEnumNameMixin):
     LOOPRING = auto()
     OPENSEA = auto()
     BLOCKSCOUT = auto()
-    MONERIUM = auto()
     THEGRAPH = auto()
     GNOSIS_PAY = auto()
     OPTIMISM_BLOCKSCOUT = auto()
@@ -108,13 +115,15 @@ class ExternalService(SerializableEnumNameMixin):
     COINGECKO = auto()
     ALCHEMY = auto()
     SCROLL_BLOCKSCOUT = auto()
+    HELIUS = auto()
+    ROUTESCAN = auto()
 
     def get_chain_for_blockscout(self) -> Optional['ChainID']:
         """If the service is a blockscout service return its chain"""
         return BLOCKSCOUT_TO_CHAINID.get(self)
 
     def premium_only(self) -> bool:
-        return self in {ExternalService.GNOSIS_PAY, ExternalService.MONERIUM}
+        return self == ExternalService.GNOSIS_PAY
 
 
 class ExternalServiceApiCredentials(NamedTuple):
@@ -130,12 +139,7 @@ class ExternalServiceApiCredentials(NamedTuple):
         return (self.service.name.lower(), self.api_key, self.api_secret)
 
     def serialize_for_api(self) -> tuple[str, dict[str, str]]:
-        value: dict[str, str]
-        if self.service == ExternalService.MONERIUM:
-            value = {'username': self.api_key, 'password': self.api_secret}  # type:ignore  # exists
-        else:
-            value = {'api_key': self.api_key}
-        return self.service.name.lower(), value
+        return self.service.name.lower(), {'api_key': self.api_key}
 
 
 T_TradePair = str
@@ -163,8 +167,8 @@ def deserialize_evm_tx_hash(val: Web3HexBytes | (bytearray | (bytes | str))) -> 
 T_BTCAddress = str
 BTCAddress = NewType('BTCAddress', T_BTCAddress)
 
-T_BTCTxHash = str
-BTCTxHash = NewType('BTCTxHash', T_BTCTxHash)
+T_BTCTxId = str
+BTCTxId = NewType('BTCTxId', T_BTCTxId)
 
 T_Eth2PubKey = str
 Eth2PubKey = NewType('Eth2PubKey', T_Eth2PubKey)
@@ -219,6 +223,7 @@ class ChainID(Enum):
     PULSECHAIN = 369
     SCROLL = 534352
     SONIC = 146
+    LINEA = 59144
 
     @classmethod
     def deserialize_from_db(cls, value: int) -> 'ChainID':
@@ -371,10 +376,10 @@ class EvmTransaction:
 
     @property
     def identifier(self) -> str:
-        return str(self.chain_id.value) + self.tx_hash.hex()
+        return str(self.chain_id.value) + str(self.tx_hash)
 
     def __str__(self) -> str:
-        return f'{self.tx_hash.hex()} at {self.chain_id}'
+        return f'{self.tx_hash!s} at {self.chain_id}'
 
 
 class EvmInternalTransaction(NamedTuple):
@@ -388,15 +393,6 @@ class EvmInternalTransaction(NamedTuple):
     gas: int
     gas_used: int
 
-    def serialize(self) -> dict[str, Any]:
-        result = self._asdict()  # pylint: disable=no-member
-        result['tx_hash'] = result['tx_hash'].hex()
-        result['chain_id'] = result['chain_id'].serialize()
-        result['value'] = str(result['value'])
-        result['gas'] = str(result['gas'])
-        result['gas_used'] = str(result['gas_used'])
-        return result
-
     def __hash__(self) -> int:
         return hash(self.identifier)
 
@@ -408,7 +404,7 @@ class EvmInternalTransaction(NamedTuple):
 
     @property
     def identifier(self) -> str:
-        return str(self.chain_id.serialize()) + self.parent_tx_hash.hex() + str(self.trace_id)
+        return str(self.chain_id.serialize()) + str(self.parent_tx_hash) + str(self.trace_id)
 
 
 class ChainType(SerializableEnumNameMixin):
@@ -428,7 +424,7 @@ class ChainType(SerializableEnumNameMixin):
             return SUPPORTED_BITCOIN_CHAINS
 
         if self == ChainType.SUBSTRATE:
-            return get_args(SUPPORTED_SUBSTRATE_CHAINS)
+            return get_args(SUPPORTED_SUBSTRATE_CHAINS_TYPE)
 
         if self == ChainType.SOLANA:
             return [SupportedBlockchain.SOLANA]
@@ -484,7 +480,7 @@ class SupportedBlockchain(SerializableEnumValueMixin):
         return self in SUPPORTED_BITCOIN_CHAINS
 
     def is_substrate(self) -> bool:
-        return self in get_args(SUPPORTED_SUBSTRATE_CHAINS)
+        return self in get_args(SUPPORTED_SUBSTRATE_CHAINS_TYPE)
 
     def get_image_name(self) -> str:
         return SUPPORTED_BLOCKCHAIN_IMAGE_NAME_MAPPING[self]
@@ -500,11 +496,18 @@ class SupportedBlockchain(SerializableEnumValueMixin):
         if self == SupportedBlockchain.BINANCE_SC:
             return 'BNB'
         if self == SupportedBlockchain.SOLANA:
-            return 'SOL-2'
+            return 'SOL'
 
         return self.value
 
-    def get_chain_type(self) -> ChainType:
+    def get_chain_type(self) -> Literal[
+        ChainType.EVM,
+        ChainType.EVMLIKE,
+        ChainType.BITCOIN,
+        ChainType.SUBSTRATE,
+        ChainType.ETH2,
+        ChainType.SOLANA,
+    ]:
         """Chain type to return to the API supported chains endpoint"""
         if self.is_evm():
             return ChainType.EVM
@@ -518,6 +521,18 @@ class SupportedBlockchain(SerializableEnumValueMixin):
             return ChainType.SOLANA
         # else
         return ChainType.ETH2  # the outlier
+
+    def get_address_chain_group(self) -> Literal[
+        ChainType.EVMLIKE,
+        ChainType.BITCOIN,
+        ChainType.SUBSTRATE,
+        ChainType.SOLANA,
+    ]:
+        match (chain_type := self.get_chain_type()):
+            case ChainType.EVM | ChainType.EVMLIKE | ChainType.ETH2:
+                return ChainType.EVMLIKE
+            case _:
+                return chain_type
 
     def ens_coin_type(self) -> int:
         """Return the CoinType number according to EIP-2304, multichain address
@@ -540,7 +555,7 @@ class SupportedBlockchain(SerializableEnumValueMixin):
         raise AssertionError(f'Invalid SupportedBlockchain value: {self}')
 
     @classmethod
-    def from_location(cls, location: 'EVM_EVMLIKE_LOCATIONS_TYPE') -> 'SupportedBlockchain':
+    def from_location(cls, location: 'BLOCKCHAIN_LOCATIONS_TYPE') -> 'SupportedBlockchain':
         """
         Turns a location to a supported chain.
         Caller has to make sure Location is a blockchain, otherwise AttributeError is raised.
@@ -608,11 +623,17 @@ EVMLIKE_CHAINS_WITH_TRANSACTIONS: tuple[EVMLIKE_CHAINS_WITH_TRANSACTIONS_TYPE, .
 EVM_EVMLIKE_CHAINS_WITH_TRANSACTIONS_TYPE = EVM_CHAINS_WITH_TRANSACTIONS_TYPE | EVMLIKE_CHAINS_WITH_TRANSACTIONS_TYPE  # noqa: E501
 EVM_EVMLIKE_CHAINS_WITH_TRANSACTIONS: tuple[EVM_EVMLIKE_CHAINS_WITH_TRANSACTIONS_TYPE, ...] = EVM_CHAINS_WITH_TRANSACTIONS + EVMLIKE_CHAINS_WITH_TRANSACTIONS  # noqa: E501
 
-OTHER_CHAINS_WITH_TRANSACTIONS_TYPE = Literal[SupportedBlockchain.BITCOIN, SupportedBlockchain.BITCOIN_CASH]  # noqa: E501
+OTHER_CHAINS_WITH_TRANSACTIONS_TYPE = Literal[SupportedBlockchain.BITCOIN, SupportedBlockchain.BITCOIN_CASH, SupportedBlockchain.SOLANA]  # noqa: E501
 OTHER_CHAINS_WITH_TRANSACTIONS: tuple[OTHER_CHAINS_WITH_TRANSACTIONS_TYPE, ...] = typing.get_args(OTHER_CHAINS_WITH_TRANSACTIONS_TYPE)  # noqa: E501
 
 CHAINS_WITH_TRANSACTIONS_TYPE = EVM_CHAINS_WITH_TRANSACTIONS_TYPE | EVMLIKE_CHAINS_WITH_TRANSACTIONS_TYPE | OTHER_CHAINS_WITH_TRANSACTIONS_TYPE  # noqa: E501
 CHAINS_WITH_TRANSACTIONS: tuple[CHAINS_WITH_TRANSACTIONS_TYPE, ...] = EVM_CHAINS_WITH_TRANSACTIONS + EVMLIKE_CHAINS_WITH_TRANSACTIONS + OTHER_CHAINS_WITH_TRANSACTIONS  # noqa: E501
+
+CHAINS_WITH_TX_DECODING_TYPE = EVM_CHAINS_WITH_TRANSACTIONS_TYPE | EVMLIKE_CHAINS_WITH_TRANSACTIONS_TYPE | Literal[SupportedBlockchain.SOLANA]  # noqa: E501
+CHAINS_WITH_TX_DECODING: tuple[CHAINS_WITH_TX_DECODING_TYPE, ...] = EVM_CHAINS_WITH_TRANSACTIONS + EVMLIKE_CHAINS_WITH_TRANSACTIONS + (SupportedBlockchain.SOLANA,)  # noqa: E501
+
+CHAINS_WITH_TRANSACTION_DECODERS_TYPE = EVM_CHAINS_WITH_TRANSACTIONS_TYPE | Literal[SupportedBlockchain.SOLANA]  # noqa: E501
+CHAINS_WITH_TRANSACTION_DECODERS: tuple[CHAINS_WITH_TRANSACTION_DECODERS_TYPE, ...] = EVM_CHAINS_WITH_TRANSACTIONS + (SupportedBlockchain.SOLANA,)  # noqa: E501
 
 EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE = Literal[
     ChainID.ETHEREUM,
@@ -671,6 +692,7 @@ SUPPORTED_NON_BITCOIN_CHAINS = Literal[
     SupportedBlockchain.SCROLL,
     SupportedBlockchain.ZKSYNC_LITE,
     SupportedBlockchain.BINANCE_SC,
+    SupportedBlockchain.SOLANA,
 ]
 
 SUPPORTED_BITCOIN_CHAINS_TYPE = Literal[
@@ -679,10 +701,11 @@ SUPPORTED_BITCOIN_CHAINS_TYPE = Literal[
 ]
 SUPPORTED_BITCOIN_CHAINS: tuple[SUPPORTED_BITCOIN_CHAINS_TYPE, ...] = typing.get_args(SUPPORTED_BITCOIN_CHAINS_TYPE)  # noqa: E501
 
-SUPPORTED_SUBSTRATE_CHAINS = Literal[
+SUPPORTED_SUBSTRATE_CHAINS_TYPE = Literal[
     SupportedBlockchain.POLKADOT,
     SupportedBlockchain.KUSAMA,
 ]
+SUPPORTED_SUBSTRATE_CHAINS: tuple[SUPPORTED_SUBSTRATE_CHAINS_TYPE, ...] = typing.get_args(SUPPORTED_SUBSTRATE_CHAINS_TYPE)  # noqa: E501
 
 SUPPORTED_BLOCKCHAIN_TO_CHAINID = {
     SupportedBlockchain.ETHEREUM: ChainID.ETHEREUM,
@@ -701,25 +724,12 @@ CHAINID_TO_SUPPORTED_BLOCKCHAIN = {
 }
 NON_EVM_CHAINS = set(SupportedBlockchain) - set(SUPPORTED_BLOCKCHAIN_TO_CHAINID.keys())
 
-EVM_CHAINS_WITH_CHAIN_MANAGER = Literal[
-    SupportedBlockchain.ETHEREUM,
-    SupportedBlockchain.OPTIMISM,
-    SupportedBlockchain.POLYGON_POS,
-    SupportedBlockchain.ARBITRUM_ONE,
-    SupportedBlockchain.BASE,
-    SupportedBlockchain.AVALANCHE,
-    SupportedBlockchain.POLKADOT,
-    SupportedBlockchain.KUSAMA,
-    SupportedBlockchain.GNOSIS,
-    SupportedBlockchain.SCROLL,
-    SupportedBlockchain.ZKSYNC_LITE,
-    SupportedBlockchain.BINANCE_SC,
-]
+# Define these from the existing constants to avoid defining duplicate copies.
+# Will need changed if these grow in different ways.
+CHAINS_WITH_NODES_TYPE = CHAINS_WITH_TRANSACTION_DECODERS_TYPE
+CHAINS_WITH_NODES: tuple[CHAINS_WITH_NODES_TYPE, ...] = CHAINS_WITH_TRANSACTION_DECODERS
 
-CHAINS_WITH_CHAIN_MANAGER = EVM_CHAINS_WITH_CHAIN_MANAGER | Literal[
-    SupportedBlockchain.BITCOIN,
-    SupportedBlockchain.BITCOIN_CASH,
-]
+CHAINS_WITH_CHAIN_MANAGER = SUPPORTED_EVM_CHAINS_TYPE | SUPPORTED_EVMLIKE_CHAINS_TYPE | SUPPORTED_BITCOIN_CHAINS_TYPE | SUPPORTED_SUBSTRATE_CHAINS_TYPE | Literal[SupportedBlockchain.SOLANA]  # noqa: E501
 
 
 class Location(DBCharEnumMixIn):
@@ -779,6 +789,7 @@ class Location(DBCharEnumMixIn):
     COINBASEPRIME = 53
     BINANCE_SC = 54  # on-chain Binance Smart Chain events
     SOLANA = 55
+    AVALANCHE = 56  # on-chain Avalanche events
 
     @staticmethod
     def from_chain_id(chain_id: EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE) -> 'EVM_LOCATIONS_TYPE':
@@ -855,6 +866,8 @@ class Location(DBCharEnumMixIn):
                 return Location.BITCOIN
             case SupportedBlockchain.BITCOIN_CASH:
                 return Location.BITCOIN_CASH
+            case SupportedBlockchain.SOLANA:
+                return Location.SOLANA
             case _:  # should never happen
                 raise AssertionError(f'Got in Location.from_chain for {chain}')
 
@@ -879,8 +892,8 @@ EVM_EVMLIKE_LOCATIONS_TYPE = EVM_LOCATIONS_TYPE | EVMLIKE_LOCATIONS_TYPE
 EVM_EVMLIKE_LOCATIONS: tuple[EVM_EVMLIKE_LOCATIONS_TYPE, ...] = EVM_LOCATIONS + EVMLIKE_LOCATIONS
 BITCOIN_LOCATIONS_TYPE = Literal[Location.BITCOIN, Location.BITCOIN_CASH]
 BITCOIN_LOCATIONS: tuple[BITCOIN_LOCATIONS_TYPE, ...] = typing.get_args(BITCOIN_LOCATIONS_TYPE)
-BLOCKCHAIN_LOCATIONS_TYPE: TypeAlias = EVM_EVMLIKE_LOCATIONS_TYPE | BITCOIN_LOCATIONS_TYPE
-BLOCKCHAIN_LOCATIONS: tuple[BLOCKCHAIN_LOCATIONS_TYPE, ...] = EVM_EVMLIKE_LOCATIONS + BITCOIN_LOCATIONS  # noqa: E501
+BLOCKCHAIN_LOCATIONS_TYPE: TypeAlias = EVM_EVMLIKE_LOCATIONS_TYPE | BITCOIN_LOCATIONS_TYPE | Literal[Location.SOLANA]  # noqa: E501
+BLOCKCHAIN_LOCATIONS: tuple[BLOCKCHAIN_LOCATIONS_TYPE, ...] = EVM_EVMLIKE_LOCATIONS + BITCOIN_LOCATIONS + (Location.SOLANA,)  # noqa: E501
 
 
 class ExchangeAuthCredentials(NamedTuple):
@@ -952,11 +965,11 @@ class CostBasisMethod(SerializableEnumNameMixin):
     ACB = auto()
 
 
-ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE: Final = 'NONE'  # blockchain value used to mark in the DB that the address entry is valid for any blockchain  # noqa: E501
+ADDRESSBOOK_BLOCKCHAIN_GROUP_PREFIX: Final = 'TYPE_'  # prefix used along the address chain type to mark in the DB that the address entry is valid for any blockchain  # noqa: E501
 
 
 class AddressbookEntry(NamedTuple):
-    address: BlockchainAddress
+    address: 'BlockchainAddress'
     name: str
     blockchain: SupportedBlockchain | None
 
@@ -967,15 +980,54 @@ class AddressbookEntry(NamedTuple):
             'blockchain': self.blockchain.serialize() if self.blockchain is not None else None,
         }
 
+    @staticmethod
+    def check_chain_ecosystem(address: 'BlockchainAddress') -> Literal[
+        ChainType.BITCOIN,
+        ChainType.EVMLIKE,
+        ChainType.SUBSTRATE,
+        ChainType.SOLANA,
+    ]:
+        """Get the chain ecosystem for the provided address.
+
+        May raise:
+            - AddressNotSupported
+        """
+        with suppress(ValueError):
+            to_checksum_address(address)
+            return ChainType.EVMLIKE
+
+        if is_valid_btc_address(address) or is_valid_bitcoin_cash_address(address):
+            return ChainType.BITCOIN
+        elif (
+            is_valid_ss58_address(value=address, valid_ss58_format=0) or  # Polkadot
+            is_valid_ss58_address(value=address, valid_ss58_format=2)     # Kusama
+        ):
+            return ChainType.SUBSTRATE
+        if is_valid_solana_address(address=address):
+            return ChainType.SOLANA
+
+        # Whenever we add a new ecosystem we need to update this function.
+        raise AddressNotSupported(f'Unsupported address {address}')
+
+    @staticmethod
+    def get_ecosystem_key_by_address(address: 'BlockchainAddress') -> str:
+        """May raise:
+            - AddressNotSupported
+        """
+        ecosystem = AddressbookEntry.check_chain_ecosystem(address)
+        return f'{ADDRESSBOOK_BLOCKCHAIN_GROUP_PREFIX}{ecosystem.name}'
+
+    def get_ecosystem_key(self) -> str:
+        """May raise:
+            - AddressNotSupported
+        """
+        return self.get_ecosystem_key_by_address(self.address)
+
     def serialize_for_db(self) -> tuple[str, str, str]:
         return (
             self.address,
             self.name,
-            (
-                self.blockchain.value
-                if self.blockchain is not None
-                else ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE
-            ),
+            self.blockchain.value if self.blockchain is not None else self.get_ecosystem_key(),
         )
 
     @classmethod
@@ -1012,7 +1064,7 @@ class AddressbookEntryWithSource(NamedTuple):
             (
                 self.blockchain.value
                 if self.blockchain is not None
-                else ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE
+                else AddressbookEntry.get_ecosystem_key_by_address(self.address)
             ),
         )
 
@@ -1217,7 +1269,7 @@ class TokenKind(DBCharEnumMixIn):
     SPL_NFT = auto()  # nfts on solana - https://developers.metaplex.com/token-metadata
 
     @classmethod
-    def deserialize_evm_from_db(cls, value: Any) -> 'EVM_TOKEN_KINDS':
+    def deserialize_evm_from_db(cls, value: Any) -> 'EVM_TOKEN_KINDS_TYPE':
         """Deserialize specifically for EVM token kinds"""
         if (result := cls.deserialize_from_db(value)) not in (TokenKind.ERC20, TokenKind.ERC721):
             raise DeserializationError(f'Expected EVM token kind, got {result}')
@@ -1225,7 +1277,7 @@ class TokenKind(DBCharEnumMixIn):
         return result  # type: ignore[return-value]  # the check above ensures it's an evm token kind.
 
     @classmethod
-    def deserialize_solana_from_db(cls, value: Any) -> 'SOLANA_TOKEN_KINDS':
+    def deserialize_solana_from_db(cls, value: Any) -> 'SOLANA_TOKEN_KINDS_TYPE':
         """Deserialize specifically for Solana token kinds"""
         if (result := cls.deserialize_from_db(value)) not in (TokenKind.SPL_TOKEN, TokenKind.SPL_NFT):  # noqa: E501
             raise DeserializationError(f'Expected solana token kind, got {result}')
@@ -1233,8 +1285,10 @@ class TokenKind(DBCharEnumMixIn):
         return result  # type: ignore[return-value]  # the check above ensures it's solana token kind.
 
 
-EVM_TOKEN_KINDS = Literal[TokenKind.ERC20, TokenKind.ERC721]
-SOLANA_TOKEN_KINDS = Literal[TokenKind.SPL_TOKEN, TokenKind.SPL_NFT]
+EVM_TOKEN_KINDS_TYPE = Literal[TokenKind.ERC20, TokenKind.ERC721]
+EVM_TOKEN_KINDS: tuple[EVM_TOKEN_KINDS_TYPE, ...] = typing.get_args(EVM_TOKEN_KINDS_TYPE)
+SOLANA_TOKEN_KINDS_TYPE = Literal[TokenKind.SPL_TOKEN, TokenKind.SPL_NFT]
+SOLANA_TOKEN_KINDS: tuple[SOLANA_TOKEN_KINDS_TYPE, ...] = typing.get_args(SOLANA_TOKEN_KINDS_TYPE)
 
 
 class CacheType(Enum):
@@ -1296,6 +1350,9 @@ class CacheType(Enum):
     PENDLE_YIELD_TOKENS = auto()  # store the count of all SYs, PTs, YTs & LP tokens per chain
     BEEFY_VAULTS = auto()
     MERKL_REWARD_PROTOCOLS = auto()
+    STAKEDAO_V2_VAULTS = auto()
+    SUPERFLUID_TOKEN_LIST_VERSION = auto()
+    SUPERFLUID_SUPER_TOKENS = auto()
 
     def serialize(self) -> str:
         # Using custom serialize method instead of SerializableEnumMixin since mixin replaces
@@ -1331,6 +1388,7 @@ class ProtocolsWithCache(SerializableEnumNameMixin):
     #  once https://github.com/rotki/rotki/issues/9302 is implemented
     ETH_WITHDRAWALS = auto()
     ETH_BLOCKS = auto()
+    ETH_VALIDATORS_DATA = auto()
 
 
 UniqueCacheType = Literal[
@@ -1363,6 +1421,8 @@ UniqueCacheType = Literal[
     CacheType.PENDLE_YIELD_TOKENS,
     CacheType.BEEFY_VAULTS,
     CacheType.MERKL_REWARD_PROTOCOLS,
+    CacheType.STAKEDAO_V2_VAULTS,
+    CacheType.SUPERFLUID_TOKEN_LIST_VERSION,
 ]
 
 UNIQUE_CACHE_KEYS: tuple[UniqueCacheType, ...] = typing.get_args(UniqueCacheType)
@@ -1394,6 +1454,7 @@ GeneralCacheType = Literal[
     CacheType.STAKEDAO_GAUGES,
     CacheType.PENDLE_POOLS,
     CacheType.PENDLE_SY_TOKENS,
+    CacheType.SUPERFLUID_SUPER_TOKENS,
 ]
 
 

@@ -1,19 +1,18 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.assets.utils import TokenEncounterInfo
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.assets.utils import TokenEncounterInfo, token_normalized_value_decimals
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import DEPOSIT_TOPIC, WITHDRAW_TOPIC_V3
 from rotkehlchen.chain.evm.decoding.constants import ERC4626_ABI
 from rotkehlchen.chain.evm.decoding.spark.constants import CPT_SPARK
 from rotkehlchen.chain.evm.decoding.spark.decoder import SparkCommonDecoder
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
@@ -23,7 +22,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 from .constants import SWAP_TOPIC
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -42,7 +41,7 @@ class SparksavingsCommonDecoder(SparkCommonDecoder):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             spark_savings_tokens: tuple['ChecksumEvmAddress', ...],
             psm_address: 'ChecksumEvmAddress | None' = None,
@@ -55,12 +54,12 @@ class SparksavingsCommonDecoder(SparkCommonDecoder):
         self.psm_address = psm_address
         self.spark_savings_tokens = spark_savings_tokens
 
-    def _decode_psm_deposit_withdrawal(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_psm_deposit_withdrawal(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes PSM (Peg Stability Module) deposit and withdrawal events.
         PSM allows swapping between assets and their wrapped Spark Savings equivalents.
         """
         if context.tx_log.topics[0] != SWAP_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         asset_in = self.base.get_or_create_evm_token(bytes_to_address(context.tx_log.topics[1]))
         asset_out = self.base.get_or_create_evm_token(bytes_to_address(context.tx_log.topics[2]))
@@ -104,9 +103,9 @@ class SparksavingsCommonDecoder(SparkCommonDecoder):
                     event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
                     event.notes = f'Remove {amount_out} {asset_out.symbol} from Spark Savings'
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_spark_tokens_deposit_withdrawal(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_spark_tokens_deposit_withdrawal(self, context: DecoderContext) -> EvmDecodingOutput:  # noqa: E501
         """Decodes deposit and withdrawal events for Spark tokens (e.g., sUSDC).
         Similar to PSM deposits/withdrawals but for direct token interactions.
         """
@@ -120,14 +119,19 @@ class SparksavingsCommonDecoder(SparkCommonDecoder):
                 for log in context.all_logs
             )
         ):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
+
+        if not self.base.is_tracked(bytes_to_address(
+                value=context.tx_log.topics[2 if context.tx_log.topics[0] == DEPOSIT_TOPIC else 3],
+        )):
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         vault_token = self.base.get_or_create_evm_token(
             address=context.tx_log.address,
             encounter=(encounter := TokenEncounterInfo(should_notify=False)),
         )
         underlying_token = self.base.get_or_create_evm_token(
-            address=deserialize_evm_address(self.evm_inquirer.call_contract(
+            address=deserialize_evm_address(self.node_inquirer.call_contract(
                 contract_address=vault_token.evm_address,
                 abi=ERC4626_ABI,
                 method_name='asset',
@@ -151,7 +155,7 @@ class SparksavingsCommonDecoder(SparkCommonDecoder):
                     event.event_subtype == HistoryEventSubType.NONE and
                     event.amount == underlying_amount and
                     # the native token check is for gnosis since xDAI can be deposited
-                    event.asset in (underlying_token, self.evm_inquirer.native_token)
+                    event.asset in (underlying_token, self.node_inquirer.native_token)
                 ):
                     event.counterparty = CPT_SPARK
                     event.event_type = HistoryEventType.DEPOSIT
@@ -184,7 +188,7 @@ class SparksavingsCommonDecoder(SparkCommonDecoder):
                 event.event_subtype == HistoryEventSubType.NONE and
                 event.amount == underlying_amount and
                 # the native token check is for gnosis since xDAI can be deposited
-                event.asset in (underlying_token, self.evm_inquirer.native_token)
+                event.asset in (underlying_token, self.node_inquirer.native_token)
             ):
                 event.counterparty = CPT_SPARK
                 event.event_type = HistoryEventType.WITHDRAWAL
@@ -207,13 +211,13 @@ class SparksavingsCommonDecoder(SparkCommonDecoder):
                 to_counterparty=CPT_SPARK,
                 paired_events_data=([out_event] if out_event else [], True),
             ))
-            return DecodingOutput(action_items=action_items)
+            return EvmDecodingOutput(action_items=action_items)
 
         maybe_reshuffle_events(
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events,
         )
-        return DecodingOutput(action_items=action_items)
+        return EvmDecodingOutput(action_items=action_items)
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         decoders = dict.fromkeys(self.spark_savings_tokens, (self._decode_spark_tokens_deposit_withdrawal,))  # noqa: E501

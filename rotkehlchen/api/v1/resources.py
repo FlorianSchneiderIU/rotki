@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 from flask import Blueprint, Request, Response, request as flask_request
 from marshmallow import Schema, ValidationError, fields
 from marshmallow.utils import missing
+from solders.solders import Signature
 from webargs.flaskparser import parser, use_kwargs
 from webargs.multidictproxy import MultiDictProxy
 from werkzeug.datastructures import FileStorage
@@ -28,6 +29,7 @@ from rotkehlchen.api.v1.schemas import (
     AccountingRuleConflictsPagination,
     AccountingRulesQuerySchema,
     AddressbookAddressesSchema,
+    AddressbookInsertSchema,
     AddressbookUpdateSchema,
     AllBalancesQuerySchema,
     AppInfoSchema,
@@ -61,6 +63,7 @@ from rotkehlchen.api.v1.schemas import (
     ClearAvatarsCacheSchema,
     ClearCacheSchema,
     ClearIconsCacheSchema,
+    ConfigurationUpdateSchema,
     ConnectToRPCNodes,
     CounterpartyAssetMappingDeleteEntrySchema,
     CounterpartyAssetMappingsPostSchema,
@@ -88,23 +91,21 @@ from rotkehlchen.api.v1.schemas import (
     EventDetailsQuerySchema,
     EventsOnlineQuerySchema,
     EvmAccountsPutSchema,
-    EvmlikePendingTransactionDecodingSchema,
-    EvmlikeTransactionDecodingSchema,
-    EvmPendingTransactionDecodingSchema,
-    EvmTransactionDecodingSchema,
-    EvmTransactionHashAdditionSchema,
     ExchangeBalanceQuerySchema,
     ExchangeEventsQuerySchema,
+    ExchangeEventsRangeQuerySchema,
+    ExchangeLocationWithNameSchema,
     ExchangeRatesSchema,
     ExchangesDataResourceSchema,
     ExchangesResourceAddSchema,
     ExchangesResourceEditSchema,
-    ExchangesResourceRemoveSchema,
     ExportHistoryDownloadSchema,
     ExportHistoryEventSchema,
     ExternalServicesResourceAddSchema,
     ExternalServicesResourceDeleteSchema,
     FileListSchema,
+    FindPossibleMatchesSchema,
+    GnosisPaySiweChallengeSchema,
     HistoricalAssetsPriceSchema,
     HistoricalPerAssetBalanceSchema,
     HistoricalPricesPerAssetSchema,
@@ -116,6 +117,7 @@ from rotkehlchen.api.v1.schemas import (
     IgnoredActionsModifySchema,
     IgnoredAssetsSchema,
     IntegerIdentifierSchema,
+    LidoCsmNodeOperatorSchema,
     LocationAssetMappingsDeleteSchema,
     LocationAssetMappingsPostSchema,
     LocationAssetMappingsUpdateSchema,
@@ -126,9 +128,11 @@ from rotkehlchen.api.v1.schemas import (
     ManualPriceDeleteSchema,
     ManualPriceRegisteredSchema,
     ManualPriceSchema,
+    MatchAssetMovementsSchema,
     ModuleBalanceProcessingSchema,
     ModuleBalanceWithVersionProcessingSchema,
     ModuleHistoryProcessingSchema,
+    MoneriumOAuthCredentialsSchema,
     MultipleAccountingRuleConflictsResolutionSchema,
     NameDeleteSchema,
     NamedEthereumModuleDataSchema,
@@ -141,10 +145,11 @@ from rotkehlchen.api.v1.schemas import (
     NFTFilterQuerySchema,
     NFTLpFilterSchema,
     OptionalAddressesWithBlockchainsListSchema,
+    PendingTransactionDecodingSchema,
     QueriedAddressesSchema,
     QueryAddressbookSchema,
     QueryCalendarSchema,
-    RefetchEvmTransactionsSchema,
+    RefetchTransactionsSchema,
     RefreshProtocolDataSchema,
     ResolveEnsSchema,
     ReverseEnsSchema,
@@ -171,7 +176,9 @@ from rotkehlchen.api.v1.schemas import (
     TagSchema,
     TimedManualPriceSchema,
     TimestampRangeSchema,
+    TransactionDecodingSchema,
     TransactionQuerySchema,
+    TransactionReferenceAdditionSchema,
     UpdateCalendarReminderSchema,
     UpdateCalendarSchema,
     UserActionLoginSchema,
@@ -185,6 +192,7 @@ from rotkehlchen.api.v1.schemas import (
     WatchersDeleteSchema,
     WatchersEditSchema,
     XpubAddSchema,
+    XpubBalancesSchema,
     XpubPatchSchema,
     create_counterparty_asset_mappings_schema,
 )
@@ -202,7 +210,7 @@ from rotkehlchen.chain.accounts import OptionalBlockchainAccount, SingleBlockcha
 from rotkehlchen.chain.bitcoin.xpub import XpubData
 from rotkehlchen.chain.ethereum.modules.eth2.structures import PerformanceStatusFilter
 from rotkehlchen.chain.ethereum.modules.nft.structures import NftLpHandling
-from rotkehlchen.chain.evm.types import NodeName, WeightedNode
+from rotkehlchen.chain.evm.types import EvmIndexer, NodeName, WeightedNode
 from rotkehlchen.constants.location_details import LOCATION_DETAILS
 from rotkehlchen.data_import.manager import DataImportSource
 from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, ReminderEntry
@@ -238,22 +246,22 @@ from rotkehlchen.serialization.schemas import (
 )
 from rotkehlchen.serialization.serialize import process_result
 from rotkehlchen.types import (
+    CHAINS_WITH_TRANSACTION_DECODERS_TYPE,
     CHAINS_WITH_TRANSACTIONS_TYPE,
-    EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE,
-    SOLANA_TOKEN_KINDS,
+    CHAINS_WITH_TX_DECODING_TYPE,
+    SOLANA_TOKEN_KINDS_TYPE,
     SUPPORTED_CHAIN_IDS,
     SUPPORTED_EVM_CHAINS_TYPE,
     AddressbookEntry,
     AddressbookType,
     ApiKey,
     ApiSecret,
-    BTCTxHash,
+    BTCTxId,
     ChainType,
     ChecksumEvmAddress,
     CounterpartyAssetMappingDeleteEntry,
     CounterpartyAssetMappingUpdateEntry,
     Eth2PubKey,
-    EvmlikeChain,
     EVMTxHash,
     ExternalService,
     ExternalServiceApiCredentials,
@@ -280,6 +288,7 @@ if TYPE_CHECKING:
     from rotkehlchen.chain.evm.accounting.structures import BaseEventSettings
     from rotkehlchen.db.filtering import HistoryEventFilterQuery
     from rotkehlchen.exchanges.kraken import KrakenAccountType
+    from rotkehlchen.exchanges.okx import OkxLocation
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry
 
 
@@ -533,7 +542,7 @@ class ExchangesResource(BaseMethodView):
 
     put_schema = ExchangesResourceAddSchema()
     patch_schema = ExchangesResourceEditSchema()
-    delete_schema = ExchangesResourceRemoveSchema()
+    delete_schema = ExchangeLocationWithNameSchema()
 
     @require_loggedin_user()
     def get(self) -> Response:
@@ -550,6 +559,7 @@ class ExchangesResource(BaseMethodView):
             passphrase: str | None,
             kraken_account_type: Optional['KrakenAccountType'],
             binance_markets: list[str] | None,
+            okx_location: Optional['OkxLocation'],
     ) -> Response:
         return self.rest_api.setup_exchange(
             name=name,
@@ -559,6 +569,7 @@ class ExchangesResource(BaseMethodView):
             passphrase=passphrase,
             kraken_account_type=kraken_account_type,
             binance_markets=binance_markets,
+            okx_location=okx_location,
         )
 
     @require_loggedin_user()
@@ -573,6 +584,7 @@ class ExchangesResource(BaseMethodView):
             passphrase: str | None,
             kraken_account_type: Optional['KrakenAccountType'],
             binance_markets: list[str] | None,
+            okx_location: Optional['OkxLocation'],
     ) -> Response:
         return self.rest_api.edit_exchange(
             name=name,
@@ -583,6 +595,7 @@ class ExchangesResource(BaseMethodView):
             passphrase=passphrase,
             kraken_account_type=kraken_account_type,
             binance_markets=binance_markets,
+            okx_location=okx_location,
         )
 
     @require_loggedin_user()
@@ -616,6 +629,27 @@ class LocationLabelsResource(BaseMethodView):
 class BlockchainTransactionsResource(BaseMethodView):
     delete_schema = BlockchainTransactionDeletionSchema()
 
+    def make_put_schema(self) -> TransactionReferenceAdditionSchema:
+        return TransactionReferenceAdditionSchema(
+            db=self.rest_api.rotkehlchen.data.db,
+        )
+
+    @require_loggedin_user()
+    @resource_parser.use_kwargs(make_put_schema, location='json')
+    def put(
+            self,
+            async_query: bool,
+            blockchain: CHAINS_WITH_TRANSACTIONS_TYPE,
+            tx_ref: EVMTxHash | Signature,
+            associated_address: ChecksumEvmAddress | SolanaAddress,
+    ) -> Response:
+        return self.rest_api.add_transaction_by_reference(
+            async_query=async_query,
+            blockchain=blockchain,
+            tx_ref=tx_ref,
+            associated_address=associated_address,
+        )
+
     def make_post_schema(self) -> TransactionQuerySchema:
         return TransactionQuerySchema(
             database=self.rest_api.rotkehlchen.data.db,
@@ -642,27 +676,9 @@ class BlockchainTransactionsResource(BaseMethodView):
     def delete(
             self,
             chain: CHAINS_WITH_TRANSACTIONS_TYPE | None,
-            tx_hash: EVMTxHash | BTCTxHash | None,
+            tx_ref: EVMTxHash | Signature | BTCTxId | None,
     ) -> Response:
-        return self.rest_api.delete_blockchain_transaction_data(chain=chain, tx_hash=tx_hash)  # type: ignore[arg-type] # schema ensures chain is included when tx_hash is present.
-
-
-class EvmTransactionsResource(BaseMethodView):
-    put_schema = EvmTransactionDecodingSchema()
-
-    @require_loggedin_user()
-    @use_kwargs(put_schema, location='json_and_query')
-    def put(
-            self,
-            async_query: bool,
-            transactions: list[dict[str, Any]],
-            delete_custom: bool,
-    ) -> Response:
-        return self.rest_api.decode_given_evm_transactions(
-            async_query=async_query,
-            transactions=[(x['evm_chain'], x['tx_hash']) for x in transactions],
-            delete_custom=delete_custom,
-        )
+        return self.rest_api.delete_blockchain_transaction_data(chain=chain, tx_ref=tx_ref)  # type: ignore[arg-type] # schema ensures chain is included when tx_ref is present.
 
 
 class EvmTransactionsStatusResource(BaseMethodView):
@@ -674,68 +690,56 @@ class EvmTransactionsStatusResource(BaseMethodView):
         return self.rest_api.get_evm_transactions_status(async_query=async_query)
 
 
-class EvmlikeTransactionsResource(BaseMethodView):
-    put_schema = EvmlikeTransactionDecodingSchema()
+class HistoryStatusSummaryResource(BaseMethodView):
+    get_schema = AsyncQueryArgumentSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(get_schema, location='json_and_query')
+    def get(self, async_query: bool) -> Response:
+        return self.rest_api.get_history_status_summary(async_query=async_query)
+
+
+class TransactionsDecodingResource(BaseMethodView):
+    post_schema = PendingTransactionDecodingSchema()
+    put_schema = TransactionDecodingSchema()
+    get_schema = AsyncQueryArgumentSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json_and_query')
+    def post(
+            self,
+            async_query: bool,
+            ignore_cache: bool,
+            chain: CHAINS_WITH_TX_DECODING_TYPE,
+    ) -> Response:
+        return self.rest_api.decode_transactions(
+            async_query=async_query,
+            chain=chain,
+            force_redecode=ignore_cache,
+        )
 
     @require_loggedin_user()
     @use_kwargs(put_schema, location='json_and_query')
     def put(
             self,
             async_query: bool,
-            transactions: list[dict[str, Any]],
+            chain: CHAINS_WITH_TX_DECODING_TYPE,
+            tx_refs: list[EVMTxHash | Signature],
+            delete_custom: bool,
+            custom_indexers_order: list[EvmIndexer] | None = None,
     ) -> Response:
-        return self.rest_api.decode_evmlike_transactions(
+        return self.rest_api.decode_given_transactions(
             async_query=async_query,
-            transactions=[(x['chain'], x['tx_hash']) for x in transactions],
-        )
-
-
-class EvmPendingTransactionsDecodingResource(BaseMethodView):
-    post_schema = EvmPendingTransactionDecodingSchema()
-    get_schema = AsyncQueryArgumentSchema()
-
-    @require_loggedin_user()
-    @use_kwargs(post_schema, location='json_and_query')
-    def post(
-            self,
-            async_query: bool,
-            ignore_cache: bool,
-            chains: list[EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE],
-    ) -> Response:
-        return self.rest_api.decode_evm_transactions(
-            async_query=async_query,
-            evm_chains=chains,
-            force_redecode=ignore_cache,
+            chain=chain,
+            tx_refs=tx_refs,
+            delete_custom=delete_custom,
+            custom_indexers_order=custom_indexers_order,
         )
 
     @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_count_transactions_not_decoded(async_query=async_query)
-
-
-class EvmlikePendingTransactionsDecodingResource(BaseMethodView):
-    post_schema = EvmlikePendingTransactionDecodingSchema()
-    get_schema = AsyncQueryArgumentSchema()
-
-    @require_loggedin_user()
-    @use_kwargs(post_schema, location='json_and_query')
-    def post(
-            self,
-            async_query: bool,
-            ignore_cache: bool,
-            chains: list[EvmlikeChain],
-    ) -> Response:
-        return self.rest_api.decode_pending_evmlike_transactions(
-            async_query=async_query,
-            ignore_cache=ignore_cache,
-            evmlike_chains=chains,
-        )
-
-    @require_loggedin_user()
-    @use_kwargs(get_schema, location='json_and_query')
-    def get(self, async_query: bool) -> Response:
-        return self.rest_api.get_count_evmlike_transactions_not_decoded(async_query=async_query)
 
 
 class EthereumAirdropsResource(BaseMethodView):
@@ -887,13 +891,13 @@ class ExchangeBalancesResource(BaseMethodView):
             location: Location | None,
             async_query: bool,
             ignore_cache: bool,
-            usd_value_threshold: FVal | None,
+            value_threshold: FVal | None,
     ) -> Response:
         return self.rest_api.query_exchange_balances(
             location=location,
             async_query=async_query,
             ignore_cache=ignore_cache,
-            usd_value_threshold=usd_value_threshold,
+            value_threshold=value_threshold,
         )
 
 
@@ -1041,11 +1045,9 @@ class AssetUpdatesResource(BaseMethodView):
     delete_schema = AssetResetRequestSchema()
 
     @use_kwargs(get_schema, location='json_and_query')
-    @require_loggedin_user()
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_assets_updates(async_query=async_query)
 
-    @require_loggedin_user()
     @use_kwargs(post_schema, location='json')
     def post(
             self,
@@ -1091,13 +1093,15 @@ class BlockchainBalancesResource(BaseMethodView):
             blockchain: SupportedBlockchain | None,
             async_query: bool,
             ignore_cache: bool,
-            usd_value_threshold: FVal | None,
+            value_threshold: FVal | None,
+            addresses: ListOfBlockchainAddresses | None,
     ) -> Response:
         return self.rest_api.query_blockchain_balances(
             blockchain=blockchain,
             async_query=async_query,
             ignore_cache=ignore_cache,
-            usd_value_threshold=usd_value_threshold,
+            value_threshold=value_threshold,
+            addresses=addresses,
         )
 
 
@@ -1110,10 +1114,10 @@ class ManuallyTrackedBalancesResource(BaseMethodView):
 
     @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
-    def get(self, async_query: bool, usd_value_threshold: FVal | None) -> Response:
+    def get(self, async_query: bool, value_threshold: FVal | None) -> Response:
         return self.rest_api.get_manually_tracked_balances(
             async_query=async_query,
-            usd_value_threshold=usd_value_threshold,
+            value_threshold=value_threshold,
         )
 
     @require_loggedin_user()
@@ -1150,10 +1154,12 @@ class TagsResource(BaseMethodView):
     def put(
             self,
             name: str,
+            new_name: str | None,
             description: str | None,
             background_color: HexColorCode,
             foreground_color: HexColorCode,
     ) -> Response:
+        _ = new_name
         return self.rest_api.add_tag(
             name=name,
             description=description,
@@ -1166,12 +1172,14 @@ class TagsResource(BaseMethodView):
     def patch(
             self,
             name: str,
+            new_name: str | None,
             description: str | None,
             background_color: HexColorCode | None,
             foreground_color: HexColorCode | None,
     ) -> Response:
         return self.rest_api.edit_tag(
             name=name,
+            new_name=new_name,
             description=description,
             background_color=background_color,
             foreground_color=foreground_color,
@@ -1215,6 +1223,29 @@ class ExchangeEventsQueryResource(BaseMethodView):
         )
 
 
+class ExchangeEventsRangeQueryResource(BaseMethodView):
+
+    post_schema = ExchangeEventsRangeQuerySchema()
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json')
+    def post(
+            self,
+            location: Location,
+            name: str,
+            from_timestamp: Timestamp,
+            to_timestamp: Timestamp,
+            async_query: bool,
+    ) -> Response:
+        return self.rest_api.query_exchange_history_events_in_range(
+            location=location,
+            name=name,
+            start_ts=from_timestamp,
+            end_ts=to_timestamp,
+            async_query=async_query,
+        )
+
+
 class HistorySkippedExternalEventResource(BaseMethodView):
 
     put_schema = SkippedExternalEventsExportSchema()
@@ -1254,8 +1285,8 @@ class HistoryEventResource(BaseMethodView):
 
     @require_loggedin_user()
     @use_kwargs(post_schema, location='json')
-    def post(self, filter_query: 'HistoryBaseEntryFilterQuery', group_by_event_ids: bool) -> Response:  # noqa: E501
-        return self.rest_api.get_history_events(filter_query=filter_query, group_by_event_ids=group_by_event_ids)  # noqa: E501
+    def post(self, filter_query: 'HistoryBaseEntryFilterQuery', aggregate_by_group_ids: bool) -> Response:  # noqa: E501
+        return self.rest_api.get_history_events(filter_query=filter_query, aggregate_by_group_ids=aggregate_by_group_ids)  # noqa: E501
 
     @require_loggedin_user()
     @resource_parser.use_kwargs(make_put_schema, location='json')
@@ -1700,6 +1731,40 @@ class BlockchainsAccountsResource(BaseMethodView):
         )
 
 
+class GnosisPayNonceResource(BaseMethodView):
+
+    get_schema = AsyncQueryArgumentSchema()
+
+    @require_premium_user(active_check=False)
+    @use_kwargs(get_schema, location='json_and_query')
+    def get(self, async_query: bool) -> Response:
+        return self.rest_api.fetch_gnosis_pay_nonce(async_query=async_query)
+
+
+class GnosisPayTokenResource(BaseMethodView):
+
+    post_schema = GnosisPaySiweChallengeSchema()
+
+    @require_premium_user(active_check=False)
+    @use_kwargs(post_schema, location='json')
+    def post(self, message: str, signature: str, async_query: bool) -> Response:
+        return self.rest_api.verify_gnosis_pay_siwe_signature(
+            message=message,
+            signature=signature,
+            async_query=async_query,
+        )
+
+
+class GnosisPaySafeAdminsResource(BaseMethodView):
+
+    get_schema = AsyncQueryArgumentSchema()
+
+    @require_premium_user(active_check=False)
+    @use_kwargs(get_schema, location='json_and_query')
+    def get(self, async_query: bool) -> Response:
+        return self.rest_api.get_gnosis_pay_safe_admin_addresses(async_query=async_query)
+
+
 class ChainTypeAccountResource(BaseMethodView):
 
     @require_loggedin_user()
@@ -1739,9 +1804,32 @@ class ChainTypeAccountResource(BaseMethodView):
 
 class BTCXpubResource(BaseMethodView):
 
+    get_schema = XpubBalancesSchema()
     put_schema = XpubAddSchema()
     delete_schema = BaseXpubSchema()
     patch_schema = XpubPatchSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(get_schema, location='json_and_query_and_view_args')
+    def get(
+            self,
+            xpub: 'HDKey',
+            derivation_path: str | None,
+            async_query: bool,
+            ignore_cache: bool,
+            blockchain: Literal[SupportedBlockchain.BITCOIN, SupportedBlockchain.BITCOIN_CASH],
+    ) -> Response:
+        return self.rest_api.get_xpub_balances(
+            xpub_data=XpubData(
+                xpub=xpub,
+                blockchain=blockchain,
+                derivation_path=derivation_path,
+                label=None,
+                tags=None,
+            ),
+            async_query=async_query,
+            ignore_cache=ignore_cache,
+        )
 
     @require_loggedin_user()
     @use_kwargs(put_schema, location='json_and_view_args')
@@ -1857,6 +1945,44 @@ class QueriedAddressesResource(BaseMethodView):
     @use_kwargs(modify_schema, location='json')
     def delete(self, module: ModuleName, address: ChecksumEvmAddress) -> Response:
         return self.rest_api.remove_queried_address_per_module(module=module, address=address)
+
+
+class LidoCsmNodeOperatorResource(BaseMethodView):
+
+    def get_schema(self) -> LidoCsmNodeOperatorSchema:
+        return LidoCsmNodeOperatorSchema()
+
+    @require_loggedin_user()
+    def get(self) -> Response:
+        return self.rest_api.get_lido_csm_node_operators()
+
+    @require_loggedin_user()
+    @resource_parser.use_kwargs(get_schema, location='json')
+    def put(self, address: ChecksumEvmAddress, node_operator_id: int) -> Response:
+        return self.rest_api.add_lido_csm_node_operator(
+            address=address,
+            node_operator_id=node_operator_id,
+        )
+
+    @require_loggedin_user()
+    @resource_parser.use_kwargs(get_schema, location='json')
+    def delete(self, address: ChecksumEvmAddress, node_operator_id: int) -> Response:
+        return self.rest_api.remove_lido_csm_node_operator(
+            address=address,
+            node_operator_id=node_operator_id,
+        )
+
+
+class LidoCsmMetricsResource(BaseMethodView):
+
+    @require_loggedin_user()
+    def post(self) -> Response:
+        """Refresh metrics for all tracked node operators.
+
+        This endpoint ignores the request body and triggers a refresh for all
+        node operators. Returns the refreshed operator objects.
+        """
+        return self.rest_api.refresh_lido_csm_metrics()
 
 
 class InfoResource(BaseMethodView):
@@ -2161,15 +2287,6 @@ class LiquityStabilityPoolResource(BaseMethodView):
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_liquity_stability_pool_positions(async_query=async_query)
-
-
-class PickleDillResource(BaseMethodView):
-
-    get_schema = AsyncQueryArgumentSchema()
-
-    @use_kwargs(get_schema, location='json_and_query')
-    def get(self, async_query: bool) -> Response:
-        return self.rest_api.get_dill_balance(async_query=async_query)
 
 
 class WatchersResource(BaseMethodView):
@@ -2778,6 +2895,7 @@ class AddressbookResource(BaseMethodView):
     delete_schema = AddressbookAddressesSchema()
     post_schema = QueryAddressbookSchema()
     update_schema = AddressbookUpdateSchema()
+    insert_schema = AddressbookInsertSchema()
 
     @require_loggedin_user()
     @use_kwargs(post_schema, location='json_and_view_args')
@@ -2792,13 +2910,18 @@ class AddressbookResource(BaseMethodView):
         )
 
     @require_loggedin_user()
-    @use_kwargs(update_schema, location='json_and_view_args')
+    @use_kwargs(insert_schema, location='json_and_view_args')
     def put(
             self,
             book_type: AddressbookType,
             entries: list[AddressbookEntry],
+            update_existing: bool,
     ) -> Response:
-        return self.rest_api.add_addressbook_entries(book_type=book_type, entries=entries)
+        return self.rest_api.add_addressbook_entries(
+            book_type=book_type,
+            entries=entries,
+            update_existing=update_existing,
+        )
 
     @require_loggedin_user()
     @use_kwargs(update_schema, location='json_and_view_args')
@@ -2855,9 +2978,14 @@ class DetectTokensResource(BaseMethodView):
 
 
 class ConfigurationsResource(BaseMethodView):
+    put_schema = ConfigurationUpdateSchema()
 
     def get(self) -> Response:
         return self.rest_api.get_config_arguments()
+
+    @use_kwargs(put_schema, location='json')
+    def put(self, loglevel: str) -> Response:
+        return self.rest_api.update_log_level(loglevel=loglevel)
 
 
 class UserNotesResource(BaseMethodView):
@@ -2934,29 +3062,6 @@ class EventDetailsResource(BaseMethodView):
         return self.rest_api.get_event_details(identifier=identifier)
 
 
-class EvmTransactionsHashResource(BaseMethodView):
-    def make_put_schema(self) -> EvmTransactionHashAdditionSchema:
-        return EvmTransactionHashAdditionSchema(
-            db=self.rest_api.rotkehlchen.data.db,
-        )
-
-    @require_loggedin_user()
-    @resource_parser.use_kwargs(make_put_schema, location='json')
-    def put(
-            self,
-            async_query: bool,
-            evm_chain: SUPPORTED_CHAIN_IDS,
-            tx_hash: EVMTxHash,
-            associated_address: ChecksumEvmAddress,
-    ) -> Response:
-        return self.rest_api.add_evm_transaction_by_hash(
-            async_query=async_query,
-            evm_chain=evm_chain,
-            tx_hash=tx_hash,
-            associated_address=associated_address,
-        )
-
-
 class AllEvmChainsResource(BaseMethodView):
 
     def get(self) -> Response:
@@ -2997,16 +3102,10 @@ class TypesMappingsResource(BaseMethodView):
         return self.rest_api.get_types_mappings()
 
 
-class EvmCounterpartiesResource(BaseMethodView):
+class CounterpartiesResource(BaseMethodView):
 
     def get(self) -> Response:
-        return self.rest_api.get_evm_counterparties_details()
-
-
-class EvmProductsResource(BaseMethodView):
-
-    def get(self) -> Response:
-        return self.rest_api.get_evm_products()
+        return self.rest_api.get_counterparties_details()
 
 
 class LocationResource(BaseMethodView):
@@ -3095,15 +3194,24 @@ class ExportHistoryDownloadResource(BaseMethodView):
 
 class AccountingRulesResource(BaseMethodView):
 
-    put_schema = CreateAccountingRuleSchema()
     delete_schema = IntegerIdentifierSchema()
     post_schema = AccountingRulesQuerySchema()
-    patch_schema = EditAccountingRuleSchema()
+
+    def make_put_schema(self) -> CreateAccountingRuleSchema:
+        return CreateAccountingRuleSchema(
+            database=self.rest_api.rotkehlchen.data.db,
+        )
+
+    def make_patch_schema(self) -> EditAccountingRuleSchema:
+        return EditAccountingRuleSchema(
+            database=self.rest_api.rotkehlchen.data.db,
+        )
 
     @require_loggedin_user()
-    @use_kwargs(put_schema, location='json_and_query')
+    @resource_parser.use_kwargs(make_put_schema, location='json_and_query')
     def put(
             self,
+            event_ids: list[int] | None,
             event_type: HistoryEventType,
             event_subtype: HistoryEventSubType,
             counterparty: str | None,
@@ -3111,6 +3219,7 @@ class AccountingRulesResource(BaseMethodView):
             links: dict[LINKABLE_ACCOUNTING_PROPERTIES, LINKABLE_ACCOUNTING_SETTINGS_NAME],
     ) -> Response:
         return self.rest_api.add_accounting_rule(
+            event_ids=event_ids,
             event_type=event_type,
             event_subtype=event_subtype,
             counterparty=counterparty,
@@ -3119,9 +3228,10 @@ class AccountingRulesResource(BaseMethodView):
         )
 
     @require_loggedin_user()
-    @use_kwargs(patch_schema, location='json_and_query')
+    @resource_parser.use_kwargs(make_patch_schema, location='json_and_query')
     def patch(
             self,
+            event_ids: list[int] | None,
             event_type: HistoryEventType,
             event_subtype: HistoryEventSubType,
             counterparty: str | None,
@@ -3130,6 +3240,7 @@ class AccountingRulesResource(BaseMethodView):
             identifier: int,
     ) -> Response:
         return self.rest_api.update_accounting_rule(
+            event_ids=event_ids,
             event_type=event_type,
             event_subtype=event_subtype,
             counterparty=counterparty,
@@ -3312,7 +3423,30 @@ class GoogleCalendarResource(BaseMethodView):
         return self.rest_api.disconnect_google_calendar()
 
 
-class StatsWrapResource(BaseMethodView):
+class MoneriumOAuthResource(BaseMethodView):
+    """Endpoints for managing Monerium OAuth credentials."""
+
+    put_schema = MoneriumOAuthCredentialsSchema()
+
+    @require_loggedin_user()
+    def get(self) -> Response:
+        return self.rest_api.get_monerium_status()
+
+    @require_premium_user(active_check=False)
+    @use_kwargs(put_schema, location='json')
+    def put(self, access_token: str, refresh_token: str, expires_in: int) -> Response:
+        return self.rest_api.complete_monerium_oauth(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=expires_in,
+        )
+
+    @require_loggedin_user()
+    def delete(self) -> Response:
+        return self.rest_api.disconnect_monerium()
+
+
+class EventsAnalysisResource(BaseMethodView):
     """Endpoint for the wrap stats. It is temporary and will be removed."""
 
     query_schema = TimestampRangeSchema()
@@ -3412,10 +3546,10 @@ class HistoricalPricesPerAssetResource(BaseMethodView):
         )
 
 
-class RefetchEvmTransactionsResource(BaseMethodView):
+class RefetchTransactionsResource(BaseMethodView):
 
-    def make_post_schema(self) -> RefetchEvmTransactionsSchema:
-        return RefetchEvmTransactionsSchema(db=self.rest_api.rotkehlchen.data.db)
+    def make_post_schema(self) -> RefetchTransactionsSchema:
+        return RefetchTransactionsSchema(db=self.rest_api.rotkehlchen.data.db)
 
     @require_loggedin_user()
     @resource_parser.use_kwargs(make_post_schema, location='json')
@@ -3424,12 +3558,12 @@ class RefetchEvmTransactionsResource(BaseMethodView):
             async_query: bool,
             to_timestamp: Timestamp,
             from_timestamp: Timestamp,
-            address: ChecksumEvmAddress | None = None,
-            evm_chain: EVM_CHAIN_IDS_WITH_TRANSACTIONS_TYPE | None = None,
+            chain: CHAINS_WITH_TRANSACTION_DECODERS_TYPE,
+            address: ChecksumEvmAddress | SolanaAddress | None = None,
     ) -> Response:
-        return self.rest_api.force_refetch_evm_transactions(
+        return self.rest_api.force_refetch_transactions(
             address=address,
-            evm_chain=evm_chain,
+            chain=chain,
             async_query=async_query,
             from_timestamp=from_timestamp,
             to_timestamp=to_timestamp,
@@ -3450,7 +3584,7 @@ class SolanaTokenMigrationResource(BaseMethodView):
             old_asset: 'CryptoAsset',
             address: 'SolanaAddress',
             decimals: int,
-            token_kind: SOLANA_TOKEN_KINDS,
+            token_kind: SOLANA_TOKEN_KINDS_TYPE,
     ) -> Response:
         return self.rest_api.migrate_solana_token(
             old_asset=old_asset,
@@ -3481,3 +3615,36 @@ class PremiumDevicesResource(BaseMethodView):
     @use_kwargs(delete_schema, location='json')
     def delete(self, device_identifier: str) -> Response:
         return self.rest_api.delete_premium_registered_device(device_identifier=device_identifier)
+
+
+class PremiumCapabilitiesResource(BaseMethodView):
+
+    @require_premium_user(active_check=False)
+    def get(self) -> Response:
+        return self.rest_api.get_premium_capabilities()
+
+
+class MatchAssetMovementsResource(BaseMethodView):
+
+    put_schema = MatchAssetMovementsSchema()
+    post_schema = FindPossibleMatchesSchema()
+
+    @require_loggedin_user()
+    def get(self) -> Response:
+        return self.rest_api.get_unmatched_asset_movements()
+
+    @require_loggedin_user()
+    @use_kwargs(put_schema, location='json')
+    def put(self, asset_movement: int, matched_event: int) -> Response:
+        return self.rest_api.match_asset_movements(
+            asset_movement_identifier=asset_movement,
+            matched_event_identifier=matched_event,
+        )
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json')
+    def post(self, asset_movement: str, time_range: int) -> Response:
+        return self.rest_api.get_matches_for_asset_movement(
+            asset_movement_group_identifier=asset_movement,
+            time_range=time_range,
+        )

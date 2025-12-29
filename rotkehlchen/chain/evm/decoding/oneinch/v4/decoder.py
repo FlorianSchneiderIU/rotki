@@ -2,6 +2,8 @@ from abc import ABC
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.ethereum.modules.oneinch.constants import CPT_ONEINCH_V4
 from rotkehlchen.chain.evm.constants import DEPOSIT_TOPIC_V2, SWAPPED_TOPIC
 from rotkehlchen.chain.evm.decoding.balancer.v2.constants import (
@@ -14,13 +16,11 @@ from rotkehlchen.chain.evm.decoding.oneinch.v4.constants import (
     ORDERFILLED_RFQ,
     PANCAKE_SWAP_TOPIC,
 )
-from rotkehlchen.chain.evm.decoding.structures import DecoderContext, DecodingOutput
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.evm.decoding.structures import DecoderContext, EvmDecodingOutput
 from rotkehlchen.chain.evm.decoding.uniswap.v2.constants import UNISWAP_V2_SWAP_SIGNATURE
 from rotkehlchen.chain.evm.decoding.uniswap.v3.constants import (
     SWAP_SIGNATURE as UNISWAP_V3_SWAP_SIGNATURE,
 )
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.decoding.velodrome.decoder import SWAP_V2 as VELODROME_SWAP_SIGNATURE
 from rotkehlchen.chain.evm.decoding.weth.decoder import WETH_WITHDRAW_TOPIC
 from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
@@ -28,7 +28,7 @@ from rotkehlchen.history.events.structures.types import HistoryEventSubType, His
 from rotkehlchen.types import ChecksumEvmAddress, EvmTransaction
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
@@ -40,7 +40,7 @@ class Oneinchv3n4DecoderBase(OneinchCommonDecoder, ABC):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             counterparty: str,
             router_address: ChecksumEvmAddress,
@@ -117,7 +117,7 @@ class Oneinchv3n4DecoderBase(OneinchCommonDecoder, ABC):
     def addresses_to_counterparties(self) -> dict[ChecksumEvmAddress, str]:
         return {self.router_address: self.counterparty}
 
-    def _decode_swapped(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_swapped(self, context: DecoderContext) -> EvmDecodingOutput:
         sender = context.transaction.from_address
         decoded_events = context.decoded_events
         out_event = in_event = None
@@ -151,7 +151,7 @@ class Oneinchv3n4DecoderBase(OneinchCommonDecoder, ABC):
             ordered_events=[out_event, in_event],
             events_list=decoded_events,
         )
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)
 
     # -- DecoderInterface methods
 

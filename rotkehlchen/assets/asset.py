@@ -15,14 +15,15 @@ from rotkehlchen.constants.resolver import (
     ChainID,
     evm_address_to_identifier,
     solana_address_to_identifier,
+    tokenid_to_collectible_id,
 )
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset, WrongAssetType
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import (
-    EVM_TOKEN_KINDS,
-    SOLANA_TOKEN_KINDS,
+    EVM_TOKEN_KINDS_TYPE,
+    SOLANA_TOKEN_KINDS_TYPE,
     ChecksumEvmAddress,
     SolanaAddress,
     Timestamp,
@@ -43,7 +44,7 @@ class UnderlyingToken(NamedTuple):
     Is used for pool tokens, tokensets etc.
     """
     address: ChecksumEvmAddress
-    token_kind: EVM_TOKEN_KINDS
+    token_kind: EVM_TOKEN_KINDS_TYPE
     weight: FVal  # Floating percentage from 0 to 1
 
     def serialize(self) -> dict[str, Any]:
@@ -516,7 +517,7 @@ SolanaTokenDBTuple = tuple[
 class EvmToken(CryptoAsset):
     evm_address: ChecksumEvmAddress = field(init=False)
     chain_id: ChainID = field(init=False)
-    token_kind: EVM_TOKEN_KINDS = field(init=False)
+    token_kind: EVM_TOKEN_KINDS_TYPE = field(init=False)
     decimals: int | None = field(init=False)
     protocol: str | None = field(init=False)
     underlying_tokens: list[UnderlyingToken] = field(init=False)
@@ -545,7 +546,7 @@ class EvmToken(CryptoAsset):
             cls: type['EvmToken'],
             address: ChecksumEvmAddress,
             chain_id: ChainID,
-            token_kind: EVM_TOKEN_KINDS,
+            token_kind: EVM_TOKEN_KINDS_TYPE,
             name: str | None = None,
             symbol: str | None = None,
             started: Timestamp | None = None,
@@ -606,11 +607,12 @@ class EvmToken(CryptoAsset):
             cryptocompare=entry[10],
             protocol=entry[11],
             underlying_tokens=underlying_tokens,
+            collectible_id=tokenid_to_collectible_id(entry[0]),
         )
 
     def to_dict(self) -> dict[str, Any]:
         underlying_tokens = [x.serialize() for x in self.underlying_tokens] if self.underlying_tokens is not None else None  # noqa: E501
-        return super().to_dict() | {
+        result = super().to_dict() | {
             'address': self.evm_address,
             'evm_chain': self.chain_id.to_name(),
             'token_kind': self.token_kind.serialize(),
@@ -618,6 +620,10 @@ class EvmToken(CryptoAsset):
             'protocol': self.protocol,
             'underlying_tokens': underlying_tokens,
         }
+        if self.token_kind == TokenKind.ERC721:  # only include collectible_id for ERC721 tokens
+            result['collectible_id'] = tokenid_to_collectible_id(self.identifier)
+
+        return result
 
     def get_decimals(self) -> int:
         return 18 if self.decimals is None else self.decimals
@@ -696,7 +702,7 @@ class Nft(EvmToken):
 @dataclass(init=True, repr=False, eq=False, order=False, unsafe_hash=False, frozen=True)
 class SolanaToken(CryptoAsset):
     mint_address: SolanaAddress = field(init=False)
-    token_kind: SOLANA_TOKEN_KINDS = field(init=False)
+    token_kind: SOLANA_TOKEN_KINDS_TYPE = field(init=False)
     decimals: int | None = field(init=False)
     protocol: str | None = field(init=False)
 
@@ -721,7 +727,7 @@ class SolanaToken(CryptoAsset):
     def initialize(  # type: ignore  # signature is incompatible with super type
             cls: type['SolanaToken'],
             address: SolanaAddress,
-            token_kind: SOLANA_TOKEN_KINDS,
+            token_kind: SOLANA_TOKEN_KINDS_TYPE,
             name: str | None = None,
             symbol: str | None = None,
             started: Timestamp | None = None,

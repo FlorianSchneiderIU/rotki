@@ -9,10 +9,7 @@ import requests
 
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import AssetWithOracles
-from rotkehlchen.assets.utils import symbol_to_asset_or_token
-from rotkehlchen.chain.ethereum.utils import (
-    normalized_fval_value_decimals,
-)
+from rotkehlchen.assets.utils import normalized_fval_value_decimals, symbol_to_asset_or_token
 from rotkehlchen.constants.assets import A_BTC, A_ETH
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.data_import.utils import maybe_set_transaction_extra_data
@@ -292,13 +289,21 @@ class Bitmex(ExchangeInterface, SignatureGeneratorMixin):
                 continue
 
             amount = normalized_fval_value_decimals(amount=FVal(raw_amount), decimals=decimals)
-            usd_value = amount * Inquirer.find_usd_price(asset)
-            returned_balances[asset] = Balance(amount=amount, usd_value=usd_value)
+            try:
+                price = Inquirer.find_main_currency_price(asset)
+            except RemoteError as e:
+                self.msg_aggregator.add_error(
+                    f'Error processing {self.name} balance entry due to inability to '
+                    f'query price: {e!s}. Skipping balance entry',
+                )
+                continue
+
+            returned_balances[asset] = Balance(amount=amount, value=(value := amount * price))
             log.debug(
                 'Bitmex balance query result',
                 currency=currency,
                 amount=amount,
-                usd_value=usd_value,
+                value=value,
             )
 
         return returned_balances, ''
@@ -346,6 +351,7 @@ class Bitmex(ExchangeInterface, SignatureGeneratorMixin):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
+            force_refresh: bool = False,
     ) -> tuple[Sequence['HistoryBaseEntry'], Timestamp]:
         self.first_connection()
         resp = self._api_query('user/walletHistory', {'currency': 'all'})

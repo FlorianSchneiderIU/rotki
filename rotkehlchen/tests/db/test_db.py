@@ -13,7 +13,11 @@ from rotkehlchen.accounting.structures.balance import BalanceType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.chain.accounts import BlockchainAccountData, BlockchainAccounts
-from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.chain.evm.types import (
+    DEFAULT_EVM_INDEXER_ORDER,
+    DEFAULT_INDEXERS_ORDER,
+    string_to_evm_address,
+)
 from rotkehlchen.constants import ONE, YEAR_IN_SECONDS, ZERO
 from rotkehlchen.constants.assets import (
     A_1INCH,
@@ -21,7 +25,7 @@ from rotkehlchen.constants.assets import (
     A_DAI,
     A_ETH,
     A_ETH2,
-    A_POLYGON_POS_MATIC,
+    A_POL,
     A_USD,
     A_USDC,
 )
@@ -50,6 +54,7 @@ from rotkehlchen.db.settings import (
     DEFAULT_DATE_DISPLAY_FORMAT,
     DEFAULT_DISPLAY_DATE_IN_LOCALTIME,
     DEFAULT_ETH_STAKING_TAXABLE_AFTER_WITHDRAWAL_ENABLED,
+    DEFAULT_EVENTS_PROCESSING_FREQUENCY,
     DEFAULT_HISTORICAL_PRICE_ORACLES,
     DEFAULT_INCLUDE_CRYPTO2CRYPTO,
     DEFAULT_INCLUDE_FEES_IN_COST_BASIS,
@@ -148,19 +153,29 @@ TABLES_AT_INIT = [
     'address_book',
     'rpc_nodes',
     'user_notes',
-    'evm_events_info',
+    'chain_events_info',
     'eth_staking_events_info',
     'skipped_external_events',
+    'accounting_rule_events',
     'accounting_rules',
     'linked_rules_properties',
     'unresolved_remote_conflicts',
     'key_value_cache',
+    'lido_csm_node_operators',
+    'lido_csm_node_operator_metrics',
+    'event_metrics',
     'zksynclite_tx_type',
     'zksynclite_transactions',
     'zksynclite_swaps',
     'calendar_reminders',
     'cowswap_orders',
     'gnosispay_data',
+    'solana_transactions',
+    'solana_tx_account_keys',
+    'solana_tx_instruction_accounts',
+    'solana_tx_instructions',
+    'solanatx_address_mappings',
+    'solana_tx_mappings',
 ]
 
 
@@ -364,9 +379,9 @@ def test_writing_fetching_data(data_dir, username, sql_vm_instructions_cb):
             write_cursor=write_cursor,
             address='0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12',
             blockchain=SupportedBlockchain.POLYGON_POS,
-            tokens=[A_POLYGON_POS_MATIC],
+            tokens=[A_POL],
         )
-        random_tx_hash_in_cache = make_evm_tx_hash().hex()  # pylint: disable=no-member
+        random_tx_hash_in_cache = str(make_evm_tx_hash())
 
         cache_data = (
             (DBCacheDynamic.EXTRA_INTERNAL_TX, {'chain_id': 1, 'tx_hash': random_tx_hash_in_cache, 'receiver': existing_address}, existing_address),  # noqa: E501
@@ -481,6 +496,7 @@ def test_writing_fetching_data(data_dir, username, sql_vm_instructions_cb):
         'ksm_rpc_endpoint': 'http://localhost:9933',
         'dot_rpc_endpoint': '',
         'beacon_rpc_endpoint': '',
+        'btc_mempool_api': '',
         'ui_floating_precision': DEFAULT_UI_FLOATING_PRECISION,
         'version': ROTKEHLCHEN_DB_VERSION,
         'include_crypto2crypto': DEFAULT_INCLUDE_CRYPTO2CRYPTO,
@@ -499,6 +515,8 @@ def test_writing_fetching_data(data_dir, username, sql_vm_instructions_cb):
         'display_date_in_localtime': DEFAULT_DISPLAY_DATE_IN_LOCALTIME,
         'current_price_oracles': DEFAULT_CURRENT_PRICE_ORACLES,
         'historical_price_oracles': DEFAULT_HISTORICAL_PRICE_ORACLES,
+        'evm_indexers_order': DEFAULT_INDEXERS_ORDER,
+        'default_evm_indexer_order': DEFAULT_EVM_INDEXER_ORDER,
         'pnl_csv_with_formulas': DEFAULT_PNL_CSV_WITH_FORMULAS,
         'pnl_csv_have_summary': DEFAULT_PNL_CSV_HAVE_SUMMARY,
         'ssf_graph_multiplier': DEFAULT_SSF_GRAPH_MULTIPLIER,
@@ -521,6 +539,7 @@ def test_writing_fetching_data(data_dir, username, sql_vm_instructions_cb):
         'ask_user_upon_size_discrepancy': DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY,
         'auto_detect_tokens': DEFAULT_AUTO_DETECT_TOKENS,
         'csv_export_delimiter': DEFAULT_CSV_EXPORT_DELIMITER,
+        'events_processing_frequency': DEFAULT_EVENTS_PROCESSING_FREQUENCY,
     }
     assert len(expected_dict) == len(dataclasses.fields(DBSettings)), 'One or more settings are missing'  # noqa: E501
 
@@ -978,35 +997,35 @@ def test_query_owned_assets(data_dir, username, sql_vm_instructions_cb):
                     spend=AssetAmount(asset=A_BTC, amount=FVal('0.1')),
                     receive=AssetAmount(asset=A_ETH, amount=FVal('0.1')),
                     fee=AssetAmount(asset=A_BTC, amount=FVal('0.1')),
-                    event_identifier='trade1',
+                    group_identifier='trade1',
                 ), *create_swap_events(
                     timestamp=TimestampMS(99),
                     location=Location.EXTERNAL,
                     spend=AssetAmount(asset=A_BTC, amount=FVal('0.1')),
                     receive=AssetAmount(asset=A_ETH, amount=FVal('0.1')),
                     fee=AssetAmount(asset=A_BTC, amount=FVal('0.1')),
-                    event_identifier='trade2',
+                    group_identifier='trade2',
                 ), *create_swap_events(
                     timestamp=TimestampMS(1),
                     location=Location.EXTERNAL,
                     spend=AssetAmount(asset=A_SDT2, amount=FVal('0.1')),
                     receive=AssetAmount(asset=A_SDC, amount=FVal('0.1')),
                     fee=AssetAmount(asset=A_BTC, amount=FVal('0.1')),
-                    event_identifier='trade3',
+                    group_identifier='trade3',
                 ), *create_swap_events(
                     timestamp=TimestampMS(1),
                     location=Location.EXTERNAL,
                     spend=AssetAmount(asset=A_1INCH, amount=FVal('0.1')),
                     receive=AssetAmount(asset=A_SUSHI, amount=FVal('0.1')),
                     fee=AssetAmount(asset=A_BTC, amount=FVal('0.1')),
-                    event_identifier='trade4',
+                    group_identifier='trade4',
                 ), *create_swap_events(
                     timestamp=TimestampMS(3),
                     location=Location.EXTERNAL,
                     spend=AssetAmount(asset=A_1INCH, amount=FVal('0.1')),
                     receive=AssetAmount(asset=A_SUSHI, amount=FVal('0.1')),
                     fee=AssetAmount(asset=A_BTC, amount=FVal('0.1')),
-                    event_identifier='trade5',
+                    group_identifier='trade5',
                 ),
             ])
 
@@ -1553,6 +1572,7 @@ def test_unlock_with_invalid_premium_data(data_dir, username, sql_vm_instruction
 
 
 @pytest.mark.parametrize('include_etherscan_key', [False])
+@pytest.mark.parametrize('include_beaconchain_key', [False])
 @pytest.mark.parametrize('include_cryptocompare_key', [False])
 def test_get_external_service_credentials(database):
     # Test that if the service is not in DB 'None' is returned
@@ -1656,7 +1676,7 @@ def test_all_balance_types_in_db(database):
     """
     Test that all balance_category in DB deserialize to a valid BalanceType
     """
-    # Query for all balace_category rows
+    # Query for all balance_category rows
     cursor = database.conn.cursor()
     balance_types = cursor.execute('SELECT category, seq from balance_category')
 

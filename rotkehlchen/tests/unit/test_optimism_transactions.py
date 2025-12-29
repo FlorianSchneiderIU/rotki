@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from contextlib import ExitStack
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
@@ -6,7 +7,9 @@ import pytest
 
 from rotkehlchen.chain.evm.types import NodeName, WeightedNode, string_to_evm_address
 from rotkehlchen.db.filtering import EvmTransactionsFilterQuery
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
+from rotkehlchen.tests.utils.optimism import OPTIMISM_MAINNET_NODE
 from rotkehlchen.types import ChainID, SupportedBlockchain, deserialize_evm_tx_hash
 
 if TYPE_CHECKING:
@@ -17,6 +20,7 @@ if TYPE_CHECKING:
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('optimism_accounts', [['0xd6Ade875eEC93a7aAb7EfB7DBF13d1457443f95B']])
+@pytest.mark.parametrize('optimism_manager_connect_at_start', [(OPTIMISM_MAINNET_NODE,)])
 def test_query_transactions_no_fee(optimism_transactions, optimism_accounts):
     """Test to query an optimism transaction with and without l1_fee existing in the DB.
     Make sure that if l1_fee is missing in the DB nothing breaks, but it's just seen as 0.
@@ -46,7 +50,7 @@ def test_query_transactions_no_fee(optimism_transactions, optimism_accounts):
         end_ts=1689113567,
     )
     with optimism_transactions.database.conn.read_ctx() as cursor:
-        transactions = dbevmtx.get_evm_transactions(
+        transactions = dbevmtx.get_transactions(
             cursor=cursor,
             filter_=EvmTransactionsFilterQuery.make(tx_hash=tx_hash),
         )
@@ -57,7 +61,7 @@ def test_query_transactions_no_fee(optimism_transactions, optimism_accounts):
         write_cursor.execute('DELETE FROM optimism_transactions WHERE tx_id=2')
 
     with optimism_transactions.database.conn.read_ctx() as cursor:
-        transactions = dbevmtx.get_evm_transactions(
+        transactions = dbevmtx.get_transactions(
             cursor=cursor,
             filter_=EvmTransactionsFilterQuery.make(tx_hash=tx_hash),
         )
@@ -82,42 +86,56 @@ def test_l1_fee_queried_when_missing(
         optimism_manager_connect_at_start: Sequence[WeightedNode],
 ):
     """Test that if the L1 fee is initially missing it gets queried from either
-    the mainnet node or from etherscan.
+    the mainnet node or from an indexer. The RPC and etherscan responses are mocked since they
+    no longer return an L1 fee for this tx/chain, but the other indexers are not mocked.
     """
     original_get_transaction_receipt = optimism_transactions.evm_inquirer.get_transaction_receipt
-    for fallback_to_etherscan in (False, True):
+    l1_fee_value = 97960903705252
+    for fallback_to_indexers, indexer_patches in (
+        (False, []),  # Use the RPC
+        (True, [  # Use etherscan. Mock response since etherscan no longer supports Optimism in the free tier  # noqa: E501
+            patch.object(optimism_transactions.evm_inquirer.etherscan, 'get_l1_fee', return_value=l1_fee_value),  # noqa: E501
+        ]),
+        (True, [  # Fall back to blockscout
+            patch.object(optimism_transactions.evm_inquirer.etherscan, 'get_l1_fee', side_effect=RemoteError('BOOM')),  # noqa: E501
+        ]),
+        (True, [  # Fall back to routescan
+            patch.object(optimism_transactions.evm_inquirer.etherscan, 'get_l1_fee', side_effect=RemoteError('BOOM')),  # noqa: E501
+            patch.object(optimism_transactions.evm_inquirer.blockscout, 'get_l1_fee', side_effect=RemoteError('BOOM')),  # noqa: E501
+        ]),
+    ):
 
-        def mock_get_transaction_receipt(fallback=fallback_to_etherscan, **kwargs: Any) -> dict[str, Any]:  # noqa: E501
-            """Simulate a missing l1Fee from the mainnet node in the fallback_to_etherscan case."""
-            nonlocal fallback_to_etherscan
+        def mock_get_transaction_receipt(fallback=fallback_to_indexers, **kwargs: Any) -> dict[str, Any]:  # noqa: E501
+            """Mock the l1Fee in the rpc response."""
             tx_receipt = original_get_transaction_receipt(**kwargs)
-            if fallback:
-                tx_receipt['l1Fee'] = None
-
+            tx_receipt['l1Fee'] = None if fallback else l1_fee_value
             return tx_receipt
 
-        with (
-            patch.object(
+        with ExitStack() as stack:
+            get_tx_receipt_mock = stack.enter_context(patch.object(
                 optimism_transactions.evm_inquirer,
                 'get_transaction_receipt',
                 side_effect=mock_get_transaction_receipt,
-            ) as get_tx_receipt_mock,
-            patch.object(
-                optimism_transactions.evm_inquirer.etherscan,
+            ))
+            get_l1_fees_mock = stack.enter_context(patch.object(
+                optimism_transactions.evm_inquirer,
                 'maybe_get_l1_fees',
-                wraps=optimism_transactions.evm_inquirer.etherscan.maybe_get_l1_fees,
-            ) as get_l1_fees_mock,
-            patch.object(
+                wraps=optimism_transactions.evm_inquirer.maybe_get_l1_fees,
+            ))
+            stack.enter_context(patch.object(
                 optimism_transactions.evm_inquirer,
                 'default_call_order',
                 new=lambda: list(optimism_manager_connect_at_start),
-            ),  # patch default call order to keep it deterministic for the vcr
-        ):
+            ))  # patch default call order to keep it deterministic for the vcr
+
+            for indexer_patch in indexer_patches:
+                stack.enter_context(indexer_patch)
+
             tx, _ = optimism_transactions.evm_inquirer.get_transaction_by_hash(
                 tx_hash=deserialize_evm_tx_hash('0x92ae5e1c4b4a2d5e2af9c4abc415a9dc0b826ba1fa158c57219fc1b6e852a061'),
             )
 
-        assert cast('L2WithL1FeesTransaction', tx).l1_fee == 97960903705252
+        assert cast('L2WithL1FeesTransaction', tx).l1_fee == l1_fee_value
         assert get_tx_receipt_mock.call_count == 1
         assert get_tx_receipt_mock.call_args_list[0].kwargs['call_order'][0].node_info.name == 'mainnet'  # noqa: E501
-        assert get_l1_fees_mock.call_count == (1 if fallback_to_etherscan else 0)
+        assert get_l1_fees_mock.call_count == (1 if fallback_to_indexers else 0)

@@ -104,7 +104,17 @@ const { t } = useI18n({ useScope: 'global' });
         <template #prepend>
           <RuiIcon name="lu-clock-arrow-up" />
         </template>
-        {{ t('transactions.repulling.title') }}
+        {{ t('transactions.repulling.action') }}
+      </RuiButton>
+
+      <RuiButton
+        variant="list"
+        @click="emit('show:dialog', { type: DIALOG_TYPES.MATCH_ASSET_MOVEMENTS })"
+      >
+        <template #prepend>
+          <RuiIcon name="lu-git-compare-arrows" />
+        </template>
+        {{ t('asset_movement_matching.dialog.check_unmatched') }}
       </RuiButton>
     </div>
   </RuiMenu>

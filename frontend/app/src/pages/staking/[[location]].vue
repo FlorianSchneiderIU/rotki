@@ -3,11 +3,11 @@ import type { RouteLocationRaw } from 'vue-router';
 import { startPromise } from '@shared/utils';
 import AppImage from '@/components/common/AppImage.vue';
 import FullSizeContent from '@/components/common/FullSizeContent.vue';
-import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 import InternalLink from '@/components/helper/InternalLink.vue';
 import { NoteLocation } from '@/types/notes';
+import { getPublicProtocolImagePath } from '@/utils/file';
 
-type NavType = 'eth2' | 'liquity' | 'kraken';
+type NavType = 'eth2' | 'liquity' | 'kraken' | 'lido-csm';
 
 interface StakingInfo {
   id: NavType;
@@ -29,9 +29,10 @@ const props = defineProps<{
 const imageSize = '64px';
 
 const pages = {
-  eth2: defineAsyncComponent(() => import('@/components/staking/eth/EthStakingPage.vue')),
-  kraken: defineAsyncComponent(() => import('@/components/staking/kraken/KrakenPage.vue')),
-  liquity: defineAsyncComponent(() => import('@/components/staking/liquity/LiquityPage.vue')),
+  'eth2': defineAsyncComponent(() => import('@/modules/staking/eth/EthStakingPage.vue')),
+  'kraken': defineAsyncComponent(() => import('@/components/staking/kraken/KrakenPage.vue')),
+  'lido-csm': defineAsyncComponent(() => import('@/modules/staking/lido-csm/LidoCsmPage.vue')),
+  'liquity': defineAsyncComponent(() => import('@/components/staking/liquity/LiquityPage.vue')),
 };
 
 const { t } = useI18n({ useScope: 'global' });
@@ -52,18 +53,23 @@ const location = computed({
 const staking = computed<StakingInfo[]>(() => [
   {
     id: 'eth2',
-    image: './assets/images/protocols/ethereum.svg',
+    image: getPublicProtocolImagePath('ethereum.svg'),
     name: t('staking.eth2'),
   },
   {
     id: 'liquity',
-    image: './assets/images/protocols/liquity.png',
+    image: getPublicProtocolImagePath('liquity.png'),
     name: t('staking.liquity'),
   },
   {
     id: 'kraken',
-    image: './assets/images/protocols/kraken.svg',
+    image: getPublicProtocolImagePath('kraken.svg'),
     name: t('staking.kraken'),
+  },
+  {
+    id: 'lido-csm',
+    image: getPublicProtocolImagePath('lido_csm.svg'),
+    name: t('staking.lido_csm'),
   },
 ]);
 
@@ -105,17 +111,12 @@ onMounted(async () => {
   <div class="container">
     <RuiCard class="[&>div:first-child]:flex">
       <DefineIcon #default="{ image }">
-        <AdaptiveWrapper
-          width="1.5rem"
-          height="1.5rem"
-        >
-          <AppImage
-            contain
-            width="1.5rem"
-            max-height="1.5rem"
-            :src="image"
-          />
-        </AdaptiveWrapper>
+        <AppImage
+          class="icon-bg"
+          contain
+          size="1.5rem"
+          :src="image"
+        />
       </DefineIcon>
       <RuiMenuSelect
         v-model="location"
@@ -124,6 +125,7 @@ onMounted(async () => {
         key-attr="id"
         text-attr="name"
         hide-details
+        :item-height="52"
         variant="outlined"
       >
         <template #selection="{ item: { image, name } }">

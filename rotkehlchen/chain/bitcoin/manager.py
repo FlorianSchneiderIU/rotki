@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 
 import requests
 
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.api.websockets.typedefs import (
     TransactionStatusStep,
     TransactionStatusSubType,
@@ -18,6 +19,8 @@ from rotkehlchen.chain.bitcoin.types import (
     BtcTxIODirection,
 )
 from rotkehlchen.chain.bitcoin.utils import OpCodes
+from rotkehlchen.chain.decoding.utils import decode_transfer_direction
+from rotkehlchen.chain.manager import ChainManagerWithTransactions
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -26,7 +29,7 @@ from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.base import HistoryEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.history.events.utils import decode_transfer_direction
+from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import BTCAddress, Location, SupportedBlockchain, Timestamp
 from rotkehlchen.utils.misc import ts_now, ts_sec_to_ms
@@ -38,14 +41,14 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class BitcoinCommonManager:
+class BitcoinCommonManager(ChainManagerWithTransactions[BTCAddress]):
 
     def __init__(
             self,
             database: 'DBHandler',
             blockchain: Literal[SupportedBlockchain.BITCOIN, SupportedBlockchain.BITCOIN_CASH],
             asset: Asset,
-            event_identifier_prefix: str,
+            group_identifier_prefix: str,
             cache_key: Literal[DBCacheDynamic.LAST_BTC_TX_BLOCK, DBCacheDynamic.LAST_BCH_TX_BLOCK],
             api_callbacks: list[BtcApiCallback],
     ) -> None:
@@ -55,7 +58,7 @@ class BitcoinCommonManager:
         self.blockchain = blockchain
         self.location = Location.from_chain(self.blockchain)
         self.asset = asset
-        self.event_identifier_prefix = event_identifier_prefix
+        self.group_identifier_prefix = group_identifier_prefix
         self.cache_key = cache_key
         self.api_callbacks = api_callbacks
 
@@ -112,6 +115,7 @@ class BitcoinCommonManager:
         """
         errors: dict[str, str] = {}
         for callback in self.api_callbacks:
+            log.debug(f'Querying {callback.name} for {self.blockchain} address balances')
             try:
                 if action == BtcQueryAction.BALANCES and callback.balances_fn is not None:
                     return callback.balances_fn(accounts)
@@ -136,11 +140,22 @@ class BitcoinCommonManager:
         serialized_errors = ', '.join(f'{source} error is: "{error}"' for (source, error) in errors.items())  # noqa: E501
         raise RemoteError(f'External {self.blockchain!s} request failed for all available APIs. {serialized_errors}')  # noqa: E501
 
-    def get_balances(self, accounts: Sequence[BTCAddress]) -> dict[BTCAddress, FVal]:
+    def query_balances(self, addresses: Sequence[BTCAddress]) -> dict[BTCAddress, Balance]:
         """Queries bitcoin balances for the specified accounts.
         May raise RemoteError if the query fails.
         """
-        return self._query(action=BtcQueryAction.BALANCES, accounts=accounts)
+        balances = {}
+        btc_price = Inquirer.find_main_currency_price(self.asset)
+        for account, balance in self._query(
+                action=BtcQueryAction.BALANCES,
+                accounts=addresses,
+        ).items():
+            balances[account] = Balance(
+                amount=balance,
+                value=balance * btc_price,
+            )
+
+        return balances
 
     def have_transactions(self, accounts: list[BTCAddress]) -> dict[BTCAddress, tuple[bool, FVal]]:
         """Takes a list of addresses and returns a mapping of which addresses have had transactions
@@ -167,9 +182,9 @@ class BitcoinCommonManager:
 
     def query_transactions(
             self,
+            addresses: list[BTCAddress],
             from_timestamp: Timestamp,
             to_timestamp: Timestamp,
-            addresses: list[BTCAddress],
     ) -> None:
         """Query transactions in the time range for the specified accounts,
         decode them into HistoryEvents, and save the results to the db.
@@ -311,7 +326,7 @@ class BitcoinCommonManager:
             location_label: str | None = None,
     ) -> HistoryEvent:
         return HistoryEvent(
-            event_identifier=f'{self.event_identifier_prefix}{tx.tx_id}',
+            group_identifier=f'{self.group_identifier_prefix}{tx.tx_id}',
             sequence_index=0,  # events are reshuffled later
             timestamp=ts_sec_to_ms(tx.timestamp),
             location=self.location,

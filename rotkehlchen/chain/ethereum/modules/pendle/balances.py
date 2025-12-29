@@ -3,18 +3,19 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.chain.evm.decoding.pendle.constants import CPT_PENDLE
 from rotkehlchen.chain.evm.tokens import get_chunk_size_call_order
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 
-from .constants import PENDLE_TOKEN, VE_PENDLE_CONTRACT_ADDRESS
+from .constants import PENDLE_TOKEN, VE_PENDLE_ABI, VE_PENDLE_CONTRACT_ADDRESS
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.decoding import EthereumTransactionDecoder
@@ -40,14 +41,14 @@ class PendleBalances(ProtocolWithBalance):
         )
         self.ve_pendle_contract = EvmContract(
             address=VE_PENDLE_CONTRACT_ADDRESS,
-            abi=self.evm_inquirer.contracts.erc20_abi,
+            abi=VE_PENDLE_ABI,
             deployed_block=16032087,
         )
 
     def query_balances(self) -> BalancesSheetType:
         """Query locked PENDLE balances."""
         balances: BalancesSheetType = defaultdict(BalanceSheet)
-        if len(addresses_with_deposits := list(self.addresses_with_deposits(None))) == 0:
+        if len(addresses_with_deposits := list(self.addresses_with_deposits())) == 0:
             return balances
 
         _, call_order = get_chunk_size_call_order(self.evm_inquirer)
@@ -57,7 +58,7 @@ class PendleBalances(ProtocolWithBalance):
                     (
                         self.ve_pendle_contract.address,
                         self.ve_pendle_contract.encode(
-                            method_name='balanceOf',
+                            method_name='positionData',
                             arguments=[addy],
                         ),
                     ) for addy in addresses_with_deposits
@@ -72,11 +73,14 @@ class PendleBalances(ProtocolWithBalance):
             log.error(f'Failed to query locked pendle balances for addresses {addresses_with_deposits}')  # noqa: E501
             return balances
 
-        price = Inquirer.find_usd_price(PENDLE_TOKEN)
+        price = Inquirer.find_price(
+            from_asset=PENDLE_TOKEN,
+            to_asset=CachedSettings().main_currency,
+        )
         for user_address, result in zip(addresses_with_deposits, results, strict=False):
             if (balance := self.ve_pendle_contract.decode(
                 result=result,
-                method_name='balanceOf',
+                method_name='positionData',
                 arguments=[user_address],
             )[0]) == 0:
                 continue
@@ -87,7 +91,7 @@ class PendleBalances(ProtocolWithBalance):
             )
             balances[user_address].assets[PENDLE_TOKEN][self.counterparty] += Balance(
                 amount=amount,
-                usd_value=amount * price,
+                value=amount * price,
             )
 
         return balances

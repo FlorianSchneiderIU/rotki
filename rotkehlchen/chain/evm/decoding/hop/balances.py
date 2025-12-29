@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import EvmToken
+from rotkehlchen.assets.utils import token_normalized_value
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
-from rotkehlchen.chain.ethereum.utils import token_normalized_value
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.chain.evm.decoding.hop.constants import CPT_HOP
 from rotkehlchen.chain.evm.tokens import get_chunk_size_call_order
@@ -13,7 +13,6 @@ from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.resolver import evm_address_to_identifier
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.serialization import DeserializationError
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -51,7 +50,7 @@ class HopBalances(ProtocolWithBalance):
         4. Converts balances and rewards to USD and updates the balance sheet.
         """
         balances: BalancesSheetType = defaultdict(BalanceSheet)
-        if len(addresses_with_deposits := self.addresses_with_deposits(products=[EvmProduct.STAKING])) == 0:  # noqa: E501
+        if len(addresses_with_deposits := self.addresses_with_deposits()) == 0:
             return balances
 
         # Group addresses by staking contract
@@ -124,8 +123,9 @@ class HopBalances(ProtocolWithBalance):
                 call_order=call_order,
                 calls_chunk_size=chunk_size,
             )
-            token_price = Inquirer.find_usd_price(staking_token)
-            rewards_price = Inquirer.find_usd_price(rewards_token)
+            prices = Inquirer.find_main_currency_prices([staking_token, rewards_token])
+            token_price = prices[staking_token]
+            rewards_price = prices[rewards_token]
             for user, lp, reward in zip(addresses, staked_lps, staked_rewards, strict=True):
                 try:
                     if (balance := staking_contract.decode(
@@ -138,7 +138,7 @@ class HopBalances(ProtocolWithBalance):
                     )) > ZERO:
                         balances[user].assets[staking_token][self.counterparty] += Balance(
                             amount=balance_norm,
-                            usd_value=token_price * balance_norm,
+                            value=token_price * balance_norm,
                         )
                 except DeserializationError:
                     log.error(f'Failed to decode {self.evm_inquirer.chain_name} Hop staked balance for {user}. Skipping')  # noqa: E501
@@ -155,7 +155,7 @@ class HopBalances(ProtocolWithBalance):
                     )) > ZERO:
                         balances[user].assets[rewards_token][self.counterparty] += Balance(
                             amount=reward_norm,
-                            usd_value=rewards_price * reward_norm,
+                            value=rewards_price * reward_norm,
                         )
                 except DeserializationError:
                     log.error(f'Failed to decode {self.evm_inquirer.chain_name} Hop earned rewards for {user}. Skipping')  # noqa: E501

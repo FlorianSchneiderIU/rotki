@@ -1,4 +1,7 @@
+from typing import Final
+
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.chain.evm.types import EvmIndexer, SerializableChainIndexerOrder
 from rotkehlchen.constants.assets import (
     A_AVAX,
     A_BCH,
@@ -8,11 +11,11 @@ from rotkehlchen.constants.assets import (
     A_ETH,
     A_ETH2,
     A_KSM,
-    A_POLYGON_POS_MATIC,
+    A_POL,
     A_SOL,
     A_XDAI,
 )
-from rotkehlchen.types import SupportedBlockchain
+from rotkehlchen.types import ChainID, SupportedBlockchain
 
 
 def test_supported_blockchain_native_token():
@@ -26,7 +29,7 @@ def test_supported_blockchain_native_token():
         SupportedBlockchain.AVALANCHE: A_AVAX,
         SupportedBlockchain.POLKADOT: A_DOT,
         SupportedBlockchain.OPTIMISM: A_ETH,
-        SupportedBlockchain.POLYGON_POS: A_POLYGON_POS_MATIC,
+        SupportedBlockchain.POLYGON_POS: A_POL,
         SupportedBlockchain.ARBITRUM_ONE: A_ETH,
         SupportedBlockchain.BASE: A_ETH,
         SupportedBlockchain.GNOSIS: A_XDAI,
@@ -37,3 +40,14 @@ def test_supported_blockchain_native_token():
     }
     for chain in SupportedBlockchain:
         assert expected_assets[chain] == Asset(chain.get_native_token_id())
+
+
+LEGACY_TESTS_INDEXER_ORDER: Final = [{
+    'evm_indexers_order': SerializableChainIndexerOrder(
+        order={
+            ChainID.OPTIMISM: [EvmIndexer.ETHERSCAN],
+            ChainID.BASE: [EvmIndexer.ETHERSCAN],
+            ChainID.BINANCE_SC: [EvmIndexer.ETHERSCAN],
+        },
+    ),
+}]

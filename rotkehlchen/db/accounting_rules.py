@@ -1,17 +1,18 @@
 import logging
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, NamedTuple
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from more_itertools import peekable
 from pysqlcipher3 import dbapi2 as sqlcipher
 
 from rotkehlchen.accounting.types import EventAccountingRuleStatus
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.accounting.structures import (
     BaseEventSettings,
     EventsAccountantCallback,
     TxAccountingTreatment,
 )
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.db.constants import (
     LINKABLE_ACCOUNTING_PROPERTIES,
     LINKABLE_ACCOUNTING_SETTINGS_NAME,
@@ -20,6 +21,7 @@ from rotkehlchen.db.constants import (
 from rotkehlchen.db.filtering import AccountingRulesFilterQuery, HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.settings import DEFAULT_INCLUDE_CRYPTO2CRYPTO, DEFAULT_INCLUDE_GAS_COSTS
+from rotkehlchen.db.utils import get_query_chunks
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.events.structures.base import HistoryBaseEntry
@@ -40,14 +42,19 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class RuleInformation(NamedTuple):
+@dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
+class RuleInformation:
     """
-    Represent a rule that matches a tuple (event_type, event_subtype, counterparty)
-    to the accounting rule that should be considered.
+    Represent a rule and the events it applies to.
+
+    For type-based rules, event_ids is None and the rule applies to all events matching
+    the type/subtype/counterparty combination.
+    For event-specific rules, event_ids contains the list of specific event identifiers.
 
     links contains the properties in rule that have been linked to an accounting setting.
     """
     identifier: int
+    event_ids: list[int] | None
     event_key: tuple[HistoryEventType, HistoryEventSubType, str | None]
     rule: BaseEventSettings
     links: dict[str, str]
@@ -64,8 +71,12 @@ class DBAccountingRules:
             event_type: HistoryEventType,
             event_subtype: HistoryEventSubType,
             counterparty: str | None,
+            event_ids: list[int] | None = None,
     ) -> str:
-        return f'Rule for ({event_type.serialize()}, {event_subtype.serialize()}, {counterparty})'
+        base_rule = f'Rule for ({event_type.serialize()}, {event_subtype.serialize()}, {counterparty})'  # noqa: E501
+        if event_ids is not None:
+            return f'{base_rule} with event ids {event_ids}'
+        return base_rule
 
     def add_accounting_rule(
             self,
@@ -75,35 +86,74 @@ class DBAccountingRules:
             rule: 'BaseEventSettings',
             links: dict[LINKABLE_ACCOUNTING_PROPERTIES, LINKABLE_ACCOUNTING_SETTINGS_NAME],
             force_update: bool = False,
+            event_ids: list[int] | None = None,
     ) -> int:
         """
-        Add a single accounting rule to the database. It returns the identifier
+        Adds a single accounting rule to the database and returns the identifier
         of the created rule.
+
+        For event-specific rules (when event_ids is provided), removes the event IDs from any existing rules.
+        Then either adds them to an existing event-specific rule with identical settings
+        (type/subtype/counterparty and all rule properties) or creates a new event-specific rule.
+
         May raise:
         - InputError: If the combination of type, subtype and counterparty already exists
         and we are not force updating.
-        """
+        """  # noqa: E501
+        if event_ids is not None and len(event_ids) > 0:
+            with self.db.conn.write_ctx() as write_cursor:
+                write_cursor.executemany(  # remove event IDs from any existing rules first
+                    'DELETE FROM accounting_rule_events WHERE event_id=?',
+                    [(event_id,) for event_id in event_ids],
+                )
+
+                # Check if there's already an event-specific rule
+                # with identical settings (type/subtype/counterparty/rule properties)
+                if (existing_rule := write_cursor.execute(
+                    'SELECT identifier FROM accounting_rules '
+                    'WHERE type=? AND subtype=? AND counterparty=? AND is_event_specific=1 '
+                    'AND taxable=? AND count_entire_amount_spend=? AND count_cost_basis_pnl=? '
+                    'AND accounting_treatment IS ?',
+                    (
+                        event_type.serialize(),
+                        event_subtype.serialize(),
+                        counterparty if counterparty is not None else NO_ACCOUNTING_COUNTERPARTY,
+                        *rule.serialize_for_db(),
+                    ),
+                ).fetchone()) is not None:  # add event IDs to the existing event-specific rule
+                    write_cursor.executemany(
+                        'INSERT INTO accounting_rule_events(rule_id, event_id) VALUES (?, ?)',
+                        ((existing_rule[0], event_id) for event_id in event_ids),
+                    )
+                    return existing_rule[0]
+
         verb = 'INSERT OR REPLACE' if force_update else 'INSERT'
         with self.db.conn.write_ctx() as write_cursor:
             try:
                 write_cursor.execute(
                     f'{verb} INTO accounting_rules(type, subtype, counterparty, taxable, '
                     'count_entire_amount_spend, count_cost_basis_pnl, '
-                    'accounting_treatment) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING identifier',
+                    'accounting_treatment, is_event_specific) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING identifier',  # noqa: E501
                     (
-
                         event_type.serialize(),
                         event_subtype.serialize(),
                         counterparty if counterparty is not None else NO_ACCOUNTING_COUNTERPARTY,
                         *rule.serialize_for_db(),
+                        event_ids is not None and len(event_ids) > 0,
                     ),
                 )
             except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
                 raise InputError(
-                    f'{self._rule_for_string(event_type=event_type, event_subtype=event_subtype, counterparty=counterparty)} already exists',  # noqa: E501
+                    f'{self._rule_for_string(event_type=event_type, event_subtype=event_subtype, counterparty=counterparty, event_ids=event_ids)} already exists',  # noqa: E501
                 ) from e
 
             inserted_rule_id = write_cursor.fetchone()[0]
+            if event_ids is not None:
+                write_cursor.executemany(
+                    'INSERT OR REPLACE INTO accounting_rule_events(rule_id, event_id) VALUES (?, ?)',  # noqa: E501
+                    ((inserted_rule_id, event_id) for event_id in event_ids),
+                )
+
             for property_name, setting_name in links.items():
                 self.add_linked_setting(
                     write_cursor=write_cursor,
@@ -114,12 +164,12 @@ class DBAccountingRules:
 
             return inserted_rule_id
 
-    def remove_accounting_rule(self, rule_id: int) -> tuple[HistoryEventType, HistoryEventSubType, str | None]:  # noqa: E501
+    def remove_accounting_rule(self, rule_id: int) -> tuple[list[int] | None, HistoryEventType, HistoryEventSubType, str | None]:  # noqa: E501
         """
-        Delete an accounting using its identifier. Returns the type identifier for the rule.
+        Delete an accounting using its identifier. Returns the event identifiers and other info for the rule.
         May raise:
         - InputError if the rule doesn't exist
-        """
+        """  # noqa: E501
         with self.db.conn.write_ctx() as write_cursor:
             write_cursor.execute(
                 'SELECT type, subtype, counterparty FROM accounting_rules WHERE identifier=?',
@@ -132,6 +182,12 @@ class DBAccountingRules:
             event_subtype = HistoryEventSubType.deserialize(entry[1])
             counterparty = None if entry[2] == NO_ACCOUNTING_COUNTERPARTY else entry[2]
 
+            # get event IDs associated with this rule before deletion
+            event_ids = event_ids if len(event_ids := [row[0] for row in write_cursor.execute(
+                'SELECT event_id FROM accounting_rule_events WHERE rule_id=?',
+                (rule_id,),
+            )]) > 0 else None
+
             write_cursor.execute(
                 'DELETE FROM linked_rules_properties WHERE accounting_rule=?',
                 (rule_id,))
@@ -143,11 +199,12 @@ class DBAccountingRules:
                 'DELETE FROM accounting_rules WHERE identifier=?',
                 (rule_id,),
             )
+            # accounting_rule_events entries are automatically deleted via CASCADE
             if write_cursor.rowcount != 1:
                 # we know that at max there is one due to the primary key in the table
                 raise InputError(f'Rule with id {rule_id} does not exist')
 
-            return event_type, event_subtype, counterparty
+            return event_ids, event_type, event_subtype, counterparty
 
     def update_accounting_rule(
             self,
@@ -157,6 +214,7 @@ class DBAccountingRules:
             rule: 'BaseEventSettings',
             links: dict[LINKABLE_ACCOUNTING_PROPERTIES, LINKABLE_ACCOUNTING_SETTINGS_NAME],
             identifier: int,
+            event_ids: list[int] | None = None,
     ) -> None:
         """
         Edit accounting rule properties (type, subtype, counterparty) for the rule with the
@@ -180,14 +238,20 @@ class DBAccountingRules:
                 )
             except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
                 raise InputError(
-                    f'Accounting rule for {self._rule_for_string(event_type=event_type, event_subtype=event_subtype, counterparty=counterparty)}'  # noqa: E501
+                    f'Accounting rule for {self._rule_for_string(event_type=event_type, event_subtype=event_subtype, counterparty=counterparty, event_ids=event_ids)}'  # noqa: E501
                     ' already exists in the database',
                 ) from e
 
             if write_cursor.rowcount != 1:
                 raise InputError(
-                    f'Tried to update accounting {self._rule_for_string(event_type=event_type, event_subtype=event_subtype, counterparty=counterparty)}'  # noqa: E501
+                    f'Tried to update accounting {self._rule_for_string(event_type=event_type, event_subtype=event_subtype, counterparty=counterparty, event_ids=event_ids)}'  # noqa: E501
                     ' but it was not found',
+                )
+
+            if event_ids is not None:
+                write_cursor.executemany(
+                    'INSERT OR REPLACE INTO accounting_rule_events(rule_id, event_id) VALUES (?, ?)',  # noqa: E501
+                    ((identifier, event_id) for event_id in event_ids),
                 )
 
             # update links. First delete them for this rule and re-add them
@@ -245,27 +309,46 @@ class DBAccountingRules:
             filter_query_str: str,
             bindings: Sequence[Any],
     ) -> dict[int, RuleInformation]:
-        """Query the accounting rules from the database using the provided filter. Returns
-        the dict of identifier -> accounting rules."""
+        """Query the accounting rules from the database using the provided filter.
+        Returns a dict of identifier -> accounting rules."""
         query = (
-            'SELECT identifier, type, subtype, counterparty, taxable, count_entire_amount_spend, '
-            'count_cost_basis_pnl, accounting_treatment FROM accounting_rules '
+            'SELECT accounting_rules.identifier, type, subtype, counterparty, taxable, '
+            'count_entire_amount_spend, count_cost_basis_pnl, accounting_treatment '
+            'FROM accounting_rules '
         )
+        rules: dict[int, RuleInformation] = {}
         with self.db.conn.read_ctx() as cursor:
             cursor.execute(query + filter_query_str, bindings)
-            return {
-                entry[0]: RuleInformation(
-                    identifier=entry[0],
+            for entry in cursor:
+                rule_id = entry[0]
+                rules[rule_id] = RuleInformation(
+                    identifier=rule_id,
+                    event_ids=None,  # populated later
                     event_key=(
                         HistoryEventType.deserialize(entry[1]),
                         HistoryEventSubType.deserialize(entry[2]),
                         None if entry[3] == NO_ACCOUNTING_COUNTERPARTY else entry[3],
                     ),
-                    rule=BaseEventSettings.deserialize_from_db(entry[4:]),
+                    rule=BaseEventSettings.deserialize_from_db(entry[4:8]),
                     links={},
                 )
-                for entry in cursor
-            }
+
+            if len(rules) == 0:
+                return rules
+
+            for chunk, placeholders in get_query_chunks(list(rules)):
+                cursor.execute(
+                    f'SELECT rule_id, event_id FROM accounting_rule_events '
+                    f'WHERE rule_id IN ({placeholders})',
+                    chunk,
+                )
+                for rule_id, event_id in cursor:
+                    if rules[rule_id].event_ids is None:
+                        rules[rule_id].event_ids = [event_id]
+                    else:
+                        rules[rule_id].event_ids.append(event_id)  # type: ignore[union-attr]  # cannot be None due to check above.
+
+        return rules
 
     def query_rules(
             self,
@@ -287,11 +370,11 @@ class DBAccountingRules:
             settings = self.db.get_settings(cursor)
             cursor.execute(
                 'SELECT accounting_rule, property_name, setting_name FROM '
-                'linked_rules_properties WHERE accounting_rule IN (SELECT identifier FROM '
+                'linked_rules_properties WHERE accounting_rule IN (SELECT accounting_rules.identifier FROM '  # noqa: E501
                 f'accounting_rules {filter_query_str})',
                 bindings,
             )
-            for (accountint_rule_id, property_name, setting_name) in cursor:
+            for (accounting_rule_id, property_name, setting_name) in cursor:
                 setting_value = getattr(settings, setting_name, None)
                 if setting_value is None:
                     log.error(
@@ -301,16 +384,16 @@ class DBAccountingRules:
                     continue
 
                 if property_name == 'count_entire_amount_spend':
-                    rules[accountint_rule_id].rule.count_entire_amount_spend = setting_value
+                    rules[accounting_rule_id].rule.count_entire_amount_spend = setting_value
                 elif property_name == 'count_cost_basis_pnl':
-                    rules[accountint_rule_id].rule.count_cost_basis_pnl = setting_value
+                    rules[accounting_rule_id].rule.count_cost_basis_pnl = setting_value
                 elif property_name == 'taxable':
-                    rules[accountint_rule_id].rule.taxable = setting_value
+                    rules[accounting_rule_id].rule.taxable = setting_value
                 else:
                     log.error(f'Unknown accounting rule property {property_name}')
                     continue
 
-                rules[accountint_rule_id].links[property_name] = setting_name
+                rules[accounting_rule_id].links[property_name] = setting_name
 
         return list(rules.values()), total_found_result
 
@@ -327,6 +410,7 @@ class DBAccountingRules:
             # serialize the rule and add information about the key to what it applies
             data = entry.rule.serialize()
             data['identifier'] = entry.identifier
+            data['event_ids'] = entry.event_ids
             data['event_type'] = entry.event_key[0].serialize()
             data['event_subtype'] = entry.event_key[1].serialize()
             data['counterparty'] = entry.event_key[2] if entry.event_key[2] != NO_ACCOUNTING_COUNTERPARTY else None  # noqa: E501
@@ -339,6 +423,7 @@ class DBAccountingRules:
         """Returns all the accounting rules and linked properties from the database."""
         accounting_rules = {
             identifier: {
+                'event_ids': rule_info.event_ids,
                 'event_type': rule_info.event_key[0].serialize(),
                 'event_subtype': rule_info.event_key[1].serialize(),
                 'counterparty': rule_info.event_key[2] if rule_info.event_key[2] != NO_ACCOUNTING_COUNTERPARTY else None,  # noqa: E501
@@ -378,7 +463,7 @@ class DBAccountingRules:
                 write_cursor.executemany(
                     'INSERT OR REPLACE INTO accounting_rules(identifier, type, subtype, '
                     'counterparty, taxable, count_entire_amount_spend, count_cost_basis_pnl, '
-                    'accounting_treatment) VALUES (?, ?, ?, ?, ?, ?, ?, ?);',
+                    'accounting_treatment, is_event_specific) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);',
                     [
                         (
                             identifier,
@@ -386,10 +471,22 @@ class DBAccountingRules:
                             rule_info['event_subtype'],
                             rule_info['counterparty'] if rule_info['counterparty'] is not None else NO_ACCOUNTING_COUNTERPARTY,  # noqa: E501
                             *BaseEventSettings.deserialize(rule_info['rule']).serialize_for_db(),
+                            rule_info['event_ids'] is not None and len(rule_info['event_ids']) > 0,
                         )
                         for identifier, rule_info in accounting_rules.items()
                     ],
                 )
+
+                event_entries: list[tuple[int, int]] = []
+                for identifier, rule_info in accounting_rules.items():
+                    if rule_info['event_ids'] is not None:
+                        event_entries.extend((identifier, event_id) for event_id in rule_info['event_ids'])  # noqa: E501
+
+                if len(event_entries) > 0:
+                    write_cursor.executemany(
+                        'INSERT OR REPLACE INTO accounting_rule_events(rule_id, event_id) VALUES (?, ?)',  # noqa: E501
+                        event_entries,
+                    )
             except (sqlcipher.IntegrityError, DeserializationError) as e:  # pylint: disable=no-member
                 return False, f'Failed to import accounting rules due to: {e!s}'
 
@@ -430,39 +527,57 @@ def _events_to_consume(
     if counterparty == CPT_GAS:  # avoid checking the case of gas in evm events
         return ids_processed
 
-    # query the accounting rule for the related event. First check using the counterparty
-    # and if it doesn't exist then check for a generic rule
-    query = 'SELECT accounting_treatment FROM accounting_rules WHERE type=? AND subtype=? AND counterparty=?'  # noqa: E501
+    # query for accounting rule. First check event-specific, then type-based rules
     event_type = event.event_type.serialize()
     event_subtype = event.event_subtype.serialize()
-    event_type_identifier = event.get_type_identifier()
+    cache_identifier = event.get_type_identifier()  # default to type-based identifier
+    if (raw_treatment := cursor.execute(  # try event-specific rule first
+        'SELECT accounting_treatment FROM accounting_rules '
+        'JOIN accounting_rule_events ON accounting_rules.identifier = rule_id '
+        'WHERE event_id=?',
+        (event.identifier,),
+    ).fetchone()) is not None:
+        cache_identifier = event.get_accounting_rule_key()
+    else:  # if no event-specific rule found, try type-based rules
+        queries = [(  # 2. Type-based rule with counterparty
+            (
+                'SELECT accounting_treatment FROM accounting_rules '
+                'WHERE type=? AND subtype=? AND counterparty=? AND is_event_specific=0'
+            ),
+            (event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY if counterparty is None else counterparty),  # noqa: E501
+        )]
 
-    raw_treatment = cursor.execute(
-        query,
-        (event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY if counterparty is None else counterparty),  # noqa: E501
-    ).fetchone()
+        if counterparty is not None:
+            queries.append((  # 3. Type-based rule without counterparty
+                (
+                    'SELECT accounting_treatment FROM accounting_rules '
+                    'WHERE type=? AND subtype=? AND counterparty=? AND is_event_specific=0'
+                ),
+                (event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY),
+            ))
 
-    if raw_treatment is None and counterparty is not None:
-        raw_treatment = cursor.execute(
-            query,
-            (event_type, event_subtype, NO_ACCOUNTING_COUNTERPARTY),
-        ).fetchone()
+        for query, params in queries:
+            if (raw_treatment := cursor.execute(query, params).fetchone()) is not None:
+                break
 
     if raw_treatment is not None and raw_treatment[0] is not None:
         accounting_treatment = TxAccountingTreatment.deserialize_from_db(raw_treatment[0])
         if accounting_treatment == TxAccountingTreatment.SWAP:
             _, peeked_event = events_iterator.peek((None, None))
-            if peeked_event is None or peeked_event.event_identifier != event.event_identifier:
-                log.error(f'Event with {event.event_identifier=} should have a SWAP IN event')
+            if peeked_event is None or peeked_event.group_identifier != event.group_identifier:
+                log.error(f'Event with {event.group_identifier=} should have a SWAP IN event')
                 return ids_processed
             _, next_event = next(events_iterator)
-            ids_processed.append((next_event.identifier, event_type_identifier))  # type: ignore[arg-type]
+            ids_processed.append((next_event.identifier, cache_identifier))  # type: ignore[arg-type]
 
-            _, peeked_event = events_iterator.peek((None, None))
-            if peeked_event and peeked_event.event_identifier == event.event_identifier and peeked_event.event_subtype == HistoryEventSubType.FEE:  # noqa: E501
-                # consume the related fee if it exists
-                _, next_event = next(events_iterator)
-                ids_processed.append((next_event.identifier, event_type_identifier))  # type: ignore[arg-type]
+            while True:  # consume all related fee events
+                _, peeked_event = events_iterator.peek((None, None))
+                if peeked_event and peeked_event.group_identifier == event.group_identifier and peeked_event.event_subtype == HistoryEventSubType.FEE:  # noqa: E501
+                    _, next_event = next(events_iterator)
+                    ids_processed.append((next_event.identifier, cache_identifier))  # type: ignore[arg-type]
+                    continue
+
+                break
 
         return ids_processed
 
@@ -470,7 +585,7 @@ def _events_to_consume(
         return ids_processed  # only evm events have callbacks
 
     # if there is no accounting treatment check for callbacks
-    if (callback_data := callbacks.get(event_type_identifier)) is None:
+    if (callback_data := callbacks.get(cache_identifier)) is None:
         return ids_processed
 
     processed_events_num, callback = callback_data
@@ -491,7 +606,7 @@ def _events_to_consume(
             log.error('Failed to get an expected event from iterator during missing accounting rules check')  # noqa: E501
             return ids_processed
 
-        ids_processed.append((next_event.identifier, event_type_identifier))  # type: ignore
+        ids_processed.append((next_event.identifier, cache_identifier))  # type: ignore
 
     return ids_processed
 
@@ -514,14 +629,20 @@ def query_missing_accounting_rules(
         related_events = history_db.get_history_events_internal(
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(
-                event_identifiers=list({event.event_identifier for event in events}),
-                order_by_rules=[('event_identifier', True), ('sequence_index', True)],
+                group_identifiers=list({event.group_identifier for event in events}),
+                order_by_rules=[('group_identifier', True), ('sequence_index', True)],
             ),
         )
 
-    query = 'SELECT COUNT(*) FROM accounting_rules WHERE (type=? AND subtype=? AND (counterparty=? OR counterparty=?))'  # noqa: E501
+    query = """
+    SELECT COUNT(DISTINCT accounting_rules.identifier)
+    FROM accounting_rules
+    LEFT JOIN accounting_rule_events ON accounting_rules.identifier = accounting_rule_events.rule_id
+    WHERE event_id = ? OR (type = ? AND subtype = ? AND (counterparty = ? OR counterparty = ?) AND is_event_specific=0)
+    """  # noqa: E501
     bindings = [
         (
+            event.identifier,  # event-specific rule
             event.event_type.serialize(),
             event.event_subtype.serialize(),
             NO_ACCOUNTING_COUNTERPARTY if (counterparty := getattr(event, 'counterparty', None)) is None else counterparty,  # noqa: E501
@@ -545,7 +666,7 @@ def query_missing_accounting_rules(
                     event.event_type == HistoryEventType.INFORMATIONAL or
                     # staking events all have a process() function for accounting
                     isinstance(event, EthStakingEvent) or
-                    (isinstance(event, EvmEvent) and event.event_identifier.startswith('BP1_'))
+                    (isinstance(event, EvmEvent) and event.group_identifier.startswith('BP1_'))
             ):
 
                 accountant.processable_events_cache.add(event.identifier, EventAccountingRuleStatus.PROCESSED)  # type: ignore  # noqa: E501
@@ -557,6 +678,7 @@ def query_missing_accounting_rules(
             accounting_outcome = EventAccountingRuleStatus.NOT_PROCESSED if row[0] == 0 else EventAccountingRuleStatus.HAS_RULE  # noqa: E501
             accountant.processable_events_cache.add(event.identifier, accounting_outcome)  # type: ignore
             accountant.processable_events_cache_signatures.get(event.get_type_identifier()).append(event.identifier)  # type: ignore
+            accountant.processable_events_cache_signatures.get(event.identifier).append(event.identifier)  # type: ignore
 
             # the current event in addition to have an accounting rule could have a callback that
             # affects events that come after and is not enough to check the accounting rule

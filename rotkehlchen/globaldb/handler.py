@@ -31,7 +31,7 @@ from rotkehlchen.constants.misc import (
     GLOBALDIR_NAME,
     NFT_DIRECTIVE,
 )
-from rotkehlchen.constants.resolver import evm_address_to_identifier
+from rotkehlchen.constants.resolver import evm_address_to_identifier, tokenid_to_collectible_id
 from rotkehlchen.db.drivers.gevent import DBConnection, DBConnectionType, DBCursor
 from rotkehlchen.db.utils import get_query_chunks
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset, WrongAssetType
@@ -341,15 +341,18 @@ class GlobalDBHandler:
                         'started': entry[6],
                     })
                 elif asset_type == AssetType.EVM_TOKEN:
-                    data.update({
+                    evm_data = {
                         'address': entry[2],
                         'evm_chain': ChainID.deserialize_from_db(entry[12]).to_name(),
-                        'token_kind': TokenKind.deserialize_evm_from_db(entry[13]).serialize(),
+                        'token_kind': (token_kind := TokenKind.deserialize_evm_from_db(entry[13])).serialize(),  # noqa: E501
                         'decimals': entry[3],
                         'underlying_tokens': None,
                         'protocol': entry[11],
-                    })
-                    data.update(common_data)
+                    } | common_data
+                    if token_kind == TokenKind.ERC721:
+                        evm_data['collectible_id'] = tokenid_to_collectible_id(entry[0])
+
+                    data.update(evm_data)
                 elif asset_type == AssetType.SOLANA_TOKEN:
                     data.update({
                         'protocol': entry[11],
@@ -1278,7 +1281,7 @@ class GlobalDBHandler:
                     'UPDATE assets SET name=?, type=? WHERE identifier=?;',
                     (
                         entry.name,
-                        AssetType.EVM_TOKEN.serialize_for_db(),
+                        entry.asset_type.serialize_for_db(),
                         entry.identifier,
                     ),
                 )
@@ -2149,6 +2152,8 @@ class GlobalDBHandler:
         elif asset.asset_type == AssetType.EVM_TOKEN:
             # in this case the asset exists and needs to be updated
             self.edit_evm_token(cast('EvmToken', asset))
+        elif asset.asset_type == AssetType.SOLANA_TOKEN:
+            self.edit_solana_token(cast('SolanaToken', asset))
         else:
             self.edit_user_asset(cast('CryptoAsset', asset))
 
@@ -2336,8 +2341,9 @@ class GlobalDBHandler:
     def _execute_mapping_operation(
             entries: list[LocationAssetMappingUpdateEntry] | list[LocationAssetMappingDeleteEntry] | list[CounterpartyAssetMappingDeleteEntry] | list[CounterpartyAssetMappingUpdateEntry],  # noqa: E501
             sql_query: str,
-            error_msg: str,
             sql_bindings_fn: Callable,
+            operation_name: Literal['add', 'update', 'delete'],
+            mapping_type: Literal['location', 'counterparty'],
             skip_errors: bool = False,
             pre_check_fn: Callable | None = None,
     ) -> None:
@@ -2346,7 +2352,7 @@ class GlobalDBHandler:
         - entries: List of mapping entries to process.
         - error_msg: Template for the error message in case of operation failure.
         - sql_bindings_fn: A function that accepts an entry and returns a tuple of values to bind into sql_query.
-        - skip_errors: If True, errors during execution will be logged instead of stopping execution.
+        - skip_errors: If True, errors during execution will be logged as debug logs instead of stopping execution.
         - pre_check_fn: Optional function to perform a pre-execution check.
         - sql_query: SQL statement to execute. This should be a parameterized query (using placeholders)
                      that works with the bindings provided by sql_bindings_fn.
@@ -2354,26 +2360,27 @@ class GlobalDBHandler:
         May raise:
             - InputError if operations fail and skip_errors is False
         """  # noqa: E501
+        exists_str = 'already exists' if operation_name == 'add' else 'does not exist'
         with (globaldb := GlobalDBHandler()).conn.write_ctx() as write_cursor:
             for entry in entries:
-                msg = error_msg.format(entry=entry)
+                msg = f'the {mapping_type} asset mapping {entry} because it {exists_str} in the DB.'  # noqa: E501
                 try:
                     if pre_check_fn is not None:
                         with globaldb.conn.read_ctx() as cursor:
                             pre_check_fn(cursor, entry)
 
                     write_cursor.execute(sql_query, sql_bindings_fn(entry))
-                    if sql_query.startswith(('UPDATE', 'DELETE')) and write_cursor.rowcount != 1:
-                        if skip_errors:
-                            log.error(msg)
-                        else:
-                            raise InputError(msg)
+                    if not (sql_query.startswith(('UPDATE', 'DELETE')) and write_cursor.rowcount != 1):  # noqa: E501
+                        continue
 
                 except rsqlite.IntegrityError as e:
-                    if skip_errors:
-                        log.error(msg)
-                    else:
-                        raise InputError(msg) from e
+                    if not skip_errors:
+                        raise InputError(f'Failed to {operation_name} {msg}') from e
+
+                if not skip_errors:
+                    raise InputError(f'Failed to {operation_name} {msg}')
+
+                log.debug(f'Skipping {operation_name} of {msg}')
 
     @staticmethod
     def add_location_asset_mappings(
@@ -2391,7 +2398,8 @@ class GlobalDBHandler:
             pre_check_fn=GlobalDBHandler._location_asset_mapping_null_precheck,
             sql_bindings_fn=lambda entry: entry.serialize_for_db(),
             sql_query='INSERT INTO location_asset_mappings(local_id, exchange_symbol, location) VALUES(?, ?, ?)',  # noqa: E501
-            error_msg='Failed to add the location asset mapping of {entry} because it already exists in the DB.',  # noqa: E501
+            operation_name='add',
+            mapping_type='location',
         )
 
     @staticmethod
@@ -2420,7 +2428,8 @@ class GlobalDBHandler:
             skip_errors=skip_errors,
             sql_bindings_fn=lambda entry: entry.serialize_for_db(),
             sql_query='UPDATE location_asset_mappings SET local_id=? WHERE exchange_symbol=? AND location IS ?',  # noqa: E501
-            error_msg='Failed to update the location asset mapping of {entry} because it does not exist in the DB.',  # noqa: E501
+            operation_name='update',
+            mapping_type='location',
         )
 
     @staticmethod
@@ -2438,7 +2447,8 @@ class GlobalDBHandler:
             skip_errors=skip_errors,
             sql_bindings_fn=lambda entry: entry.serialize_for_db(),
             sql_query='DELETE FROM location_asset_mappings WHERE exchange_symbol=? AND location IS ?',  # noqa: E501
-            error_msg='Failed to delete the location asset mapping of {entry} because it does not exist in the DB.',  # noqa: E501
+            operation_name='delete',
+            mapping_type='location',
         )
 
     @staticmethod
@@ -2457,7 +2467,8 @@ class GlobalDBHandler:
             skip_errors=skip_errors,
             sql_bindings_fn=lambda entry: entry.serialize_for_db(),
             sql_query='INSERT INTO counterparty_asset_mappings(local_id, symbol, counterparty) VALUES(?, ?, ?)',  # noqa: E501
-            error_msg='Failed to add the counterparty asset mapping of {entry} because it already exists in the DB.',  # noqa: E501
+            operation_name='add',
+            mapping_type='counterparty',
         )
 
     @staticmethod
@@ -2476,7 +2487,8 @@ class GlobalDBHandler:
             skip_errors=skip_errors,
             sql_bindings_fn=lambda entry: entry.serialize_for_db(),
             sql_query='UPDATE counterparty_asset_mappings SET local_id=? WHERE symbol=? AND counterparty=?',  # noqa: E501
-            error_msg='Failed to update the counterparty asset mapping of {entry} because it does not exist in the DB.',  # noqa: E501
+            operation_name='update',
+            mapping_type='counterparty',
         )
 
     @staticmethod
@@ -2495,7 +2507,8 @@ class GlobalDBHandler:
             skip_errors=skip_errors,
             sql_bindings_fn=lambda entry: entry.serialize_for_db(),
             sql_query='DELETE FROM counterparty_asset_mappings WHERE symbol=? AND counterparty=?',
-            error_msg='Failed to delete the counterparty asset mapping of {entry} because it does not exist in the DB.',  # noqa: E501
+            operation_name='delete',
+            mapping_type='counterparty',
         )
 
     @staticmethod

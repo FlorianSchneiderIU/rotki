@@ -3,14 +3,16 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.assets.asset import EvmToken
-from rotkehlchen.assets.utils import get_or_create_evm_token
-from rotkehlchen.chain.ethereum.utils import (
+from rotkehlchen.assets.utils import (
     asset_normalized_value,
+    get_or_create_evm_token,
     token_normalized_value,
     token_normalized_value_decimals,
 )
+from rotkehlchen.chain.decoding.constants import CPT_GAS
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import REWARD_PAID_TOPIC
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.extrafi.cache import (
     get_existing_reward_pools,
     query_extrafi_data,
@@ -31,16 +33,16 @@ from rotkehlchen.chain.evm.decoding.extrafi.constants import (
     VOTE_ESCROW,
 )
 from rotkehlchen.chain.evm.decoding.extrafi.utils import maybe_query_farm_data
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface, ReloadableCacheDecoderMixin
-from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
-    DecoderContext,
-    DecodingOutput,
+from rotkehlchen.chain.evm.decoding.interfaces import (
+    EvmDecoderInterface,
+    ReloadableCacheDecoderMixin,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.evm.decoding.structures import (
+    DEFAULT_EVM_DECODING_OUTPUT,
+    DecoderContext,
+    EvmDecodingOutput,
+)
 from rotkehlchen.constants.resolver import evm_address_to_identifier
-from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
 from rotkehlchen.history.events.structures.types import (
     EventDirection,
     HistoryEventSubType,
@@ -52,8 +54,9 @@ from rotkehlchen.types import CacheType, TokenKind
 from rotkehlchen.utils.misc import bytes_to_address, timestamp_to_date
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
+    from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.types import ChecksumEvmAddress
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -61,12 +64,12 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
+class ExtrafiCommonDecoder(EvmDecoderInterface, ReloadableCacheDecoderMixin):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             extra_token_identifier: str,
     ) -> None:
@@ -85,7 +88,7 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         )
         self.extra_token_id = extra_token_identifier
 
-    def _decode_deposit_event(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_deposit_event(self, context: DecoderContext) -> EvmDecodingOutput:
         on_behalf_of = bytes_to_address(context.tx_log.topics[2])
         user = bytes_to_address(context.tx_log.data[0:32])
         token_amount = int.from_bytes(context.tx_log.data[32:64])
@@ -114,9 +117,9 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         else:
             log.error(f'Failed to find deposit event for extrafi in {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_withdrawal_event(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_withdrawal_event(self, context: DecoderContext) -> EvmDecodingOutput:
         on_behalf_of = bytes_to_address(context.tx_log.topics[3])
         user = bytes_to_address(context.tx_log.topics[2])
         for event in context.decoded_events:
@@ -136,27 +139,27 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         else:
             log.error(f'Failed to find withdrawal event for extrafi in {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _farm_name(self, vault_id: int) -> str:
         _, token0, token1 = maybe_query_farm_data(
             vault_id=vault_id,
-            evm_inquirer=self.evm_inquirer,
+            evm_inquirer=self.node_inquirer,
         )
         return f'{token0.symbol_or_name()}-{token1.symbol_or_name()} farm'
 
-    def _handle_pool_events(self, context: DecoderContext) -> DecodingOutput:
+    def _handle_pool_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] == DEPOSITED:
             return self._decode_deposit_event(context)
         if context.tx_log.topics[0] == REDEEM:
             return self._decode_withdrawal_event(context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _handle_claim(self, context: DecoderContext) -> DecodingOutput:
+    def _handle_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         """Handle claim events for the EXTRA token from the distributor"""
         if context.tx_log.topics[0] != CLAIM:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         recipient = bytes_to_address(context.tx_log.topics[1])
         raw_amount = int.from_bytes(context.tx_log.data[32:64])
@@ -176,17 +179,17 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         else:
             log.error(f'Could not match claim event of EXTRA in {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _handle_pool_rewards(self, context: DecoderContext) -> DecodingOutput:
+    def _handle_pool_rewards(self, context: DecoderContext) -> EvmDecodingOutput:
         """Handle rewards claimed for depositing in extrafi pools"""
         if context.tx_log.topics[0] != REWARD_PAID_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         user = bytes_to_address(context.tx_log.topics[1])
         token_identifier = evm_address_to_identifier(
             address=bytes_to_address(context.tx_log.topics[2]),
-            chain_id=self.evm_inquirer.chain_id,
+            chain_id=self.node_inquirer.chain_id,
             token_type=TokenKind.ERC20,
         )
         amount = int.from_bytes(context.tx_log.data[0:32])
@@ -205,12 +208,12 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         else:
             log.error(f'Could not find extrafi reward transfer at {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _vote_escrow_contract(self, context: DecoderContext) -> DecodingOutput:
+    def _vote_escrow_contract(self, context: DecoderContext) -> EvmDecodingOutput:
         """Handle lock of extra tokens in the protocol"""
         if context.tx_log.topics[0] != USER_CHECKPOINT:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[0:32]),
@@ -230,14 +233,13 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
                 event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
                 event.counterparty = CPT_EXTRAFI
                 event.notes = f'Lock {amount} EXTRA until {timestamp_to_date(locktime, formatstr="%d/%m/%Y %H:%M:%S")}'  # noqa: E501
-                event.product = EvmProduct.STAKING
                 break
         else:
             log.error(f'Failed to find lock of EXTRA in {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _partially_close_farm_position(self, context: DecoderContext) -> DecodingOutput:
+    def _partially_close_farm_position(self, context: DecoderContext) -> EvmDecodingOutput:
         """Close a position in a farm partially"""
         manager = bytes_to_address(context.tx_log.topics[3])
         amount_0_received = int.from_bytes(context.tx_log.data[32:64])
@@ -263,9 +265,9 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         else:
             log.error(f'Could not find withdrawal event for extrafi at {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _invest_into_farm_position(self, context: DecoderContext) -> DecodingOutput:
+    def _invest_into_farm_position(self, context: DecoderContext) -> EvmDecodingOutput:
         """Handle the creation of farm positions and changing the collateral/borrowed amount"""
         manager = bytes_to_address(context.tx_log.topics[3])
         amount_0_invested = int.from_bytes(context.tx_log.data[0:32])
@@ -277,7 +279,7 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         if amount_0_borrowed != 0 or amount_1_borrowed != 0:
             _, token0, token1 = maybe_query_farm_data(
                 vault_id=vault_id,
-                evm_inquirer=self.evm_inquirer,
+                evm_inquirer=self.node_inquirer,
             )
             if amount_0_borrowed != 0:
                 borrow_token, amount = token0, asset_normalized_value(amount_0_borrowed, token0)
@@ -285,7 +287,7 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
                 borrow_token, amount = token1, asset_normalized_value(amount_1_borrowed, token1)
 
             borrow_event = self.base.make_event_next_index(
-                tx_hash=context.transaction.tx_hash,
+                tx_ref=context.transaction.tx_hash,
                 timestamp=context.transaction.timestamp,
                 event_type=HistoryEventType.RECEIVE,
                 event_subtype=HistoryEventSubType.GENERATE_DEBT,
@@ -297,7 +299,7 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
                 counterparty=CPT_EXTRAFI,
             )
             deposit_event = self.base.make_event_next_index(
-                tx_hash=context.transaction.tx_hash,
+                tx_ref=context.transaction.tx_hash,
                 timestamp=context.transaction.timestamp,
                 event_type=HistoryEventType.DEPOSIT,
                 event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
@@ -339,9 +341,9 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         else:
             log.error(f'Could not find the invest event for extrafi in {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _handle_farm_repayment(self, context: DecoderContext) -> DecodingOutput:
+    def _handle_farm_repayment(self, context: DecoderContext) -> EvmDecodingOutput:
         amount_0_repaid = int.from_bytes(context.tx_log.data[32:64])
         amount_1_repaid = int.from_bytes(context.tx_log.data[64:96])
         vault_id = int.from_bytes(context.tx_log.topics[1])
@@ -400,9 +402,9 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         else:
             log.error(f'Could not find repayment event for extrafi in {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _handle_farm_events(self, context: DecoderContext) -> DecodingOutput:
+    def _handle_farm_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Handle creating and closing farm positions"""
         if context.tx_log.topics[0] == CLOSE_POSITION_PARTIALLY:
             return self._partially_close_farm_position(context)
@@ -410,18 +412,18 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
             return self._invest_into_farm_position(context)
         if context.tx_log.topics[0] == EXACT_REPAY:
             return self._handle_farm_repayment(context)
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def decode_lending_claim_reward(self, context: DecoderContext) -> DecodingOutput:
+    def decode_lending_claim_reward(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != REWARD_PAID_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         token_address = bytes_to_address(context.tx_log.topics[2])
         token = get_or_create_evm_token(
-            userdb=self.evm_inquirer.database,
+            userdb=self.node_inquirer.database,
             evm_address=token_address,
-            evm_inquirer=self.evm_inquirer,
-            chain_id=self.evm_inquirer.chain_id,
+            evm_inquirer=self.node_inquirer,
+            chain_id=self.node_inquirer.chain_id,
         )
         claimed = int.from_bytes(context.tx_log.data[0:32])
 
@@ -436,9 +438,9 @@ class ExtrafiCommonDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
                 event.notes = f'Claim {event.amount} {token.symbol_or_name()} from Extrafi lending'
                 break
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _cache_mapping_methods(self) -> tuple[Callable[[DecoderContext], DecodingOutput]]:
+    def _cache_mapping_methods(self) -> tuple[Callable[[DecoderContext], EvmDecodingOutput]]:
         return (self.decode_lending_claim_reward,)
 
     def addresses_to_decoders(self) -> dict['ChecksumEvmAddress', tuple[Any, ...]]:

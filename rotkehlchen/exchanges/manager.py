@@ -5,7 +5,9 @@ from importlib import import_module
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Optional
 
-from rotkehlchen.db.constants import BINANCE_MARKETS_KEY, KRAKEN_ACCOUNT_TYPE_KEY
+from rotkehlchen.api.websockets.typedefs import HistoryEventsStep
+from rotkehlchen.db.constants import BINANCE_MARKETS_KEY, KRAKEN_ACCOUNT_TYPE_KEY, OKX_LOCATION_KEY
+from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.exchanges.binance import BINANCE_BASE_URL, BINANCEUS_BASE_URL
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeWithExtras
@@ -16,6 +18,7 @@ from rotkehlchen.types import (
     ExchangeApiCredentials,
     ExchangeAuthCredentials,
     Location,
+    Timestamp,
 )
 from rotkehlchen.user_messages import MessagesAggregator
 
@@ -24,6 +27,7 @@ from .constants import EXCHANGES_WITHOUT_API_SECRET, SUPPORTED_EXCHANGES
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.exchanges.kraken import KrakenAccountType
+    from rotkehlchen.exchanges.okx import OkxLocation
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -80,6 +84,7 @@ class ExchangeManager:
             passphrase: str | None,
             kraken_account_type: Optional['KrakenAccountType'],
             binance_selected_trade_pairs: list[str] | None,
+            okx_location: Optional['OkxLocation'],
     ) -> tuple[bool, str]:
         """Edits both the exchange object and the database entry
 
@@ -111,6 +116,7 @@ class ExchangeManager:
             success, msg = exchangeobj.edit_exchange_extras({
                 KRAKEN_ACCOUNT_TYPE_KEY: kraken_account_type,
                 BINANCE_MARKETS_KEY: binance_selected_trade_pairs,
+                OKX_LOCATION_KEY: okx_location,
             })
             if success is False:
                 exchangeobj.reset_to_db_credentials()
@@ -128,6 +134,7 @@ class ExchangeManager:
                     passphrase=passphrase,
                     kraken_account_type=kraken_account_type,
                     binance_selected_trade_pairs=binance_selected_trade_pairs,
+                    okx_location=okx_location,
                 )
         except InputError as e:
             exchangeobj.reset_to_db_credentials()  # DB is already rolled back at this point
@@ -177,6 +184,9 @@ class ExchangeManager:
                 data = {'location': str(location), 'name': exchangeobj.name}
                 if location == Location.KRAKEN:  # ignore type since we know this is kraken here
                     data[KRAKEN_ACCOUNT_TYPE_KEY] = str(exchangeobj.account_type)  # type: ignore
+                elif location == Location.OKX:  # ignore type since we know this is okx here
+                    data[OKX_LOCATION_KEY] = exchangeobj.okx_location.serialize()  # type: ignore
+
                 exchange_info.append(data)
 
         return exchange_info
@@ -335,3 +345,49 @@ class ExchangeManager:
 
         for exchange in exchanges_list:
             exchange.query_history_events()
+
+    def requery_exchange_history_events(
+            self,
+            location: Location,
+            name: str,
+            start_ts: Timestamp,
+            end_ts: Timestamp,
+    ) -> tuple[int, int, int, Timestamp]:
+        """Query an exchange instance for certain range of time measured in seconds
+
+        May raise:
+            - InputError: if the exchange instance can't be found.
+            - DeserializationError
+            - IntegrityError
+        """
+        if (exchange := self.get_exchange(name=name, location=location)) is None:
+            raise InputError(f'{location!s} exchange {name} is not registered')
+
+        exchange.send_history_events_status_msg(
+            step=HistoryEventsStep.QUERYING_EVENTS_STARTED,
+        )
+        exchange.send_history_events_status_msg(
+            step=HistoryEventsStep.QUERYING_EVENTS_STATUS_UPDATE,
+            period=[start_ts, end_ts],
+        )
+        events_list, actual_end_ts = exchange.query_online_history_events(
+            start_ts=start_ts,
+            end_ts=end_ts,
+            force_refresh=True,
+        )
+        exchange.send_history_events_status_msg(step=HistoryEventsStep.QUERYING_EVENTS_FINISHED)
+        if (total_events := len(events_list)) == 0:
+            return 0, 0, 0, actual_end_ts
+
+        saved_events_amount = 0
+        with self.database.user_write() as write_cursor:
+            db_manager = DBHistoryEvents(self.database)
+            for event in events_list:
+                if db_manager.add_history_event(
+                    write_cursor=write_cursor,
+                    event=event,
+                ) is not None:
+                    saved_events_amount += 1
+
+        skipped_events = total_events - saved_events_amount
+        return total_events, saved_events_amount, skipped_events, actual_end_ts

@@ -10,15 +10,23 @@ export enum TransactionChainType {
   EVM = 'evm',
   EVMLIKE = 'evmlike',
   BITCOIN = 'bitcoin',
+  SOLANA = 'solana',
 }
+
+export const TransactionChainTypeNeedDecoding: TransactionChainType[] = [
+  TransactionChainType.EVM,
+  TransactionChainType.EVMLIKE,
+  TransactionChainType.SOLANA,
+] as const;
 
 export interface TransactionRequestPayload {
   readonly accounts: BlockchainAddress[];
 }
 
-export interface PullEvmTransactionPayload {
-  readonly transactions: EvmChainAndTxHash[];
+export interface PullLocationTransactionPayload {
+  readonly transactions: LocationAndTxRef[];
   readonly deleteCustom?: boolean;
+  readonly customIndexersOrder?: string[];
 }
 
 export interface PullEthBlockEventPayload {
@@ -29,28 +37,28 @@ export type PullEventPayload = {
   type: typeof HistoryEventEntryType.ETH_BLOCK_EVENT;
   data: number [];
 } | {
-  type: typeof HistoryEventEntryType.EVM_SWAP_EVENT | typeof HistoryEventEntryType.EVM_EVENT;
-  data: EvmChainAndTxHash;
+  type: typeof HistoryEventEntryType.EVM_SWAP_EVENT | typeof HistoryEventEntryType.EVM_EVENT | typeof HistoryEventEntryType.SOLANA_EVENT | typeof HistoryEventEntryType.SOLANA_SWAP_EVENT;
+  data: LocationAndTxRef;
 };
 
-export interface PullEvmLikeTransactionPayload {
-  readonly transactions: ChainAndTxHash[];
-  readonly deleteCustom?: boolean;
-}
-
-export type PullTransactionPayload = PullEvmTransactionPayload | PullEvmLikeTransactionPayload;
-
-export interface ChainAndTxHash {
+export interface ChainAndTxRefs {
   readonly chain: string;
-  readonly txHash: string;
+  readonly txRefs: string[];
 }
 
-export interface EvmChainAndTxHash {
-  readonly evmChain: string;
-  readonly txHash: string;
+export interface PullTransactionPayload extends ChainAndTxRefs {
+  readonly deleteCustom?: boolean;
+  readonly customIndexersOrder?: string[];
 }
 
-export interface AddTransactionHashPayload extends EvmChainAndTxHash {
+export interface LocationAndTxRef {
+  readonly location: string;
+  readonly txRef: string;
+}
+
+export interface AddTransactionHashPayload {
+  readonly blockchain: string;
+  readonly txRef: string;
   readonly associatedAddress: string;
 }
 
@@ -68,13 +76,30 @@ export const BlockchainAddress = z.object({
 
 export type BlockchainAddress = z.infer<typeof BlockchainAddress>;
 
-export interface RepullingTransactionPayload extends Partial<EvmChainAddress> {
-  readonly fromTimestamp: number;
-  readonly toTimestamp: number;
+interface TimeRange {
+  readonly fromTimestamp?: number;
+  readonly toTimestamp?: number;
+}
+
+export interface RepullingTransactionPayload extends TimeRange {
+  readonly chain: string;
+  readonly address?: string;
 }
 
 export interface RepullingTransactionResponse {
   newTransactionsCount: number;
+}
+
+export interface RepullingExchangeEventsPayload extends TimeRange {
+  location: string;
+  name: string;
+}
+
+export interface RepullingExchangeEventsResponse {
+  queriedEvents: number;
+  storedEvents: number;
+  skippedEvents: number;
+  actualEndTs: number;
 }
 
 export const EvmChainLikeAddress = z.object({
@@ -84,12 +109,12 @@ export const EvmChainLikeAddress = z.object({
 
 export type EvmChainLikeAddress = z.infer<typeof EvmChainLikeAddress>;
 
-export const BitcoinChainAddress = z.object({
+export const ChainAddress = z.object({
   address: z.string(),
   chain: z.string(),
 });
 
-export type BitcoinChainAddress = z.infer<typeof BitcoinChainAddress>;
+export type ChainAddress = z.infer<typeof ChainAddress>;
 
 export const HistoryEventDetail = z
   .object({

@@ -29,9 +29,10 @@ from rotkehlchen.exchanges.data_structures import Location
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.tests.utils.constants import A_ADA, A_AXS, A_BUSD, A_LUNA, A_RDN
 from rotkehlchen.tests.utils.exchanges import (
+    BINANCE_CONVERT_TRADES_RESPONSE,
     BINANCE_DEPOSITS_HISTORY_RESPONSE,
     BINANCE_FIATBUY_RESPONSE,
     BINANCE_FIATDEPOSITS_RESPONSE,
@@ -119,7 +120,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.SPEND,
             asset=A_ETH,
             amount=FVal('0.03160650'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='1',
             ),
@@ -130,7 +131,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.RECEIVE,
             asset=A_RDN,
             amount=FVal('5.0'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='1',
             ),
@@ -141,7 +142,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.FEE,
             asset=A_RDN,
             amount=FVal('0.005'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='1',
             ),
@@ -153,7 +154,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.SPEND,
             asset=A_ETH,
             amount=FVal('0.505'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='2',
             ),
@@ -164,7 +165,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.RECEIVE,
             asset=A_USDT,
             amount=FVal('242.9050'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='2',
             ),
@@ -175,7 +176,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.FEE,
             asset=A_USDT,
             amount=FVal('0.242905'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='2',
             ),
@@ -187,7 +188,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.SPEND,
             asset=A_USDT,
             amount=FVal('331.20244938'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='3',
             ),
@@ -198,7 +199,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.RECEIVE,
             asset=A_BTC,
             amount=FVal('0.051942'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='3',
             ),
@@ -209,7 +210,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.FEE,
             asset=A_BTC,
             amount=FVal('0.00005194'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='3',
             ),
@@ -221,7 +222,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.SPEND,
             asset=A_ADA,
             amount=FVal('285.2'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='4',
             ),
@@ -232,7 +233,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.RECEIVE,
             asset=A_USDT,
             amount=FVal('49.744584'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='4',
             ),
@@ -243,7 +244,7 @@ def test_trade_from_binance(function_scope_binance):
             event_subtype=HistoryEventSubType.FEE,
             asset=A_BNB,
             amount=FVal('0.00180015'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCE,
                 unique_id='4',
             ),
@@ -372,7 +373,7 @@ def test_binance_query_trade_history(function_scope_binance: 'Binance'):
         event_subtype=HistoryEventSubType.SPEND,
         asset=A_BTC,
         amount=FVal('48.0000120000000000'),
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BINANCE,
             unique_id='28457',
         ),
@@ -383,7 +384,7 @@ def test_binance_query_trade_history(function_scope_binance: 'Binance'):
         event_subtype=HistoryEventSubType.RECEIVE,
         asset=A_BNB,
         amount=FVal('12.00000000'),
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BINANCE,
             unique_id='28457',
         ),
@@ -394,7 +395,7 @@ def test_binance_query_trade_history(function_scope_binance: 'Binance'):
         event_subtype=HistoryEventSubType.FEE,
         asset=A_BNB,
         amount=FVal('10.10000000'),
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BINANCE,
             unique_id='28457',
         ),
@@ -405,7 +406,7 @@ def test_binance_query_trade_history(function_scope_binance: 'Binance'):
         event_subtype=HistoryEventSubType.SPEND,
         asset=A_EUR,
         amount=FVal('19.800000064'),
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BINANCE,
             unique_id='353fca443f06466db0c4dc89f94f027a',
         ),
@@ -416,7 +417,7 @@ def test_binance_query_trade_history(function_scope_binance: 'Binance'):
         event_subtype=HistoryEventSubType.RECEIVE,
         asset=A_LUNA,
         amount=FVal('4.462'),
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BINANCE,
             unique_id='353fca443f06466db0c4dc89f94f027a',
         ),
@@ -428,7 +429,7 @@ def test_binance_query_trade_history(function_scope_binance: 'Binance'):
         asset=A_EUR,
         amount=FVal('0.2'),
         location_label=binance.name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BINANCE,
             unique_id='353fca443f06466db0c4dc89f94f027a',
         ),
@@ -439,7 +440,7 @@ def test_binance_query_trade_history(function_scope_binance: 'Binance'):
         asset=A_ETH,
         amount=FVal('4.462'),
         location_label=binance.name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BINANCE,
             unique_id='463fca443f06466db0c4dc89f94f027a',
         ),
@@ -450,7 +451,7 @@ def test_binance_query_trade_history(function_scope_binance: 'Binance'):
         asset=A_EUR,
         amount=FVal('19.800000064'),
         location_label=binance.name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BINANCE,
             unique_id='463fca443f06466db0c4dc89f94f027a',
         ),
@@ -461,7 +462,7 @@ def test_binance_query_trade_history(function_scope_binance: 'Binance'):
         asset=A_EUR,
         amount=FVal('0.2'),
         location_label=binance.name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BINANCE,
             unique_id='463fca443f06466db0c4dc89f94f027a',
         ),
@@ -585,7 +586,7 @@ def test_binance_query_deposits_withdrawals(function_scope_binance: 'Binance') -
                     response_str = '[]'
             else:
                 raise AssertionError('Unexpected binance request in test')
-        elif 'myTrades' in url or 'fiat/payments' in url:
+        elif 'myTrades' in url or 'fiat/payments' in url or 'convert/tradeFlow' in url:
             response_str = '[]'
         else:
             raise AssertionError('Unexpected binance request in test')
@@ -826,7 +827,7 @@ def test_binance_query_deposits_withdrawals_gte_89_days(function_scope_binance):
                 response_str = next(get_fiat_withdraw_result)
             else:
                 raise AssertionError('Unexpected binance request in test')
-        elif 'myTrades' in url or 'fiat/payments' in url:
+        elif 'myTrades' in url or 'fiat/payments' in url or 'convert/tradeFlow' in url:
             response_str = '[]'
         else:
             raise AssertionError('Unexpected binance request in test')
@@ -1124,3 +1125,72 @@ def test_binance_query_lending_interests_history(
 
     assert len(binance.msg_aggregator.consume_errors()) == 0
     assert len(binance.msg_aggregator.consume_warnings()) == 0
+
+
+def test_binance_query_convert_trades(function_scope_binance: 'Binance') -> None:
+    """Test that Binance Convert trades are queried and deserialized correctly"""
+    def mock_convert_trades(url, params, *args, **kwargs):  # pylint: disable=unused-argument
+        if 'convert/tradeFlow' in url:
+            return MockResponse(200, BINANCE_CONVERT_TRADES_RESPONSE)
+        elif 'myTrades' in url:
+            return MockResponse(200, '[]')
+        elif 'fiat/payments' in url:
+            return MockResponse(200, '{"data": [], "total": 0}')
+        return MockResponse(200, '[]')
+
+    with patch.object(function_scope_binance.session, 'request', side_effect=mock_convert_trades):
+        assert function_scope_binance._query_online_trade_history(
+            start_ts=Timestamp(1674537700),
+            end_ts=Timestamp(1674538000),
+        ) == [SwapEvent(
+            group_identifier=create_group_identifier_from_unique_id(
+                location=Location.BINANCE,
+                unique_id='1674537715234',
+            ),
+            sequence_index=0,
+            timestamp=TimestampMS(1674537715234),
+            location=Location.BINANCE,
+            location_label='binance',
+            asset=A_BTC,
+            amount=FVal('0.001'),
+            event_subtype=HistoryEventSubType.SPEND,
+        ), SwapEvent(
+            group_identifier=create_group_identifier_from_unique_id(
+                location=Location.BINANCE,
+                unique_id='1674537715234',
+            ),
+            sequence_index=1,
+            timestamp=TimestampMS(1674537715234),
+            location=Location.BINANCE,
+            location_label='binance',
+            asset=A_USDT,
+            amount=FVal('30.521'),
+            event_subtype=HistoryEventSubType.RECEIVE,
+        ), SwapEvent(
+            group_identifier=create_group_identifier_from_unique_id(
+                location=Location.BINANCE,
+                unique_id='1674537815234',
+            ),
+            sequence_index=0,
+            timestamp=TimestampMS(1674537815234),
+            location=Location.BINANCE,
+            location_label='binance',
+            asset=A_ETH,
+            amount=FVal('0.1'),
+            event_subtype=HistoryEventSubType.SPEND,
+        ), SwapEvent(
+            group_identifier=create_group_identifier_from_unique_id(
+                location=Location.BINANCE,
+                unique_id='1674537815234',
+            ),
+            sequence_index=1,
+            timestamp=TimestampMS(1674537815234),
+            location=Location.BINANCE,
+            location_label='binance',
+            asset=A_BNB,
+            amount=FVal('0.5'),
+            event_subtype=HistoryEventSubType.RECEIVE,
+        )]
+
+    assert len(function_scope_binance.msg_aggregator.consume_errors()) == 0
+    assert len(function_scope_binance.msg_aggregator.consume_warnings()) == 0

@@ -1,11 +1,9 @@
-from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.db.filtering import DBMultiStringFilter
 from rotkehlchen.exchanges.data_structures import hash_id
 from rotkehlchen.history.events.structures.base import HistoryBaseEntry
-from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.types import AnyBlockchainAddress, AssetAmount, Location
+from rotkehlchen.types import AssetAmount, Location
 from rotkehlchen.utils.misc import timestamp_to_date, ts_ms_to_sec
 
 if TYPE_CHECKING:
@@ -22,42 +20,37 @@ def history_event_to_staking_for_api(event: HistoryBaseEntry) -> dict[str, Any]:
     TODO: Think if we need these and if instead the frontend could just consume normal
     history events through the rotki API
     """
-    data = {
+    return {
         'asset': event.asset.identifier,
         'timestamp': ts_ms_to_sec(event.timestamp),
         'location': str(event.location),
         'amount': abs(event.amount),
+        # event_subtype to event_type serialization is intended here according to api docs
+        'event_type': event.event_subtype.serialize(),
     }
-    if not (
-            event.location == Location.BINANCE and
-            event.event_type == HistoryEventSubType.REWARD
-    ):
-        data['event_type'] = event.event_subtype.serialize()
-
-    return data
 
 
-def create_event_identifier_from_unique_id(
+def create_group_identifier_from_unique_id(
         location: Location,
         unique_id: str,
 ) -> str:
     return hash_id(str(location) + unique_id)
 
 
-def create_event_identifier(
+def create_group_identifier(
         location: Location,
         timestamp: 'TimestampMS',
         asset: 'Asset',
         amount: 'FVal',
         unique_id: str | None,
 ) -> str:
-    """Create a unique event identifier from the given parameters.
+    """Create a unique group identifier from the given parameters.
     `unique_id` is a transaction id from an exchange, which in combination with the
-    location makes a unique event identifier. If this is not available, the location,
+    location makes a unique group identifier. If this is not available, the location,
     timestamp, asset, and balance must all be combined to ensure a unique identifier.
     """
     if unique_id:
-        return create_event_identifier_from_unique_id(location, unique_id)
+        return create_group_identifier_from_unique_id(location, unique_id)
 
     return hash_id(
         str(location) +
@@ -67,7 +60,7 @@ def create_event_identifier(
     )
 
 
-def create_event_identifier_from_swap(
+def create_group_identifier_from_swap(
         location: Location,
         timestamp: 'TimestampMS',
         spend: AssetAmount,
@@ -75,7 +68,7 @@ def create_event_identifier_from_swap(
         unique_id: str | None = None,
 ) -> str:
     if unique_id:
-        return create_event_identifier_from_unique_id(location, unique_id)
+        return create_group_identifier_from_unique_id(location, unique_id)
 
     return hash_id(
         str(location)
@@ -112,59 +105,3 @@ def generate_events_export_filename(filter_query: 'HistoryBaseEntryFilterQuery',
                 parts.append(f'subtypes_{"-".join(filter_.values)}')
 
     return f'{"_".join(parts)}.csv'
-
-
-def decode_transfer_direction(
-        from_address: AnyBlockchainAddress,
-        to_address: AnyBlockchainAddress | None,
-        tracked_accounts: Sequence[AnyBlockchainAddress],
-        maybe_get_exchange_fn: Callable[[AnyBlockchainAddress], str | None],
-) -> tuple[HistoryEventType, HistoryEventSubType, str | None, AnyBlockchainAddress, str, str] | None:  # noqa: E501
-    """Determine how to classify a transfer event depending on if the addresses are tracked,
-    if they are exchange addresses, etc.
-
-    Returns event type, location label, address, counterparty and verb.
-    address is the address on the opposite side of the event. counterparty is the exchange name
-    if it is a deposit / withdrawal to / from an exchange.
-    """
-    tracked_from = from_address in tracked_accounts
-    tracked_to = to_address in tracked_accounts
-    if not tracked_from and not tracked_to:
-        return None
-
-    from_exchange = maybe_get_exchange_fn(from_address)
-    to_exchange = maybe_get_exchange_fn(to_address) if to_address else None
-
-    counterparty: str | None = None
-    event_subtype = HistoryEventSubType.NONE
-    if tracked_from and tracked_to:
-        event_type = HistoryEventType.TRANSFER
-        location_label = from_address
-        address = to_address
-        verb = 'Transfer'
-    elif tracked_from:
-        if to_exchange is not None:
-            event_type = HistoryEventType.DEPOSIT
-            verb = 'Deposit'
-            counterparty = to_exchange
-            event_subtype = HistoryEventSubType.DEPOSIT_ASSET
-        else:
-            event_type = HistoryEventType.SPEND
-            verb = 'Send'
-
-        address = to_address
-        location_label = from_address
-    else:  # can only be tracked_to
-        if from_exchange:
-            event_type = HistoryEventType.WITHDRAWAL
-            verb = 'Withdraw'
-            counterparty = from_exchange
-            event_subtype = HistoryEventSubType.REMOVE_ASSET
-        else:
-            event_type = HistoryEventType.RECEIVE
-            verb = 'Receive'
-
-        address = from_address
-        location_label = to_address  # type: ignore  # to_address can't be None here
-
-    return event_type, event_subtype, location_label, address, counterparty, verb  # type: ignore

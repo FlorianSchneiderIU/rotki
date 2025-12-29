@@ -29,7 +29,7 @@ withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: 'update:asset', asset: string): void;
+  'update:asset': [asset: string];
 }>();
 
 interface BalanceSnapshotPayloadAndLocation extends BalanceSnapshotPayload {
@@ -97,7 +97,7 @@ defineExpose({
 </script>
 
 <template>
-  <form class="flex flex-col gap-2">
+  <div class="flex flex-col gap-2">
     <BalanceTypeInput
       v-model="category"
       :label="t('common.category')"
@@ -143,5 +143,5 @@ defineExpose({
       :locations="locations"
       :preview-location-balance="previewLocationBalance"
     />
-  </form>
+  </div>
 </template>

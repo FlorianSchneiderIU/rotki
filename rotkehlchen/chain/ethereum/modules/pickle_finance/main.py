@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from rotkehlchen.accounting.structures.balance import AssetBalance, Balance
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_PICKLE
 from rotkehlchen.errors.serialization import DeserializationError
@@ -75,7 +75,7 @@ class PickleFinance(EthereumModule):
         )
         reward_outputs, dill_outputs = outputs[:len(addresses)], outputs[len(addresses):]
 
-        pickle_price = Inquirer.find_usd_price(A_PICKLE)
+        pickle_price = Inquirer.find_main_currency_price(A_PICKLE)
         for idx, output in enumerate(reward_outputs):
             status_rewards, result = output
             status_dill, result_dill = dill_outputs[idx]
@@ -101,14 +101,14 @@ class PickleFinance(EthereumModule):
                             asset=A_PICKLE,
                             balance=Balance(
                                 amount=dill_locked,
-                                usd_value=pickle_price * dill_locked,
+                                value=pickle_price * dill_locked,
                             ),
                         ),
                         pending_rewards=AssetBalance(
                             asset=A_PICKLE,
                             balance=Balance(
                                 amount=dill_rewards,
-                                usd_value=pickle_price * dill_rewards,
+                                value=pickle_price * dill_rewards,
                             ),
                         ),
                         lock_time=deserialize_timestamp(dill_amounts[1]),

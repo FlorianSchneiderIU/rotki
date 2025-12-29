@@ -4,13 +4,13 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Final
 
 from rotkehlchen.assets.asset import Asset, EvmToken
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
 from rotkehlchen.chain.evm.decoding.utils import bridge_match_transfer, bridge_prepare_data
 from rotkehlchen.constants.resolver import evm_address_to_identifier
@@ -20,8 +20,8 @@ from rotkehlchen.types import ChainID, ChecksumEvmAddress, TokenKind
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
-    from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
+    from rotkehlchen.chain.decoding.types import CounterpartyDetails
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -33,11 +33,11 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class SuperchainL2SideBridgeCommonDecoder(DecoderInterface, ABC):
+class SuperchainL2SideBridgeCommonDecoder(EvmDecoderInterface, ABC):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             native_assets: Sequence['Asset'],
             bridge_addresses: tuple['ChecksumEvmAddress', ...],
@@ -55,7 +55,7 @@ class SuperchainL2SideBridgeCommonDecoder(DecoderInterface, ABC):
         self.native_assets = native_assets
         self.counterparty = counterparty
 
-    def _decode_receive_or_deposit(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_receive_or_deposit(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes a bridging event.
 
         Note:
@@ -66,7 +66,7 @@ class SuperchainL2SideBridgeCommonDecoder(DecoderInterface, ABC):
              https://docs.optimism.io/app-developers/bridging/custom-bridge
         """
         if context.tx_log.topics[0] not in {DEPOSIT_FINALIZED, WITHDRAWAL_INITIATED}:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         # Read information from event's topics & data
         l1_token_address = bytes_to_address(context.tx_log.topics[1])
@@ -77,28 +77,28 @@ class SuperchainL2SideBridgeCommonDecoder(DecoderInterface, ABC):
 
         if l1_token_address == ZERO_ADDRESS:
             # This means that ETH was bridged
-            asset = self.evm_inquirer.native_token
+            asset = self.node_inquirer.native_token
             valid_assets = self.native_assets
         else:
             # Otherwise it is an ERC20 token bridging event
             try:
                 asset = EvmToken(identifier=evm_address_to_identifier(
                     address=l2_token_address,
-                    chain_id=self.evm_inquirer.chain_id,
+                    chain_id=self.node_inquirer.chain_id,
                     token_type=TokenKind.ERC20,
                 ))
                 valid_assets = (asset,)
             except (UnknownAsset, WrongAssetType):
                 # can't call `notify_user`` since we don't have any particular event here.
-                log.error(f'Failed to resolve asset with address {l2_token_address} to an {self.evm_inquirer.chain_name} token')  # noqa: E501
-                return DEFAULT_DECODING_OUTPUT
+                log.error(f'Failed to resolve asset with address {l2_token_address} to an {self.node_inquirer.chain_name} token')  # noqa: E501
+                return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = asset_normalized_value(asset=asset, amount=raw_amount)
 
         expected_event_type, new_event_type, from_chain, to_chain, expected_location_label = bridge_prepare_data(  # noqa: E501
             tx_log=context.tx_log,  # args are opposite here due to the way logs are
             deposit_topics=(WITHDRAWAL_INITIATED,),
-            source_chain=self.evm_inquirer.chain_id,
+            source_chain=self.node_inquirer.chain_id,
             target_chain=ChainID.ETHEREUM,
             from_address=to_address,
             to_address=from_address,
@@ -126,7 +126,7 @@ class SuperchainL2SideBridgeCommonDecoder(DecoderInterface, ABC):
                     counterparty=self.counterparty,
                 )
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

@@ -1,3 +1,5 @@
+import json
+from http import HTTPStatus
 from unittest.mock import patch
 
 import gevent
@@ -8,39 +10,50 @@ from rotkehlchen.api.server import APIServer
 from rotkehlchen.chain.evm.decoding.monerium.constants import CPT_MONERIUM
 from rotkehlchen.constants.assets import A_ETH_EURE
 from rotkehlchen.constants.misc import ONE
+from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.filtering import EvmEventFilterQuery, HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
-from rotkehlchen.externalapis.monerium import init_monerium
+from rotkehlchen.externalapis.monerium import MoneriumOAuthClient, init_monerium
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.api import api_url_for, assert_proper_response
-from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.types import ExternalService, Location, TimestampMS, deserialize_evm_tx_hash
+from rotkehlchen.tests.utils.premium import MockResponse
+from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
+from rotkehlchen.utils.misc import ts_now
 
 
 def mock_monerium_and_run_periodic_task(database, contents):
-    def mock_monerium(url, **kwargs):  # pylint: disable=unused-argument
-        return MockResponse(200, contents)
+    def mock_orders(*_args, **_kwargs):
+        return MockResponse(
+            status_code=HTTPStatus.OK,
+            text=json.dumps({'orders': json.loads(contents)}),
+        )
 
-    monerium = init_monerium(database)
-    with gevent.Timeout(timeout := 4), patch('requests.Session.get', side_effect=mock_monerium):
-        try:
-            monerium.get_and_process_orders()
-        except gevent.Timeout as e:
-            raise AssertionError(f'monerium order query was not scheduled within {timeout} seconds') from e  # noqa: E501
+    with (
+        patch(
+            'rotkehlchen.externalapis.monerium.MoneriumOAuthClient.request',
+            side_effect=mock_orders,
+        ),
+        patch(
+            'rotkehlchen.externalapis.monerium.MoneriumOAuthClient.is_authenticated',
+            return_value=True,
+        ),
+    ):
+        monerium = init_monerium(database)
+        monerium.get_and_process_orders()
 
 
 def test_send_bank_transfer(database, monerium_credentials):  # pylint: disable=unused-argument
     """Test that sending a bank transfer on-chain via monerium is seen via their API
     and the periodic task identifies the event and properly annotates it"""
     dbevents = DBHistoryEvents(database)
-    evmhash = deserialize_evm_tx_hash(val='0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354')  # noqa: E501
+    tx_hash = deserialize_evm_tx_hash(val='0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354')  # noqa: E501
     amount_str = '1500'
     user_address = '0x99a0618B846D43E29C15ac468Eae06d03C9243C7'
     timestamp = TimestampMS(1701765059000)
     event = EvmEvent(
-        tx_hash=evmhash,
+        tx_ref=tx_hash,
         sequence_index=171,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -57,7 +70,7 @@ def test_send_bank_transfer(database, monerium_credentials):  # pylint: disable=
 
     mock_monerium_and_run_periodic_task(
         database=database,
-        contents='[{"id": "xx-yy", "profile": "zz-yy", "accountId": "aa-yy", "address": "0x99a0618B846D43E29C15ac468Eae06d03C9243C7", "kind": "redeem", "amount": "1500", "currency": "eur", "totalFee": "0", "fees": [], "counterpart": {"details": {"name": "Finanzamt Charlottenburg", "country": "DE", "companyName": "Finanzamt Charlottenburg"}, "identifier": {"iban": "DE94 1005 0000 6600 0464 63", "standard": "iban"}}, "memo": "LohnsteuerQ1", "supportingDocumentId": "", "chain": "ethereum", "network": "mainnet", "txHashes": ["0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354"], "meta": {"state": "processed", "placedBy": "qq-yy", "placedAt": "2023-10-18T12:09:42.621469Z", "processedAt": "2023-10-18T12:09:43.621469Z", "approvedAt": "2023-10-18T12:09:44.621469Z", "confirmedAt": "2023-10-18T12:09:44.921469Z", "receivedAmount": "1500", "sentAmount": "1500"}}]',  # noqa: E501
+        contents='[{"id": "xx-yy", "profile": "zz-yy", "accountId": "aa-yy", "address": "0x99a0618B846D43E29C15ac468Eae06d03C9243C7", "kind": "redeem", "amount": "1500", "currency": "eur", "totalFee": "0", "fees": [], "counterpart": {"details": {"name": "Finanzamt Charlottenburg", "country": "DE", "companyName": "Finanzamt Charlottenburg"}, "identifier": {"iban": "DE94 1005 0000 6600 0464 63", "standard": "iban"}}, "memo": "LohnsteuerQ1", "supportingDocumentId": "", "chain": "ethereum", "network": "mainnet", "meta": {"state": "processed", "txHashes": ["0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354"], "placedBy": "qq-yy", "placedAt": "2023-10-18T12:09:42.621469Z", "processedAt": "2023-10-18T12:09:43.621469Z", "approvedAt": "2023-10-18T12:09:44.621469Z", "confirmedAt": "2023-10-18T12:09:44.921469Z", "receivedAmount": "1500", "sentAmount": "1500"}}]',  # noqa: E501
     )
 
     # Set the expected changes in the event
@@ -67,7 +80,7 @@ def test_send_bank_transfer(database, monerium_credentials):  # pylint: disable=
         new_events = dbevents.get_history_events_internal(
             cursor=cursor,
             filter_query=EvmEventFilterQuery.make(
-                tx_hashes=[evmhash],
+                tx_hashes=[tx_hash],
             ),
         )
     assert new_events == [event]
@@ -77,12 +90,12 @@ def test_receive_bank_transfer(database, monerium_credentials):  # pylint: disab
     """Test that receiving a bank transfer on-chain via monerium is seen via their API
     and the periodic task identifies the event and properly annotates it"""
     dbevents = DBHistoryEvents(database)
-    evmhash = deserialize_evm_tx_hash(val='0x4ed9db44c5ee4ba6a4cf3e8e9b386f0b857afebad8339a92666e175c747bdd74')  # noqa: E501
+    tx_hash = deserialize_evm_tx_hash(val='0x4ed9db44c5ee4ba6a4cf3e8e9b386f0b857afebad8339a92666e175c747bdd74')  # noqa: E501
     amount_str = '1500'
     user_address = '0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da'
     timestamp = TimestampMS(1701765059000)
     event = EvmEvent(
-        tx_hash=evmhash,
+        tx_ref=tx_hash,
         sequence_index=113,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -99,7 +112,7 @@ def test_receive_bank_transfer(database, monerium_credentials):  # pylint: disab
 
     mock_monerium_and_run_periodic_task(
         database=database,
-        contents='[{"id": "xx-yy", "profile": "zz-yy", "accountId": "aa-yy", "address": "0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da", "kind": "issue", "amount": "1500", "currency": "eur", "totalFee": "0", "fees": [], "counterpart": {"details": {"name": "Payward Ltd", "country": "GB"}, "identifier": {"iban": "GB60 CLJU 0099 7129 9001 60", "standard": "iban"}}, "memo": "Kraken Tx AAA-BBB", "supportingDocumentId": "", "chain": "ethereum", "network": "mainnet", "txHashes": ["0x4ed9db44c5ee4ba6a4cf3e8e9b386f0b857afebad8339a92666e175c747bdd74"], "meta": {"state": "processed", "placedBy": "qq-yy", "placedAt": "2023-10-18T12:09:42.621469Z", "processedAt": "2023-10-18T12:09:43.621469Z", "approvedAt": "2023-10-18T12:09:44.621469Z", "confirmedAt": "2023-10-18T12:09:44.921469Z", "receivedAmount": "1500", "sentAmount": "1500"}}]',  # noqa: E501
+        contents='[{"id": "xx-yy", "profile": "zz-yy", "accountId": "aa-yy", "address": "0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da", "kind": "issue", "amount": "1500", "currency": "eur", "totalFee": "0", "fees": [], "counterpart": {"details": {"name": "Payward Ltd", "country": "GB"}, "identifier": {"iban": "GB60 CLJU 0099 7129 9001 60", "standard": "iban"}}, "memo": "Kraken Tx AAA-BBB", "supportingDocumentId": "", "chain": "ethereum", "network": "mainnet", "meta": {"state": "processed", "txHashes": ["0x4ed9db44c5ee4ba6a4cf3e8e9b386f0b857afebad8339a92666e175c747bdd74"], "placedBy": "qq-yy", "placedAt": "2023-10-18T12:09:42.621469Z", "processedAt": "2023-10-18T12:09:43.621469Z", "approvedAt": "2023-10-18T12:09:44.621469Z", "confirmedAt": "2023-10-18T12:09:44.921469Z", "receivedAmount": "1500", "sentAmount": "1500"}}]',  # noqa: E501
     )
 
     # Set the expected changes in the event
@@ -109,7 +122,7 @@ def test_receive_bank_transfer(database, monerium_credentials):  # pylint: disab
         new_events = dbevents.get_history_events_internal(
             cursor=cursor,
             filter_query=EvmEventFilterQuery.make(
-                tx_hashes=[evmhash],
+                tx_hashes=[tx_hash],
             ),
         )
     assert new_events == [event]
@@ -126,7 +139,7 @@ def test_bridge_via_monerium(database, monerium_credentials):  # pylint: disable
     gnosis_user_address = '0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da'
     timestamp = TimestampMS(1701765059000)
     eth_event = EvmEvent(
-        tx_hash=ethhash,
+        tx_ref=ethhash,
         sequence_index=171,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -139,7 +152,7 @@ def test_bridge_via_monerium(database, monerium_credentials):  # pylint: disable
         counterparty=CPT_MONERIUM,
     )
     gnosis_event = EvmEvent(
-        tx_hash=gnosishash,
+        tx_ref=gnosishash,
         sequence_index=113,
         timestamp=timestamp,
         location=Location.GNOSIS,
@@ -156,7 +169,7 @@ def test_bridge_via_monerium(database, monerium_credentials):  # pylint: disable
 
     mock_monerium_and_run_periodic_task(
         database=database,
-        contents='[{"id": "xx-yy", "profile": "zz-yy", "accountId": "aa-yy", "address": "0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da", "kind": "issue", "amount": "1500", "currency": "eur", "totalFee": "0", "fees": [], "counterpart": {"details": {}, "identifier": {"chain": "ethereum", "address": "0x99a0618B846D43E29C15ac468Eae06d03C9243C7", "network": "mainnet", "standard": "chain"}}, "memo": "Move to Gnosis Chain", "supportingDocumentId": "", "chain": "gnosis", "network": "mainnet", "txHashes": ["0x4ed9db44c5ee4ba6a4cf3e8e9b386f0b857afebad8339a92666e175c747bdd74", "0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354"], "meta": {"state": "processed", "placedBy": "qq-yy", "placedAt": "2023-10-18T12:09:42.621469Z", "processedAt": "2023-10-18T12:09:43.621469Z", "approvedAt": "2023-10-18T12:09:44.621469Z", "confirmedAt": "2023-10-18T12:09:44.921469Z", "receivedAmount": "1500", "sentAmount": "1500"}},{"id": "pp-yy", "profile": "ll-yy", "accountId": "kk-yy", "address": "0x99a0618B846D43E29C15ac468Eae06d03C9243C7", "kind": "redeem", "amount": "1500", "currency": "eur", "totalFee": "0", "fees": [], "counterpart": {"details": {}, "identifier": {"chain": "gnosis", "address": "0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da", "network": "mainnet", "standard": "chain"}}, "memo": "Move to Gnosis Chain", "supportingDocumentId": "", "chain": "ethereum", "network": "mainnet", "txHashes": ["0x4ed9db44c5ee4ba6a4cf3e8e9b386f0b857afebad8339a92666e175c747bdd74", "0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354"], "meta": {"state": "processed", "placedBy": "qq-yy", "placedAt": "2023-10-18T12:09:42.621469Z", "processedAt": "2023-10-18T12:09:43.621469Z", "approvedAt": "2023-10-18T12:09:44.621469Z", "confirmedAt": "2023-10-18T12:09:44.921469Z", "receivedAmount": "1500", "sentAmount": "1500"}}]',  # noqa: E501
+        contents='[{"id": "xx-yy", "profile": "zz-yy", "accountId": "aa-yy", "address": "0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da", "kind": "issue", "amount": "1500", "currency": "eur", "totalFee": "0", "fees": [], "counterpart": {"details": {}, "identifier": {"chain": "ethereum", "address": "0x99a0618B846D43E29C15ac468Eae06d03C9243C7", "network": "mainnet", "standard": "chain"}}, "memo": "Move to Gnosis Chain", "supportingDocumentId": "", "chain": "gnosis", "network": "mainnet", "meta": {"state": "processed", "txHashes": ["0x4ed9db44c5ee4ba6a4cf3e8e9b386f0b857afebad8339a92666e175c747bdd74", "0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354"], "placedBy": "qq-yy", "placedAt": "2023-10-18T12:09:42.621469Z", "processedAt": "2023-10-18T12:09:43.621469Z", "approvedAt": "2023-10-18T12:09:44.621469Z", "confirmedAt": "2023-10-18T12:09:44.921469Z", "receivedAmount": "1500", "sentAmount": "1500"}},{"id": "pp-yy", "profile": "ll-yy", "accountId": "kk-yy", "address": "0x99a0618B846D43E29C15ac468Eae06d03C9243C7", "kind": "redeem", "amount": "1500", "currency": "eur", "totalFee": "0", "fees": [], "counterpart": {"details": {}, "identifier": {"chain": "gnosis", "address": "0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da", "network": "mainnet", "standard": "chain"}}, "memo": "Move to Gnosis Chain", "supportingDocumentId": "", "chain": "ethereum", "network": "mainnet", "meta": {"state": "processed", "placedBy": "qq-yy", "txHashes": ["0x4ed9db44c5ee4ba6a4cf3e8e9b386f0b857afebad8339a92666e175c747bdd74", "0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354"], "placedAt": "2023-10-18T12:09:42.621469Z", "processedAt": "2023-10-18T12:09:43.621469Z", "approvedAt": "2023-10-18T12:09:44.621469Z", "confirmedAt": "2023-10-18T12:09:44.921469Z", "receivedAmount": "1500", "sentAmount": "1500"}}]',  # noqa: E501
     )
 
     # Set the expected changes in the events
@@ -193,7 +206,7 @@ def test_query_info_on_redecode_request(rotkehlchen_api_server: APIServer):
     gnosishash = deserialize_evm_tx_hash(val='0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354')  # noqa: E501
     gnosis_user_address = '0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da'
     gnosis_event = EvmEvent(
-        tx_hash=gnosishash,
+        tx_ref=gnosishash,
         sequence_index=113,
         timestamp=TimestampMS(1701765059000),
         location=Location.GNOSIS,
@@ -206,10 +219,19 @@ def test_query_info_on_redecode_request(rotkehlchen_api_server: APIServer):
         counterparty=CPT_MONERIUM,
     )
     with database.user_write() as write_cursor:
-        write_cursor.execute(  # not using the fixture since it has issues with the api
-            'INSERT OR REPLACE INTO external_service_credentials(name, api_key, api_secret) '
-            'VALUES(?, ?, ?)',
-            (ExternalService.MONERIUM.name.lower(), 'mockuser', 'mockpassword'),
+        database.set_static_cache(
+            write_cursor=write_cursor,
+            name=DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+            value=json.dumps({
+                'access_token': 'mock-access-token',
+                'refresh_token': 'mock-refresh-token',
+                'expires_at': ts_now() + 3600,
+                'client_id': 'mock-client-id',
+                'token_type': 'Bearer',
+                'user_email': 'mock@monerium.com',
+                'default_profile_id': 'profile-id',
+                'profiles': [],
+            }),
         )
 
     def add_event(self, *args, **kwargs):  # pylint: disable=unused-argument
@@ -224,18 +246,21 @@ def test_query_info_on_redecode_request(rotkehlchen_api_server: APIServer):
         self._post_process(refresh_balances=False, events=[gnosis_event])
         return [gnosis_event]
 
-    response_txt = '[{"id":"YYYY","profile":"PP","accountId":"PP","address":"0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da","kind":"redeem","amount":"2353.57","currency":"eur","totalFee":"0","fees":[],"counterpart":{"details":{"name":"Yabir Benchakhtir","country":"ES","lastName":"Benchakhtir","firstName":"Yabir"},"identifier":{"iban":"ESXX KKKK OOOO IIII KKKK LLLL","standard":"iban"}},"memo":"Venta inversion","supportingDocumentId":"","chain":"gnosis","network":"mainnet","txHashes":["0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354"],"meta":{"state":"processed","placedBy":"ii","placedAt":"2024-04-19T13:45:00.287212Z","processedAt":"2024-04-19T13:45:00.287212Z","approvedAt":"2024-04-19T13:45:00.287212Z","confirmedAt":"2024-04-19T13:45:00.287212Z","receivedAmount":"2353.57","sentAmount":"2353.57"}}]'  # noqa: E501
+    response_txt = '[{"id":"YYYY","profile":"PP","accountId":"PP","address":"0xbCCeE6Ff2bCAfA95300D222D316A29140c4746da","kind":"redeem","amount":"2353.57","currency":"eur","totalFee":"0","fees":[],"counterpart":{"details":{"name":"Yabir Benchakhtir","country":"ES","lastName":"Benchakhtir","firstName":"Yabir"},"identifier":{"iban":"ESXX KKKK OOOO IIII KKKK LLLL","standard":"iban"}},"memo":"Venta inversion","supportingDocumentId":"","chain":"gnosis","network":"mainnet","meta":{"state":"processed","txHashes":["0x10d953610921f39d9d20722082077e03ec8db8d9c75e4b301d0d552119fd0354"],"placedBy":"ii","placedAt":"2024-04-19T13:45:00.287212Z","processedAt":"2024-04-19T13:45:00.287212Z","approvedAt":"2024-04-19T13:45:00.287212Z","confirmedAt":"2024-04-19T13:45:00.287212Z","receivedAmount":"2353.57","sentAmount":"2353.57"}}]'  # noqa: E501
     with (
-        patch('requests.Session.get', side_effect=lambda *args, **kwargs: MockResponse(200, response_txt)),  # noqa: E501
+        patch(
+            'rotkehlchen.externalapis.monerium.Monerium._query',
+            return_value={'orders': json.loads(response_txt)},
+        ),
         patch('rotkehlchen.chain.evm.decoding.decoder.EVMTransactionDecoder.decode_and_get_transaction_hashes', new=add_event),  # noqa: E501
         patch('rotkehlchen.chain.evm.transactions.EvmTransactions.get_or_query_transaction_receipt', return_value=None),  # noqa: E501
     ):
         response = requests.put(
             api_url_for(
                 rotkehlchen_api_server,
-                'evmtransactionsresource',
+                'transactionsdecodingresource',
             ),
-            json={'transactions': [{'evm_chain': 'gnosis', 'tx_hash': gnosishash.hex()}]},  # pylint: disable=no-member
+            json={'chain': 'gnosis', 'tx_refs': [str(gnosishash)]},
         )
         assert_proper_response(response)
 
@@ -246,3 +271,45 @@ def test_query_info_on_redecode_request(rotkehlchen_api_server: APIServer):
         )
 
     assert events[0].notes == 'Send 2353.57 EURe via bank transfer to Yabir Benchakhtir (ESXX KKKK OOOO IIII KKKK LLLL) with memo "Venta inversion"'  # noqa: E501
+
+
+def test_concurrent_refresh_is_serialized(database, monerium_credentials):
+    """Ensure concurrent Monerium queries do not refresh the token twice."""
+    with database.conn.read_ctx() as cursor:
+        cached_value = database.get_static_cache(
+            cursor=cursor,
+            name=DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+        )
+    assert cached_value is not None
+    credentials = json.loads(cached_value)
+    credentials['expires_at'] = ts_now() - 10  # force refresh path
+    with database.user_write() as write_cursor:
+        database.set_static_cache(
+            write_cursor=write_cursor,
+            name=DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+            value=json.dumps(credentials),
+        )
+
+    client = MoneriumOAuthClient(database=database, session=requests.Session())
+    refresh_calls: list[int] = []
+
+    def fake_refresh(self):
+        refresh_calls.append(ts_now())
+        gevent.sleep(0.1)  # give time for the second greenlet to reach the lock
+        assert self._credentials is not None
+        self._credentials.expires_at = ts_now() + 3600
+
+    with patch.object(
+        MoneriumOAuthClient,
+        '_refresh_access_token',
+        autospec=True,
+        side_effect=fake_refresh,
+    ):
+        first = gevent.spawn(client.ensure_access_token)
+        gevent.sleep(0)
+        second = gevent.spawn(client.ensure_access_token)
+        gevent.joinall([first, second])
+
+    assert len(refresh_calls) == 1
+    assert client._credentials is not None
+    assert client._credentials.expires_at > ts_now()

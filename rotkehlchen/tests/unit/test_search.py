@@ -61,8 +61,10 @@ def test_db_persistence_after_search(messages_aggregator):
     - Check that the manual price is still in the global database"""
     rotki_process = subprocess.Popen(
         [  # noqa: S607  # is only used to execute rotki code here
+            'uv',
+            'run',
             'python',
-            '-m'
+            '-m',
             'rotkehlchen.tests.utils.crash_test',
         ],
         stdout=subprocess.PIPE,

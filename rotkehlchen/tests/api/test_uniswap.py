@@ -67,11 +67,11 @@ def test_get_balances(
 
     TODO: https://github.com/orgs/rotki/projects/11/views/2?pane=issue&itemId=46377335
     """
-    tx_hex = deserialize_evm_tx_hash('0x856a5b5d95623f85923938e1911dfda6ad1dd185f45ab101bac99371aeaed329')  # noqa: E501
+    tx_hash = deserialize_evm_tx_hash('0x856a5b5d95623f85923938e1911dfda6ad1dd185f45ab101bac99371aeaed329')  # noqa: E501
     ethereum_inquirer = rotkehlchen_api_server.rest_api.rotkehlchen.chains_aggregator.ethereum.node_inquirer  # noqa: E501
     get_decoded_events_of_transaction(
         evm_inquirer=ethereum_inquirer,
-        tx_hash=tx_hex,
+        tx_hash=tx_hash,
     )
     async_query = random.choice([False, True])
     response = requests.get(
@@ -105,7 +105,7 @@ def test_get_balances(
         else:
             assert lp['total_supply'] is None
         assert lp['user_balance']['amount']
-        assert lp['user_balance']['usd_value']
+        assert lp['user_balance']['value']
 
         # LiquidityPoolAsset attributes
         for lp_asset in lp['assets']:
@@ -124,10 +124,10 @@ def test_get_balances(
                 assert lp_asset['total_amount'] is not None
             else:
                 assert lp_asset['total_amount'] is None
-            assert lp_asset['usd_price']
+
             assert len(lp_asset['user_balance']) == 2
             assert lp_asset['user_balance']['amount']
-            assert lp_asset['user_balance']['usd_value']
+            assert lp_asset['user_balance']['value']
 
         if lp['address'] == '0xF20EF17b889b437C151eB5bA15A47bFc62bfF469':
             assert lp['user_balance']['amount'] == '0.000120107033813428'

@@ -4,12 +4,12 @@ import pytest
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.arbitrum_one.modules.cctp.constants import USDC_IDENTIFIER_ARB
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.cctp.constants import CPT_CCTP
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.polygon_pos.modules.cctp.constants import USDC_IDENTIFIER_POLYGON
-from rotkehlchen.constants.assets import A_ETH, A_POLYGON_POS_MATIC, A_USDC
+from rotkehlchen.constants.assets import A_ETH, A_POL, A_USDC
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -42,7 +42,7 @@ def test_deposit_usdc_from_ethereum_to_arbitrum_one(
             amount=FVal(gas),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=300,
@@ -54,7 +54,7 @@ def test_deposit_usdc_from_ethereum_to_arbitrum_one(
             amount=FVal(deposit_amount),
             location_label=ethereum_accounts[0],
             notes=f'Bridge {deposit_amount} USDC from Ethereum to Arbitrum One via CCTP',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_CCTP,
             address=string_to_evm_address('0xc4922d64a24675E16e1586e3e3Aa56C06fABe907'),
         ),
@@ -85,7 +85,7 @@ def test_receive_usdc_on_arbitrum_one_from_ethereum(
             amount=FVal(gas),
             location_label=arbitrum_one_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=2,
@@ -97,7 +97,7 @@ def test_receive_usdc_on_arbitrum_one_from_ethereum(
             amount=FVal(deposit_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Bridge {deposit_amount} USDC from Ethereum to Arbitrum One via CCTP',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_CCTP,
             address=ZERO_ADDRESS,
         ),
@@ -124,11 +124,11 @@ def test_deposit_usdc_from_polygon_to_arbitrum_one(
             location=Location.POLYGON_POS,
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
-            asset=A_POLYGON_POS_MATIC,
+            asset=A_POL,
             amount=FVal(gas),
             location_label=polygon_pos_accounts[0],
             notes=f'Burn {gas} POL for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=432,
@@ -140,7 +140,7 @@ def test_deposit_usdc_from_polygon_to_arbitrum_one(
             amount=FVal(deposit_amount),
             location_label=polygon_pos_accounts[0],
             notes=f'Bridge {deposit_amount} USDC from Polygon POS to Arbitrum One via CCTP',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_CCTP,
             address=string_to_evm_address('0x10f7835F827D6Cf035115E10c50A853d7FB2D2EC'),
         ),
@@ -171,7 +171,7 @@ def test_receive_usdc_on_arbitrum_one_from_polygon(
             amount=FVal(gas),
             location_label=arbitrum_one_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=18,
@@ -183,7 +183,7 @@ def test_receive_usdc_on_arbitrum_one_from_polygon(
             amount=FVal(deposit_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Bridge {deposit_amount} USDC from Polygon POS to Arbitrum One via CCTP',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_CCTP,
             address=ZERO_ADDRESS,
         ),
@@ -214,7 +214,7 @@ def test_receive_usdc_on_arbitrum_one_from_polygon_2(
             amount=FVal(deposit_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Bridge {deposit_amount} USDC from Polygon POS to Arbitrum One via CCTP',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_CCTP,
             address=ZERO_ADDRESS,
         ),

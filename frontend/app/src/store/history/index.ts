@@ -1,24 +1,23 @@
 import type { EvmUnDecodedTransactionsData, ProtocolCacheUpdatesData } from '@/modules/messaging/types';
+import type { LocationLabel } from '@/types/location';
 import { useHistoryApi } from '@/composables/api/history';
-import { type EvmTransactionStatus, useHistoryEventsApi } from '@/composables/api/history/events';
-import { useSupportedChains } from '@/composables/info/chains';
+import { type TransactionStatus, useHistoryEventsApi } from '@/composables/api/history/events';
 import { useNotificationsStore } from '@/store/notifications';
 import { useTaskStore } from '@/store/tasks';
-import { TransactionChainType } from '@/types/history/events';
 import { TaskType } from '@/types/task-type';
 import { logger } from '@/utils/logging';
 
 export const useHistoryStore = defineStore('history', () => {
   const associatedLocations = ref<string[]>([]);
+  const locationLabels = ref<LocationLabel[]>([]);
   const undecodedTransactionsStatus = ref<Record<string, EvmUnDecodedTransactionsData>>({});
   const protocolCacheUpdateStatus = ref<Record<string, ProtocolCacheUpdatesData>>({});
-  const evmTransactionStatus = ref<EvmTransactionStatus>();
+  const transactionStatusSummary = ref<TransactionStatus>();
 
   const receivingProtocolCacheStatus = ref<boolean>(false);
 
   const { useIsTaskRunning } = useTaskStore();
-  const { getChain, isEvmLikeChains } = useSupportedChains();
-  const { getEvmTransactionStatus } = useHistoryEventsApi();
+  const { getTransactionStatusSummary } = useHistoryEventsApi();
 
   const decodingStatus = computed<EvmUnDecodedTransactionsData[]>(() =>
     Object.values(get(undecodedTransactionsStatus)).filter(status => status.total > 0),
@@ -68,27 +67,8 @@ export const useHistoryStore = defineStore('history', () => {
     set(undecodedTransactionsStatus, {});
   };
 
-  const clearUndecodedTransactionsNumbers = (type: TransactionChainType): void => {
-    const currentStatus = get(undecodedTransactionsStatus);
-    const newStatus: Record<string, EvmUnDecodedTransactionsData> = {};
-
-    for (const [chain, value] of Object.entries(currentStatus)) {
-      const blockchain = getChain(chain);
-      const isEvmLike = isEvmLikeChains(blockchain);
-
-      if ((isEvmLike && type === TransactionChainType.EVMLIKE) || (!isEvmLike && type === TransactionChainType.EVM)) {
-        newStatus[chain] = {
-          ...value,
-          processed: value.total,
-        };
-      }
-      else {
-        newStatus[chain] = {
-          ...value,
-        };
-      }
-    }
-    set(undecodedTransactionsStatus, newStatus);
+  const clearUndecodedTransactionsNumbers = (): void => {
+    set(undecodedTransactionsStatus, {});
   };
 
   const resetProtocolCacheUpdatesStatus = (): void => {
@@ -96,7 +76,7 @@ export const useHistoryStore = defineStore('history', () => {
     set(receivingProtocolCacheStatus, false);
   };
 
-  const { fetchAssociatedLocations: fetchAssociatedLocationsApi } = useHistoryApi();
+  const { fetchAssociatedLocations: fetchAssociatedLocationsApi, fetchLocationLabels: fetchLocationLabelsApi } = useHistoryApi();
   const { notify } = useNotificationsStore();
   const { t } = useI18n({ useScope: 'global' });
 
@@ -118,13 +98,28 @@ export const useHistoryStore = defineStore('history', () => {
     }
   };
 
-  const fetchEvmTransactionStatus = async (): Promise<void> => {
+  const fetchTransactionStatusSummary = async (): Promise<void> => {
     try {
-      const result = await getEvmTransactionStatus();
-      set(evmTransactionStatus, result);
+      const result = await getTransactionStatusSummary();
+      set(transactionStatusSummary, result);
     }
     catch (error: any) {
       logger.error(error);
+    }
+  };
+
+  const fetchLocationLabels = async (): Promise<void> => {
+    try {
+      set(locationLabels, await fetchLocationLabelsApi());
+    }
+    catch (error: any) {
+      logger.error(error);
+      const message = error?.message ?? error ?? '';
+      notify({
+        display: true,
+        message: t('actions.history.fetch_location_labels.error.message', { message }),
+        title: t('actions.history.fetch_location_labels.error.title'),
+      });
     }
   };
 
@@ -138,16 +133,18 @@ export const useHistoryStore = defineStore('history', () => {
     associatedLocations,
     clearUndecodedTransactionsNumbers,
     decodingStatus,
-    evmTransactionStatus,
     fetchAssociatedLocations,
-    fetchEvmTransactionStatus,
+    fetchLocationLabels,
+    fetchTransactionStatusSummary,
     getUndecodedTransactionStatus,
+    locationLabels,
     protocolCacheStatus,
     receivingProtocolCacheStatus,
     resetProtocolCacheUpdatesStatus,
     resetUndecodedTransactionsStatus,
     setProtocolCacheStatus,
     setUndecodedTransactionsStatus,
+    transactionStatusSummary,
     undecodedTransactionsStatus,
     updateUndecodedTransactionsStatus,
   };

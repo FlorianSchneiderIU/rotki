@@ -1,10 +1,11 @@
 import logging
 from typing import TYPE_CHECKING, Any, Final, Literal
 
+from rotkehlchen.assets.utils import token_normalized_value_decimals
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.ethereum.airdrops import AIRDROP_IDENTIFIER_KEY
 from rotkehlchen.chain.ethereum.modules.convex.constants import CONVEX_CPT_DETAILS, CPT_CONVEX
 from rotkehlchen.chain.ethereum.modules.ens.constants import CPT_ENS, ENS_CPT_DETAILS
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS, SIMPLE_CLAIM
 from rotkehlchen.chain.evm.decoding.airdrops import match_airdrop_claim
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
@@ -12,12 +13,11 @@ from rotkehlchen.chain.evm.decoding.cowswap.constants import COWSWAP_CPT_DETAILS
 from rotkehlchen.chain.evm.decoding.interfaces import MerkleClaimDecoderInterface
 from rotkehlchen.chain.evm.decoding.oneinch.constants import ONEINCH_ICON, ONEINCH_LABEL
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.uniswap.constants import UNISWAP_ICON, UNISWAP_LABEL
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import (
@@ -46,7 +46,7 @@ from .constants import (
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.types import ChecksumEvmAddress
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -95,7 +95,7 @@ class AirdropsDecoder(MerkleClaimDecoderInterface):
     def __init__(
             self,
             ethereum_inquirer: 'EthereumInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -104,9 +104,9 @@ class AirdropsDecoder(MerkleClaimDecoderInterface):
             msg_aggregator=msg_aggregator,
         )
 
-    def _decode_fox_claim(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_fox_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != FOX_CLAIMED:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         raw_amount = int.from_bytes(context.tx_log.data[64:96])
         amount = token_normalized_value_decimals(
@@ -125,11 +125,11 @@ class AirdropsDecoder(MerkleClaimDecoderInterface):
             ):
                 break
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_badger_claim(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_badger_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != BADGER_HUNT_EVENT:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         raw_amount = int.from_bytes(context.tx_log.data[32:64])
         amount = token_normalized_value_decimals(
@@ -148,15 +148,15 @@ class AirdropsDecoder(MerkleClaimDecoderInterface):
             ):
                 break
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _decode_fpis_claim(
             self,
             context: DecoderContext,
             airdrop: Literal['convex', 'fpis'],
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != SIMPLE_CLAIM:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         user_address = bytes_to_address(context.tx_log.data[0:32])
         raw_amount = int.from_bytes(context.tx_log.data[32:64])
@@ -196,14 +196,14 @@ class AirdropsDecoder(MerkleClaimDecoderInterface):
             ):
                 break
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_elfi_claim(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_elfi_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         """Example:
         https://etherscan.io/tx/0x1e58aed1baf70b57e6e3e880e1890e7fe607fddc94d62986c38fe70e483e594b
         """
         if context.tx_log.topics[0] != ELFI_VOTE_CHANGE:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         user_address = bytes_to_address(context.tx_log.topics[1])
         delegate_address = bytes_to_address(context.tx_log.topics[2])
@@ -241,13 +241,13 @@ class AirdropsDecoder(MerkleClaimDecoderInterface):
                     address=context.transaction.to_address,
                     extra_data={AIRDROP_IDENTIFIER_KEY: 'elfi'},
                 )
-                return DecodingOutput(events=[event])
+                return EvmDecodingOutput(events=[event])
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_ens_claim(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_ens_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != SIMPLE_CLAIM:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         raw_amount = int.from_bytes(context.tx_log.data[:32])
         amount = token_normalized_value_decimals(
@@ -255,7 +255,7 @@ class AirdropsDecoder(MerkleClaimDecoderInterface):
             token_decimals=DEFAULT_TOKEN_DECIMALS,  # ens 18 decimals
         )
         user_address = bytes_to_address(context.tx_log.topics[1])
-        return DecodingOutput(
+        return EvmDecodingOutput(
             action_items=[
                 ActionItem(
                     action='transform',

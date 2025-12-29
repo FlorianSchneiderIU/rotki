@@ -18,7 +18,9 @@ const props = withDefaults(
   },
 );
 
-const emit = defineEmits<{ (e: 'click', location: string): void }>();
+const emit = defineEmits<{
+  click: [location: string];
+}>();
 
 const { item } = toRefs(props);
 
@@ -35,8 +37,8 @@ const location = locationData(item);
       'flex-row gap-2': horizontal,
       'flex-col gap-1': !horizontal,
       'skeleton': !location,
-      [$style.wrapper]: icon,
     }"
+    :style="icon ? { height: size, width: size } : undefined"
     @click="emit('click', item)"
   >
     <template v-if="location">
@@ -72,10 +74,3 @@ const location = locationData(item);
     </template>
   </div>
 </template>
-
-<style lang="scss" module>
-.wrapper {
-  height: v-bind(size);
-  width: v-bind(size);
-}
-</style>

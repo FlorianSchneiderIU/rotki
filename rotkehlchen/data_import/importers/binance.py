@@ -1,6 +1,8 @@
 import abc
 import csv
+import hashlib
 import logging
+import operator
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal
@@ -42,12 +44,19 @@ log = RotkehlchenLogsAdapter(logger)
 
 BinanceCsvRow = dict[str, Any]
 BINANCE_TRADE_OPERATIONS = {'Buy', 'Sell', 'Fee'}
-EVENT_IDENTIFIER_PREFIX = 'BNC_'
+GROUP_IDENTIFIER_PREFIX = 'BNC_'
 INDEX = '_index'
 
 
 def hash_binance_csv_row(csv_row: BinanceCsvRow) -> str:
-    """Hash the CSV row excluding the INDEX"""
+    """Hash the CSV row excluding the INDEX
+
+    NOTE: This creates unique group identifiers by hashing CSV data. If asset
+    identifiers change (e.g., SOL-2 to SOL), the same CSV will produce different
+    hashes, breaking duplicate detection. We can't fix this because we don't store
+    the original CSV data. This happens because the 'Coin' column is converted to
+    actual assets before hashing to avoid repeated conversions.
+    """
     return hash_csv_row({k: v for k, v in csv_row.items() if k != INDEX})
 
 
@@ -130,7 +139,7 @@ class BinanceTransferEntry(BinanceMultipleEntry):
         row = data[0]
         return [
             HistoryEvent(
-                event_identifier=f'{EVENT_IDENTIFIER_PREFIX}{hash_binance_csv_row(row)}',
+                group_identifier=f'{GROUP_IDENTIFIER_PREFIX}{hash_binance_csv_row(row)}',
                 sequence_index=0,
                 timestamp=ts_sec_to_ms(timestamp),
                 location=Location.BINANCE,
@@ -165,6 +174,7 @@ class BinanceTradeEntry(BinanceMultipleEntry):
     def are_entries(self, requested_operations: list) -> bool:
         """This class supports several formats of Trade entries from the csv.
         Supports the following combinations of "Operation" column's values:
+            - Transaction Spend * N + Transaction Buy * M
             - Buy + Buy
             - Sell + Sell
             - Mixed data of (Buy + Buy) * N + (Sell + Sell) * M
@@ -183,7 +193,7 @@ class BinanceTradeEntry(BinanceMultipleEntry):
         counted.pop('Transaction Fee', None)  # popped both fees to validate main trade components
         keys = set(counted.keys())
         return (
-            (keys == {'Transaction Buy', 'Transaction Spend'} and counted['Transaction Buy'] - counted['Transaction Spend'] == 0) or  # noqa: E501
+            keys == {'Transaction Buy', 'Transaction Spend'} or  # there can be different counts of spends versus buys that are aggregated later  # noqa: E501
             (keys == {'Transaction Revenue', 'Transaction Sold'} and counted['Transaction Revenue'] - counted['Transaction Sold'] == 0) or  # noqa: E501
             (keys == {'Buy', 'Sell'} and counted['Buy'] % 2 == 0 and counted['Sell'] % 2 == 0) or
             (keys == {'Buy'} and counted['Buy'] % 2 == 0) or  # deprecated, new CSVs use Buy/Sell
@@ -209,8 +219,20 @@ class BinanceTradeEntry(BinanceMultipleEntry):
         Change is amount, Coin is asset
         If amount is negative then this asset is sold, otherwise it's bought
         """
-        # First, aggregate all amounts by operation and coin
-        # for Transaction Buy/Spend/Fee operations
+        # Check if we have multiple different coins in both Transaction Buy and Transaction Spend
+        # operations. If so, we shouldn't aggregate as they need to be individually paired
+        transaction_buy_coins, transaction_spend_coins = set(), set()
+        for row in data:
+            if row['Operation'] == 'Transaction Buy':
+                transaction_buy_coins.add(row['Coin'])
+            elif row['Operation'] == 'Transaction Spend':
+                transaction_spend_coins.add(row['Coin'])
+
+        # Only aggregate if we don't have multiple different coins in both directions
+        # This ensures we can still properly pair individual transactions
+        should_not_aggregate = len(transaction_buy_coins) > 1 or len(transaction_spend_coins) > 1
+
+        # Aggregate amounts by operation and coin for Transaction Buy/Spend/Fee operations
         aggregated_data, other_data = {}, []
         for row in data:
             operation = row['Operation']
@@ -219,6 +241,11 @@ class BinanceTradeEntry(BinanceMultipleEntry):
 
             # Check if this is a Transaction Buy/Spend/Fee operation that should be aggregated
             if operation in {'Transaction Buy', 'Transaction Spend', 'Transaction Fee'}:
+                # Don't aggregate if we have multiple different buys AND multiple spends
+                if should_not_aggregate and operation in {'Transaction Buy', 'Transaction Spend'}:
+                    other_data.append(row)
+                    continue
+
                 key = (operation, coin)
                 if key not in aggregated_data:
                     aggregated_data[key] = row
@@ -331,13 +358,16 @@ class BinanceTradeEntry(BinanceMultipleEntry):
                     )
                 continue
 
+            # Create unique event identifier from all rows in this trade batch
+            # This ensures identical trades at the same timestamp get different identifiers
+            combined_hash = hashlib.sha256('_'.join(hash_binance_csv_row(row) for row in sorted(trade_rows, key=operator.itemgetter(INDEX))).encode()).hexdigest()  # noqa: E501
             swap_events.extend(create_swap_events(
                 timestamp=ts_sec_to_ms(timestamp),
                 location=Location.BINANCE,
                 spend=AssetAmount(asset=from_asset, amount=from_amount),
                 receive=AssetAmount(asset=to_asset, amount=to_amount),
                 fee=fee,
-                event_identifier=f'{EVENT_IDENTIFIER_PREFIX}{hash_binance_csv_row(trade_rows[0])}',  # any row works, just using the first to create the event identifier  # noqa: E501
+                group_identifier=f'{GROUP_IDENTIFIER_PREFIX}{combined_hash}',
                 spend_notes='Imported from binance CSV file. Binance operation: Buy / Sell',
             ))
 
@@ -405,7 +435,7 @@ class BinanceDistributionEntry(BinanceSingleEntry):
         """
         importer.add_history_events(write_cursor, history_events=[
             HistoryEvent(
-                event_identifier=f'{EVENT_IDENTIFIER_PREFIX}{hash_binance_csv_row(data)}',
+                group_identifier=f'{GROUP_IDENTIFIER_PREFIX}{hash_binance_csv_row(data)}',
                 sequence_index=0,
                 timestamp=ts_sec_to_ms(timestamp),
                 location=Location.BINANCE,
@@ -439,7 +469,7 @@ class BinanceStakingRewardsEntry(BinanceSingleEntry):
             data: BinanceCsvRow,
     ) -> None:
         event = HistoryEvent(
-            event_identifier=f'{EVENT_IDENTIFIER_PREFIX}{hash_binance_csv_row(data)}',
+            group_identifier=f'{GROUP_IDENTIFIER_PREFIX}{hash_binance_csv_row(data)}',
             sequence_index=0,
             timestamp=ts_sec_to_ms(timestamp),
             location=Location.BINANCE,
@@ -481,7 +511,7 @@ class BinanceEarnProgram(BinanceSingleEntry):
         """
         asset = data['Coin']
         amount = abs(data['Change'])
-        event_identifier = f'{EVENT_IDENTIFIER_PREFIX}{hash_binance_csv_row(data)}'
+        group_identifier = f'{GROUP_IDENTIFIER_PREFIX}{hash_binance_csv_row(data)}'
         timestamp_ms = ts_sec_to_ms(timestamp)
         staking_event = None
         if data['Operation'] in {
@@ -491,7 +521,7 @@ class BinanceEarnProgram(BinanceSingleEntry):
             'Swap Farming Rewards',
         }:
             staking_event = HistoryEvent(
-                event_identifier=event_identifier,
+                group_identifier=group_identifier,
                 sequence_index=0,
                 timestamp=timestamp_ms,
                 location=Location.BINANCE,
@@ -508,7 +538,7 @@ class BinanceEarnProgram(BinanceSingleEntry):
             'Staking Purchase',
         }:
             staking_event = HistoryEvent(
-                event_identifier=event_identifier,
+                group_identifier=group_identifier,
                 sequence_index=0,
                 timestamp=timestamp_ms,
                 location=Location.BINANCE,
@@ -525,7 +555,7 @@ class BinanceEarnProgram(BinanceSingleEntry):
             'Staking Redemption',
         }:
             staking_event = HistoryEvent(
-                event_identifier=event_identifier,
+                group_identifier=group_identifier,
                 sequence_index=0,
                 timestamp=timestamp_ms,
                 location=Location.BINANCE,
@@ -573,7 +603,7 @@ class BinanceUSDMProgram(BinanceSingleEntry):
             action = 'profit' if is_profit else 'loss'
             notes = f'{amount} {data["Coin"].symbol} realized {action} on binance USD-MFutures'
         return HistoryEvent(
-            event_identifier=f'{EVENT_IDENTIFIER_PREFIX}{hash_binance_csv_row(data)}',
+            group_identifier=f'{GROUP_IDENTIFIER_PREFIX}{hash_binance_csv_row(data)}',
             sequence_index=0,
             timestamp=ts_sec_to_ms(timestamp),
             location=Location.BINANCE,
@@ -626,7 +656,7 @@ class BinancePOSEntry(BinanceSingleEntry):
             event_subtype = HistoryEventSubType.NONE
 
         event = HistoryEvent(
-            event_identifier=f'{EVENT_IDENTIFIER_PREFIX}{hash_binance_csv_row(data)}',
+            group_identifier=f'{GROUP_IDENTIFIER_PREFIX}{hash_binance_csv_row(data)}',
             sequence_index=0,
             timestamp=ts_sec_to_ms(timestamp),
             location=Location.BINANCE,

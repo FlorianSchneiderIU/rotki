@@ -1,7 +1,8 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.assets.utils import token_normalized_value_decimals
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.cctp.constants import (
     CCTP_CPT_DETAILS,
     CCTP_DOMAIN_MAPPING,
@@ -11,20 +12,19 @@ from rotkehlchen.chain.evm.decoding.cctp.constants import (
     MINT_AND_WITHDRAW,
     USDC_DECIMALS,
 )
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -32,11 +32,11 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class CctpCommonDecoder(DecoderInterface):
+class CctpCommonDecoder(EvmDecoderInterface):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             token_messenger: ChecksumEvmAddress,
             message_transmitter: ChecksumEvmAddress,
@@ -51,9 +51,9 @@ class CctpCommonDecoder(DecoderInterface):
         self.message_transmitter = message_transmitter
         self.asset_identifier = asset_identifier
 
-    def _decode_deposit(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_deposit(self, context: DecoderContext) -> EvmDecodingOutput:
         if not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[3])):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         to_chain = int.from_bytes(context.tx_log.data[64:96])
         deposit_amount = token_normalized_value_decimals(
@@ -69,9 +69,9 @@ class CctpCommonDecoder(DecoderInterface):
                 event.location_label == user_address
             ):
                 try:
-                    chain_info = f' from {self.evm_inquirer.chain_id.label()} to {CCTP_DOMAIN_MAPPING[to_chain].label()}'  # noqa: E501
+                    chain_info = f' from {self.node_inquirer.chain_id.label()} to {CCTP_DOMAIN_MAPPING[to_chain].label()}'  # noqa: E501
                 except KeyError:
-                    log.error(f'Could not find chain ID {to_chain} for CCTP transfer from {self.evm_inquirer.chain_name}')  # noqa: E501
+                    log.error(f'Could not find chain ID {to_chain} for CCTP transfer from {self.node_inquirer.chain_name}')  # noqa: E501
                     chain_info = ''
                 event.event_type = HistoryEventType.DEPOSIT
                 event.event_subtype = HistoryEventSubType.BRIDGE
@@ -79,13 +79,13 @@ class CctpCommonDecoder(DecoderInterface):
                 event.counterparty = CPT_CCTP
                 break
         else:
-            log.error(f'Could not find matching spend event for {self.evm_inquirer.chain_name} CCTP bridge deposit {context.transaction.tx_hash.hex()}')  # noqa: E501
+            log.error(f'Could not find matching spend event for {self.node_inquirer.chain_name} CCTP bridge deposit {context.transaction.tx_hash!s}')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_withdraw(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_withdraw(self, context: DecoderContext) -> EvmDecodingOutput:
         if not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[1])):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         deposit_amount = token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[0:32]),
@@ -105,14 +105,14 @@ class CctpCommonDecoder(DecoderInterface):
                 event.counterparty = CPT_CCTP
                 break
         else:
-            log.error(f'Could not find matching receive event for {self.evm_inquirer.chain_name} CCTP bridge withdrawal {context.transaction.tx_hash.hex()}')  # noqa: E501
+            log.error(f'Could not find matching receive event for {self.node_inquirer.chain_name} CCTP bridge withdrawal {context.transaction.tx_hash!s}')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_message_received(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_message_received(self, context: DecoderContext) -> EvmDecodingOutput:
         """Adds chain information to the event notes for the withdrawals."""
         if context.tx_log.topics[0] != MESSAGE_RECEIVED:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         for event in context.decoded_events:
             if (
@@ -122,24 +122,24 @@ class CctpCommonDecoder(DecoderInterface):
             ):
                 from_chain = int.from_bytes(context.tx_log.data[:32])
                 try:
-                    chain_info = f' from {CCTP_DOMAIN_MAPPING[from_chain].label()} to {self.evm_inquirer.chain_id.label()}'  # noqa: E501
+                    chain_info = f' from {CCTP_DOMAIN_MAPPING[from_chain].label()} to {self.node_inquirer.chain_id.label()}'  # noqa: E501
                     event.notes = f'Bridge {event.amount} USDC{chain_info} via CCTP'
                 except KeyError:
-                    log.error(f'Could not find chain ID {from_chain} for CCTP transfer to {self.evm_inquirer.chain_name}')  # noqa: E501
+                    log.error(f'Could not find chain ID {from_chain} for CCTP transfer to {self.node_inquirer.chain_name}')  # noqa: E501
                 break
         else:
-            log.error(f'Could not find matching withdrawal event for {self.evm_inquirer.chain_name} CCTP bridge chain information {context.transaction.tx_hash.hex()}')  # noqa: E501
+            log.error(f'Could not find matching withdrawal event for {self.node_inquirer.chain_name} CCTP bridge chain information {context.transaction.tx_hash!s}')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_bridge(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_bridge(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] == DEPOSIT_FOR_BURN:
             return self._decode_deposit(context)
 
         if context.tx_log.topics[0] == MINT_AND_WITHDRAW:
             return self._decode_withdraw(context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

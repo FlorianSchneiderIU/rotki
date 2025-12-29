@@ -5,13 +5,14 @@ import pytest
 import requests
 
 from rotkehlchen.assets.converters import asset_from_binance
+from rotkehlchen.constants import HOUR_IN_SECONDS
 from rotkehlchen.constants.assets import A_BNB, A_BTC
 from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.exchanges.binance import BINANCEUS_BASE_URL, Binance
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.tests.utils.exchanges import (
     BINANCE_DEPOSITS_HISTORY_RESPONSE,
     BINANCE_MYTRADES_RESPONSE,
@@ -21,6 +22,7 @@ from rotkehlchen.tests.utils.exchanges import (
 from rotkehlchen.tests.utils.globaldb import is_asset_symbol_unsupported
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import Location, Timestamp, TimestampMS
+from rotkehlchen.utils.misc import ts_now
 
 
 def test_name():
@@ -77,7 +79,7 @@ def test_binanceus_trades_location(function_scope_binance):
             event_subtype=HistoryEventSubType.SPEND,
             asset=A_BTC,
             amount=FVal('48.0000120000000000'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCEUS,
                 unique_id='28457',
             ),
@@ -88,7 +90,7 @@ def test_binanceus_trades_location(function_scope_binance):
             event_subtype=HistoryEventSubType.RECEIVE,
             asset=A_BNB,
             amount=FVal('12.00000000'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCEUS,
                 unique_id='28457',
             ),
@@ -99,7 +101,7 @@ def test_binanceus_trades_location(function_scope_binance):
             event_subtype=HistoryEventSubType.FEE,
             asset=A_BNB,
             amount=FVal('10.10000000'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.BINANCEUS,
                 unique_id='28457',
             ),
@@ -142,3 +144,19 @@ def test_binanceus_deposits_withdrawals_location(function_scope_binance):
         location=Location.BINANCEUS,
         got_fiat=False,
     )
+
+
+@pytest.mark.parametrize('binance_location', [Location.BINANCEUS])
+def test_binanceus_skips_convert_history(function_scope_binance: Binance):
+    """Test that the convert history query is skipped for Binance US.
+    While Binance US does have a convert feature in the UI, the API endpoint we use for querying
+    the conversion history is not supported in Binance US, and there is no alternative endpoint
+    for the US api as of 2025-12-17.
+    """
+    with patch.object(function_scope_binance, 'api_query') as query_mock:
+        assert function_scope_binance._query_online_convert_trades(
+            start_ts=Timestamp(ts_now() - HOUR_IN_SECONDS),
+            end_ts=ts_now(),
+        ) == []
+
+    assert query_mock.call_count == 0

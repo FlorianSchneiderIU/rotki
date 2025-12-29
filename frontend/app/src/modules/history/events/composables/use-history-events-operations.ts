@@ -1,8 +1,7 @@
 import type { ComputedRef, Ref } from 'vue';
-import type { HistoryEventsTableEmitFn } from './types';
-import type { HistoryEventDeletePayload } from '@/modules/history/events/types';
+import type { HistoryEventDeletePayload, HistoryEventsTableEmitFn } from '@/modules/history/events/types';
 import type {
-  EvmChainAndTxHash,
+  LocationAndTxRef,
   PullEventPayload,
 } from '@/types/history/events';
 import type {
@@ -14,12 +13,13 @@ import { flatten } from 'es-toolkit';
 import { useHistoryEventsApi } from '@/composables/api/history/events';
 import { useIgnore } from '@/composables/history';
 import { useHistoryEvents } from '@/composables/history/events';
+import { useSupportedChains } from '@/composables/info/chains';
 import { useConfirmStore } from '@/store/confirm';
 import { useNotificationsStore } from '@/store/notifications';
 import { isTaskCancelled } from '@/utils';
 
 interface UseHistoryEventsOperationsOptions {
-  eventsGroupedByEventIdentifier: ComputedRef<Record<string, HistoryEventRow[]>>;
+  allEventsMapped: ComputedRef<Record<string, HistoryEventRow[]>>;
   flattenedEvents: ComputedRef<HistoryEventEntry[]>;
 }
 
@@ -27,14 +27,17 @@ interface UseHistoryEventsOperationsReturn {
   // State
   showRedecodeConfirmation: Ref<boolean>;
   redecodePayload: Ref<PullEventPayload | undefined>;
+  hasCustomEvents: Ref<boolean>;
+  showIndexerOptions: Ref<boolean>;
 
   // Functions
   getItemClass: (item: HistoryEventEntry) => '' | 'opacity-50';
   confirmDelete: (payload: HistoryEventDeletePayload) => void;
   suggestNextSequenceId: (group: HistoryEventEntry) => string;
-  confirmTxAndEventsDelete: (payload: EvmChainAndTxHash) => void;
+  confirmTxAndEventsDelete: (payload: LocationAndTxRef) => void;
   redecode: (payload: PullEventPayload, eventIdentifier: string) => void;
-  confirmRedecode: (event: { payload: PullEventPayload; deleteCustom: boolean }) => void;
+  redecodeWithOptions: (payload: PullEventPayload, groupIdentifier: string) => void;
+  confirmRedecode: (event: { payload: PullEventPayload; deleteCustom: boolean; customIndexersOrder?: string[] }) => void;
   toggle: (event: HistoryEventEntry) => Promise<void>;
 }
 
@@ -42,21 +45,24 @@ export function useHistoryEventsOperations(
   options: UseHistoryEventsOperationsOptions,
   emit: HistoryEventsTableEmitFn,
 ): UseHistoryEventsOperationsReturn {
-  const { eventsGroupedByEventIdentifier, flattenedEvents } = options;
+  const { allEventsMapped, flattenedEvents } = options;
 
   const selected = ref<HistoryEventEntry[]>([]);
   const showRedecodeConfirmation = ref<boolean>(false);
   const redecodePayload = ref<PullEventPayload>();
+  const hasCustomEvents = ref<boolean>(false);
+  const showIndexerOptions = ref<boolean>(false);
 
-  const { t } = useI18n();
+  const { t } = useI18n({ useScope: 'global' });
 
   const { notify } = useNotificationsStore();
   const { show } = useConfirmStore();
+  const { getChain } = useSupportedChains();
 
   const { deleteTransactions } = useHistoryEventsApi();
   const { deleteHistoryEvent } = useHistoryEvents();
   const { ignoreSingle, toggle } = useIgnore<HistoryEventEntry>({
-    toData: (item: HistoryEventEntry) => item.eventIdentifier,
+    toData: (item: HistoryEventEntry) => item.groupIdentifier,
   }, selected, () => {
     emit('refresh');
   });
@@ -101,18 +107,19 @@ export function useHistoryEventsOperations(
     if (!allFlattened?.length)
       return (Number(group.sequenceIndex) + 1).toString();
 
-    const eventIdentifierHeader = group.eventIdentifier;
+    const groupIdentifierHeader = group.groupIdentifier;
     const filtered = allFlattened
-      .filter(({ eventIdentifier, hidden }) => eventIdentifier === eventIdentifierHeader && !hidden)
+      .filter(({ groupIdentifier, hidden }) => groupIdentifier === groupIdentifierHeader && !hidden)
       .map(({ sequenceIndex }) => Number(sequenceIndex))
       .sort((a, b) => b - a);
 
     return ((filtered[0] ?? Number(group.sequenceIndex)) + 1).toString();
   }
 
-  async function onConfirmTxAndEventDelete({ evmChain, txHash }: EvmChainAndTxHash): Promise<void> {
+  async function onConfirmTxAndEventDelete({ location, txRef }: LocationAndTxRef): Promise<void> {
     try {
-      await deleteTransactions(evmChain, txHash);
+      const chain = get(getChain(location));
+      await deleteTransactions(chain, txRef);
       emit('refresh');
     }
     catch (error: any) {
@@ -131,34 +138,63 @@ export function useHistoryEventsOperations(
     }
   }
 
-  function confirmTxAndEventsDelete(payload: EvmChainAndTxHash): void {
+  function confirmTxAndEventsDelete(payload: LocationAndTxRef): void {
     show({
       message: t('transactions.dialog.delete.message'),
       title: t('transactions.dialog.delete.title'),
     }, async () => onConfirmTxAndEventDelete(payload));
   }
 
-  function redecode(payload: PullEventPayload, eventIdentifier: string): void {
+  function isEvmPayload(payload: PullEventPayload): boolean {
+    return payload.type === HistoryEventEntryType.EVM_EVENT
+      || payload.type === HistoryEventEntryType.EVM_SWAP_EVENT;
+  }
+
+  function redecode(payload: PullEventPayload, groupIdentifier: string): void {
     if (payload.type === HistoryEventEntryType.ETH_BLOCK_EVENT) {
       emit('refresh:block-event', { blockNumbers: payload.data });
       return;
     }
 
-    const groupedEvents = get(eventsGroupedByEventIdentifier)[eventIdentifier] || [];
+    const groupedEvents = get(allEventsMapped)[groupIdentifier] || [];
     const childEvents = flatten(groupedEvents);
     const isAnyCustom = childEvents.some(item => item.customized);
 
-    if (!isAnyCustom) {
-      emit('refresh', { transactions: [payload.data] });
-    }
-    else {
+    // If there are custom events, show dialog to ask about custom event handling
+    if (isAnyCustom) {
+      set(hasCustomEvents, true);
+      set(showIndexerOptions, false);
       set(redecodePayload, payload);
       set(showRedecodeConfirmation, true);
+      return;
     }
+
+    // No custom events - just redecode directly without dialog
+    emit('refresh', {
+      deleteCustom: false,
+      transactions: [payload.data],
+    });
   }
 
-  function confirmRedecode(event: { payload: PullEventPayload; deleteCustom: boolean }): void {
-    const { deleteCustom, payload } = event;
+  function redecodeWithOptions(payload: PullEventPayload, eventIdentifier: string): void {
+    if (payload.type === HistoryEventEntryType.ETH_BLOCK_EVENT) {
+      emit('refresh:block-event', { blockNumbers: payload.data });
+      return;
+    }
+
+    const groupedEvents = get(allEventsMapped)[eventIdentifier] || [];
+    const childEvents = flatten(groupedEvents);
+    const isAnyCustom = childEvents.some(item => item.customized);
+
+    // Show dialog with indexer options (only for EVM events)
+    set(hasCustomEvents, isAnyCustom);
+    set(showIndexerOptions, isEvmPayload(payload));
+    set(redecodePayload, payload);
+    set(showRedecodeConfirmation, true);
+  }
+
+  function confirmRedecode(event: { payload: PullEventPayload; deleteCustom: boolean; customIndexersOrder?: string[] }): void {
+    const { customIndexersOrder, deleteCustom, payload } = event;
     if (payload.type === HistoryEventEntryType.ETH_BLOCK_EVENT) {
       emit('refresh:block-event', {
         blockNumbers: payload.data,
@@ -166,6 +202,7 @@ export function useHistoryEventsOperations(
     }
     else {
       emit('refresh', {
+        customIndexersOrder,
         deleteCustom,
         transactions: [payload.data],
       });
@@ -178,8 +215,11 @@ export function useHistoryEventsOperations(
     confirmRedecode,
     confirmTxAndEventsDelete,
     getItemClass,
+    hasCustomEvents,
     redecode,
     redecodePayload,
+    redecodeWithOptions,
+    showIndexerOptions,
     showRedecodeConfirmation,
     suggestNextSequenceId,
     toggle,

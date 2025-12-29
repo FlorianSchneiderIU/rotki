@@ -61,11 +61,11 @@ def test_withdrawals(eth2: 'Eth2', database, ethereum_accounts, query_method):
         eth2.query_services_for_validator_withdrawals(addresses=ethereum_accounts, to_ts=to_ts)
     dbevents = DBHistoryEvents(database)
     with database.conn.read_ctx() as cursor:
-        events = dbevents.get_history_events_internal(
+        events = [event for event in dbevents.get_history_events_internal(
             cursor=cursor,
             filter_query=EthWithdrawalFilterQuery.make(),
-            group_by_event_ids=False,
-        )
+            aggregate_by_group_ids=False,
+        ) if event.get_timestamp() <= ts_now()]  # blockscout returns all the events since it doesn't filter by time range  # noqa: E501
 
     assert len(events) == 94
     account0_events, account1_events = 0, 0
@@ -151,7 +151,7 @@ def test_withdrawals(eth2: 'Eth2', database, ethereum_accounts, query_method):
     assert account1_events == 47
 
 
-# @pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.freeze_time('2023-04-24 21:00:00 GMT')
 @pytest.mark.parametrize('ethereum_accounts', [[
@@ -186,7 +186,7 @@ def test_block_production(eth2: 'Eth2', database, ethereum_accounts):
         events = dbevents.get_history_events_internal(
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(to_ts=Timestamp(1682370000)),
-            group_by_event_ids=False,
+            aggregate_by_group_ids=False,
         )
 
     expected_events = [EthBlockEvent(
@@ -299,7 +299,7 @@ def test_block_production(eth2: 'Eth2', database, ethereum_accounts):
     assert expected_events == events
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.freeze_time('2023-11-19 16:30:00 GMT')
 def test_withdrawals_detect_exit(eth2: 'Eth2', database):
@@ -380,7 +380,7 @@ def test_withdrawals_detect_exit(eth2: 'Eth2', database):
         events = dbevents.get_history_events_internal(
             cursor=cursor,
             filter_query=EthWithdrawalFilterQuery.make(),
-            group_by_event_ids=False,
+            aggregate_by_group_ids=False,
         )
 
     # check that the two exits were detected
@@ -550,7 +550,7 @@ def test_block_with_mev_and_block_reward_and_multiple_mev_txs(
                 from_ts=Timestamp(1738537200),  # 03/02/2025
                 to_ts=Timestamp(1738655703),  # 04/02/2025 08:55 UTC
             ),
-            group_by_event_ids=False,
+            aggregate_by_group_ids=False,
         )
 
     timestamp, user_address, mevbot_address, block_number = TimestampMS(1738655099000), ethereum_accounts[0], string_to_evm_address('0xA69babEF1cA67A37Ffaf7a485DfFF3382056e78C'), 21771728  # noqa: E501
@@ -575,8 +575,8 @@ def test_block_with_mev_and_block_reward_and_multiple_mev_txs(
     )]
     expected_events += [EvmEvent(
         identifier=1 + counter,
-        event_identifier=f'BP1_{block_number}',
-        tx_hash=tx_hash,
+        group_identifier=f'BP1_{block_number}',
+        tx_ref=tx_hash,
         sequence_index=2 + counter,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -586,7 +586,7 @@ def test_block_with_mev_and_block_reward_and_multiple_mev_txs(
         amount=FVal(amount),
         location_label=user_address,
         address=mevbot_address,
-        notes=f'Receive {amount} ETH from {mevbot_address} as mev reward for block {block_number} in {tx_hash.hex()}',  # noqa: E501
+        notes=f'Receive {amount} ETH from {mevbot_address} as mev reward for block {block_number} in {tx_hash!s}',  # noqa: E501
         extra_data={'validator_index': vindex},
     ) for counter, (tx_hash, amount) in enumerate(tx_hashes_and_amounts)]
     assert events == expected_events

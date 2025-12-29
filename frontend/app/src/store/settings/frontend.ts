@@ -4,7 +4,7 @@ import { useSettingsApi } from '@/composables/api/settings/settings-api';
 import { useItemsPerPage } from '@/composables/session/use-items-per-page';
 import { useComputedRef } from '@/composables/utils/useComputedRef';
 import { getBnFormat } from '@/data/amount-formatter';
-import { snakeCaseTransformer } from '@/services/axios-transformers';
+import { snakeCaseTransformer } from '@/modules/api/transformers';
 import { PrivacyMode } from '@/types/session';
 import {
   type FrontendSettings,
@@ -17,6 +17,7 @@ export const useFrontendSettingsStore = defineStore('settings/frontend', () => {
   const settings = ref<FrontendSettings>(markRaw(getDefaultFrontendSettings()));
 
   const defiSetupDone = useComputedRef(settings, 'defiSetupDone');
+  const enablePasswordConfirmation = useComputedRef(settings, 'enablePasswordConfirmation');
   const language = useComputedRef(settings, 'language');
   const timeframeSetting = useComputedRef(settings, 'timeframeSetting');
   const visibleTimeframes = useComputedRef(settings, 'visibleTimeframes');
@@ -51,7 +52,7 @@ export const useFrontendSettingsStore = defineStore('settings/frontend', () => {
   const enableAliasNames = useComputedRef(settings, 'enableAliasNames');
   const blockchainRefreshButtonBehaviour = useComputedRef(settings, 'blockchainRefreshButtonBehaviour');
   const savedFilters = useComputedRef(settings, 'savedFilters');
-  const balanceUsdValueThreshold = useComputedRef(settings, 'balanceUsdValueThreshold');
+  const balanceValueThreshold = useComputedRef(settings, 'balanceValueThreshold');
   const useHistoricalAssetBalances = useComputedRef(settings, 'useHistoricalAssetBalances');
   const notifyNewNfts = useComputedRef(settings, 'notifyNewNfts');
   const persistPrivacySettings = useComputedRef(settings, 'persistPrivacySettings');
@@ -60,6 +61,8 @@ export const useFrontendSettingsStore = defineStore('settings/frontend', () => {
   const scrambleMultiplier = useComputedRef(settings, 'scrambleMultiplier');
   const evmQueryIndicatorMinOutOfSyncPeriod = useComputedRef(settings, 'evmQueryIndicatorMinOutOfSyncPeriod');
   const evmQueryIndicatorDismissalThreshold = useComputedRef(settings, 'evmQueryIndicatorDismissalThreshold');
+  const lastPasswordConfirmed = useComputedRef(settings, 'lastPasswordConfirmed');
+  const passwordConfirmationInterval = useComputedRef(settings, 'passwordConfirmationInterval');
 
   const shouldShowAmount = computed(() => get(privacyMode) < PrivacyMode.SEMI_PRIVATE);
   const shouldShowPercentage = computed(() => get(privacyMode) < PrivacyMode.PRIVATE);
@@ -123,7 +126,7 @@ export const useFrontendSettingsStore = defineStore('settings/frontend', () => {
   return {
     abbreviateNumber,
     amountRoundingMode,
-    balanceUsdValueThreshold,
+    balanceValueThreshold,
     blockchainRefreshButtonBehaviour,
     currencyLocation,
     darkTheme,
@@ -133,6 +136,7 @@ export const useFrontendSettingsStore = defineStore('settings/frontend', () => {
     defaultThemeVersion,
     defiSetupDone,
     enableAliasNames,
+    enablePasswordConfirmation,
     evmQueryIndicatorDismissalThreshold,
     evmQueryIndicatorMinOutOfSyncPeriod,
     explorers,
@@ -141,10 +145,12 @@ export const useFrontendSettingsStore = defineStore('settings/frontend', () => {
     itemsPerPage,
     language,
     lastKnownTimeframe,
+    lastPasswordConfirmed,
     lightTheme,
     minimumDigitToBeAbbreviated,
     nftsInNetValue,
     notifyNewNfts,
+    passwordConfirmationInterval,
     persistPrivacySettings,
     persistTableSorting,
     privacyMode,

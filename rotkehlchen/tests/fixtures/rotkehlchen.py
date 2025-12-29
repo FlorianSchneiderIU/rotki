@@ -11,7 +11,7 @@ import rotkehlchen.tests.utils.exchanges as exchange_tests
 from rotkehlchen.api.server import APIServer
 from rotkehlchen.chain.evm.node_inquirer import _connect_task_prefix
 from rotkehlchen.constants.misc import DEFAULT_MAX_LOG_SIZE_IN_MB
-from rotkehlchen.data_migrations.constants import LAST_DATA_MIGRATION
+from rotkehlchen.data_migrations.constants import LAST_USERDB_DATA_MIGRATION
 from rotkehlchen.db.settings import DBSettings, ModifiableDBSettings
 from rotkehlchen.db.updates import RotkiDataUpdater
 from rotkehlchen.exchanges.constants import EXCHANGES_WITH_PASSPHRASE, EXCHANGES_WITHOUT_API_SECRET
@@ -36,6 +36,7 @@ from rotkehlchen.tests.utils.database import (
     add_manually_tracked_balances_to_test_db,
     add_settings_to_test_db,
     add_tags_to_test_db,
+    maybe_include_beaconchain_key,
     maybe_include_cryptocompare_key,
     maybe_include_etherscan_key,
     mock_db_schema_sanity_check,
@@ -43,11 +44,13 @@ from rotkehlchen.tests.utils.database import (
     run_no_db_upgrades,
 )
 from rotkehlchen.tests.utils.decoders import patch_decoder_reload_data
+from rotkehlchen.tests.utils.ethereum import wait_until_all_nodes_connected
 from rotkehlchen.tests.utils.evm import maybe_mock_evm_inquirer
 from rotkehlchen.tests.utils.factories import make_random_b64bytes
 from rotkehlchen.tests.utils.history import maybe_mock_historical_price_queries
 from rotkehlchen.tests.utils.inquirer import inquirer_inject_evm_managers_set_order
 from rotkehlchen.tests.utils.mock import mock_proxies, patch_etherscan_request
+from rotkehlchen.tests.utils.solana import patch_solana_inquirer_nodes
 from rotkehlchen.tests.utils.substrate import wait_until_all_substrate_nodes_connected
 from rotkehlchen.types import (
     AVAILABLE_MODULES_MAP,
@@ -90,8 +93,18 @@ def fixture_rotki_premium_credentials() -> PremiumCredentials:
     )
 
 
+@pytest.fixture(name='premium_limits_override')
+def fixture_premium_limits_override() -> dict[str, int]:
+    """Override specific premium limits. Return empty dict for defaults."""
+    return {}
+
+
 @pytest.fixture(name='rotki_premium_object')
-def fixture_rotki_premium_object(rotki_premium_credentials, username) -> Premium:
+def fixture_rotki_premium_object(
+        rotki_premium_credentials,
+        username,
+        premium_limits_override: dict[str, int],
+) -> Premium:
     """Create an active rotki premium object with valid credentials"""
     premium = Premium(
         credentials=rotki_premium_credentials,
@@ -100,7 +113,7 @@ def fixture_rotki_premium_object(rotki_premium_credentials, username) -> Premium
         db=None,  # type: ignore # Since the fixture loads before others it was causing errors with the api fixture since the user folder already exists. Needs a bit of work to be figured out but is only used for the premium devices
     )
     premium.status = SubscriptionStatus.ACTIVE
-    premium._cached_limits = {
+    default_limits = {
         'limit_of_devices': TEST_PREMIUM_DEVICE_LIMIT,
         'max_backup_size_mb': TEST_PREMIUM_DB_SIZE_LIMIT,
         'pnl_events_limit': TEST_PREMIUM_PNL_EVENTS_LIMIT,
@@ -108,12 +121,14 @@ def fixture_rotki_premium_object(rotki_premium_credentials, username) -> Premium
         'reports_lookup_limit': TEST_PREMIUM_PNL_REPORTS_LOOKUP_LIMIT,
         'eth_staked_limit': TEST_PREMIUM_ETH_STAKED_LIMIT,
     }
+    default_limits.update(premium_limits_override)
+    premium._cached_limits = default_limits  # type: ignore[assignment]
     return premium
 
 
 @pytest.fixture(name='data_migration_version', scope='session')
 def fixture_data_migration_version() -> int:
-    return LAST_DATA_MIGRATION
+    return LAST_USERDB_DATA_MIGRATION
 
 
 @pytest.fixture(name='max_size_in_mb_all_logs')
@@ -296,6 +311,7 @@ def initialize_mock_rotkehlchen_instance(
         username,
         blockchain_accounts,
         include_etherscan_key,
+        include_beaconchain_key,
         include_cryptocompare_key,
         should_mock_price_queries,
         mocked_price_queries,
@@ -354,6 +370,7 @@ def initialize_mock_rotkehlchen_instance(
         )
         add_settings_to_test_db(rotki.data.db, db_settings, ignored_assets, data_migration_version)
         maybe_include_etherscan_key(rotki.data.db, include_etherscan_key)
+        maybe_include_beaconchain_key(rotki.data.db, include_beaconchain_key)
         maybe_include_cryptocompare_key(rotki.data.db, include_cryptocompare_key)
         if add_accounts_to_db is True:
             add_blockchain_accounts_to_db(rotki.data.db, blockchain_accounts)
@@ -423,12 +440,12 @@ def initialize_mock_rotkehlchen_instance(
             (SupportedBlockchain.SCROLL, scroll_manager_connect_at_start, rotki.chains_aggregator.scroll),  # noqa: E501
             (SupportedBlockchain.BINANCE_SC, binance_sc_manager_connect_at_start, rotki.chains_aggregator.binance_sc),  # noqa: E501
     ):
-        maybe_modify_rpc_nodes(rotki.data.db, blockchain, connect_at_start)
+        actual_nodes = maybe_modify_rpc_nodes(rotki.data.db, blockchain, connect_at_start)
         # since we are past evm inquirer initialization and we just wrote rpc nodes up we need to start the connection  # noqa: E501
         evm_manager.node_inquirer.maybe_connect_to_nodes(when_tracked_accounts=True)
         # Check if any connection tasks are pending to wait for
         if rotki.greenlet_manager.has_task(_connect_task_prefix(evm_manager.node_inquirer.chain_name)):  # noqa: E501
-            evm_nodes_wait.append((evm_manager.node_inquirer, connect_at_start))
+            evm_nodes_wait.append((evm_manager.node_inquirer, actual_nodes))
 
     if start_with_valid_premium:
         rotki.premium = rotki_premium_object
@@ -454,6 +471,12 @@ def initialize_mock_rotkehlchen_instance(
         mocked_price_queries=mocked_price_queries,
         default_mock_value=default_mock_price_value,
     )
+
+    for evm_inquirer, connect_at_start in evm_nodes_wait:
+        wait_until_all_nodes_connected(
+            evm_inquirer=evm_inquirer,
+            connect_at_start=connect_at_start,
+        )
 
     if len(rotki.chains_aggregator.accounts.ksm) != 0:
         wait_until_all_substrate_nodes_connected(  # no connection would have been attempted if there are no accounts  # noqa: E501
@@ -519,6 +542,7 @@ def fixture_rotkehlchen_api_server(
         username,
         blockchain_accounts,
         include_etherscan_key,
+        include_beaconchain_key,
         include_cryptocompare_key,
         should_mock_price_queries,
         mocked_price_queries,
@@ -537,6 +561,7 @@ def fixture_rotkehlchen_api_server(
         scroll_manager_connect_at_start,
         binance_sc_manager_connect_at_start,
         kusama_manager_connect_at_start,
+        solana_nodes_connect_at_start,
         ksm_rpc_endpoint,
         max_tasks_num,
         legacy_messages_via_websockets,
@@ -572,6 +597,7 @@ def fixture_rotkehlchen_api_server(
         username=username,
         blockchain_accounts=blockchain_accounts,
         include_etherscan_key=include_etherscan_key,
+        include_beaconchain_key=include_beaconchain_key,
         include_cryptocompare_key=include_cryptocompare_key,
         should_mock_price_queries=should_mock_price_queries,
         mocked_price_queries=mocked_price_queries,
@@ -633,6 +659,12 @@ def fixture_rotkehlchen_api_server(
                         mock_data=mock_data,
                     )
 
+                patch_solana_inquirer_nodes(
+                    stack=stack,
+                    solana_inquirer=api_server.rest_api.rotkehlchen.chains_aggregator.solana.node_inquirer,
+                    solana_nodes_connect_at_start=solana_nodes_connect_at_start,
+                )
+
             if mocked_proxies is not None:
                 mock_proxies(stack, mocked_proxies)
 
@@ -653,6 +685,7 @@ def rotkehlchen_instance(
         username,
         blockchain_accounts,
         include_etherscan_key,
+        include_beaconchain_key,
         include_cryptocompare_key,
         should_mock_price_queries,
         mocked_price_queries,
@@ -697,6 +730,7 @@ def rotkehlchen_instance(
         username=username,
         blockchain_accounts=blockchain_accounts,
         include_etherscan_key=include_etherscan_key,
+        include_beaconchain_key=include_beaconchain_key,
         include_cryptocompare_key=include_cryptocompare_key,
         should_mock_price_queries=should_mock_price_queries,
         mocked_price_queries=mocked_price_queries,

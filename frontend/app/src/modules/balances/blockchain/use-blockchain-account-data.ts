@@ -37,6 +37,7 @@ interface UseBlockchainAccountDataReturn {
   getAccountDetails: (chain: string, address: string) => AccountBalances;
   getBlockchainAccounts: (chain: string) => BlockchainAccountWithBalance[];
   useAccountTags: (address: MaybeRef<string>) => ComputedRef<string[]>;
+  getAccountsByCategory: (category: MaybeRef<string>) => ComputedRef<BlockchainAccountGroupWithBalance[]>;
   getAccountList: (accountData: Accounts, balanceData: Balances) => BlockchainAccountWithBalance[];
 }
 
@@ -150,7 +151,7 @@ export function useBlockchainAccountData(): UseBlockchainAccountDataReturn {
       const accountAssets = Object.values(balanceData)
         .filter(data => !isEmpty(data) && !isEmpty(data[address]))
         .map(data => data[address]);
-      const usdValue = accountAssets.reduce((previousValue, currentValue) => previousValue.plus(assetSum(currentValue.assets)), Zero);
+      const value = accountAssets.reduce((previousValue, currentValue) => previousValue.plus(assetSum(currentValue.assets)), Zero);
 
       const accountsForAddress = Object.values(accountData).flatMap(
         accounts => accounts.filter(account => getAccountAddress(account) === address),
@@ -175,14 +176,14 @@ export function useBlockchainAccountData(): UseBlockchainAccountDataReturn {
         label,
         tags: tags.length > 0 ? tags : undefined,
         type: 'group',
-        usdValue,
+        value,
       } satisfies BlockchainAccountGroupWithBalance;
     });
 
     const preGrouped = Object.values(accountData)
       .flatMap(accounts => accounts.filter(account => account.groupHeader))
       .map((account) => {
-        const balance: Balance = { amount: Zero, usdValue: Zero };
+        const balance: Balance = { amount: Zero, value: Zero };
         const chainBalances = balanceData[account.chain];
         const accounts = accountData[account.chain];
         const groupAccounts = accounts.filter(acc => !acc.groupHeader && acc.groupId === account.groupId);
@@ -191,7 +192,7 @@ export function useBlockchainAccountData(): UseBlockchainAccountDataReturn {
           if (account.nativeAsset === subAccount.nativeAsset)
             balance.amount = balance.amount.plus(subBalance.amount);
 
-          balance.usdValue = balance.usdValue.plus(subBalance.usdValue);
+          balance.value = balance.value.plus(subBalance.value);
         }
         return {
           ...omit(account, ['chain', 'groupId', 'groupHeader']),
@@ -219,6 +220,14 @@ export function useBlockchainAccountData(): UseBlockchainAccountDataReturn {
     }
     return entries;
   }
+
+  const getAccountsByCategory = (category: MaybeRef<string>): ComputedRef<BlockchainAccountGroupWithBalance[]> => computed(() => {
+    const accountData = get(accounts);
+    const balanceData = get(balances);
+    const groups = getGroups(accountData, balanceData);
+
+    return groups.filter(item => item.category === get(category));
+  });
 
   const fetchAccounts = async (
     payload: MaybeRef<BlockchainAccountRequestPayload>,
@@ -263,6 +272,7 @@ export function useBlockchainAccountData(): UseBlockchainAccountDataReturn {
     getAccountDetails,
     getAccountList,
     getAccounts,
+    getAccountsByCategory,
     getBlockchainAccounts,
     useAccountTags,
   };

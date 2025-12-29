@@ -9,17 +9,16 @@ import time
 from binascii import unhexlify
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from contextlib import suppress
 from itertools import zip_longest
 from typing import TYPE_CHECKING, Any, TypeVar, overload
 
-from base58 import b58decode
 from eth_utils import is_hexstr
 from eth_utils.address import to_checksum_address
+from solders.solders import Pubkey
 
 from rotkehlchen.errors.serialization import ConversionError, DeserializationError
 from rotkehlchen.fval import FVal
-from rotkehlchen.types import ChecksumEvmAddress, Timestamp, TimestampMS
+from rotkehlchen.types import ChecksumEvmAddress, SolanaAddress, Timestamp, TimestampMS
 from rotkehlchen.utils.version_check import get_current_version, get_system_spec
 
 if TYPE_CHECKING:
@@ -208,7 +207,7 @@ def convert_to_int(
         accept_only_exact: bool = True,
 ) -> int:
     """Try to convert to an int. Either from an FVal or a string. If it's a float
-    and it's not whole (like 42.0) and accept_only_exact is False then raise
+    and it's not whole (like 42.0) and accept_only_exact is True then raise
 
     Raises:
         ConversionError: If either the given value is not an exact number or its
@@ -282,6 +281,16 @@ def bytes_to_address(value: bytes) -> ChecksumEvmAddress:
     return bytes32hexstr_to_address(bytes_to_hexstr(value))
 
 
+def bytes_to_solana_address(value: bytes) -> SolanaAddress:
+    """Converts bytes into a solana address
+    May raise DeserializationError if the value does not contain a valid solana address.
+    """
+    try:
+        return SolanaAddress(str(Pubkey(value)))
+    except (ValueError, TypeError) as e:
+        raise DeserializationError(f'Invalid solana address: {value!r}') from e
+
+
 def address_to_bytes32(address: ChecksumEvmAddress) -> bytes:
     return unhexlify(24 * '0' + address.lower()[2:])
 
@@ -294,14 +303,6 @@ def bytes32hexstr_to_address(hexstr: str) -> ChecksumEvmAddress:
         raise DeserializationError(
             f'Invalid ethereum address: {hexstr[24:]}',
         ) from e
-
-
-def is_valid_solana_address(address: str) -> bool:
-    """Check if a string is a valid solana address."""
-    with suppress(ValueError, TypeError):
-        return len(b58decode(address)) == 32
-
-    return False
 
 
 T = TypeVar('T')

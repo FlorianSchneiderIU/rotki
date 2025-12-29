@@ -3,6 +3,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, overload
 
 from eth_utils import to_checksum_address
+from solders.solders import Pubkey, Signature
 
 from rotkehlchen.chain.evm.l2_with_l1_fees.types import (
     L2_CHAINIDS_WITH_L1_FEES,
@@ -18,6 +19,7 @@ from rotkehlchen.fval import AcceptableFValInitInput, FVal
 from rotkehlchen.history.events.structures.types import HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import (
+    BTCTxId,
     ChainID,
     ChecksumEvmAddress,
     EvmInternalTransaction,
@@ -25,6 +27,7 @@ from rotkehlchen.types import (
     EvmTransactionAuthorization,
     EVMTxHash,
     HexColorCode,
+    SolanaAddress,
     Timestamp,
     TimestampMS,
     TradePair,
@@ -41,11 +44,11 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-def deserialize_timestamp(timestamp: float | (str | FVal)) -> Timestamp:
+def deserialize_timestamp(timestamp: float | str | FVal | None) -> Timestamp:
     """Deserializes a timestamp from a json entry. Given entry can either be a
     string or an int.
 
-    Can throw DeserializationError if the data is not as expected
+    Can throw DeserializationError if the data is not a valid timestamp
     """
     if timestamp is None:
         raise DeserializationError('Failed to deserialize a timestamp entry from a null entry')
@@ -194,7 +197,7 @@ def deserialize_timestamp_from_intms(value: Any) -> Timestamp:
     """Deserializes a Timestamp from an integer timestamp in milliseconds.
     May raise DeserializationError if the data is not as expected.
     """
-    return Timestamp(int(deserialize_timestamp_ms_from_intms(value) / 1000))
+    return Timestamp(int(deserialize_timestamp_ms_from_intms(value) // 1000))
 
 
 def deserialize_fval(
@@ -343,9 +346,53 @@ def deserialize_evm_address(symbol: str) -> ChecksumEvmAddress:
     try:
         return to_checksum_address(symbol)
     except ValueError as e:
-        raise DeserializationError(
-            f'Invalid evm address: {symbol}',
-        ) from e
+        raise DeserializationError(f'Invalid evm address: {symbol}') from e
+
+
+def deserialize_solana_pubkey(value: str) -> Pubkey:
+    """Deserializes a Solana public key from the given data.
+    May raise DeserializationError if the value is not a valid Solana public key.
+    """
+    try:
+        return Pubkey.from_string(value)
+    except ValueError as e:
+        raise DeserializationError(f'Invalid solana pubkey: {value}') from e
+
+
+def deserialize_solana_address(value: str) -> SolanaAddress:
+    """Deserializes a Solana address from the given data.
+    Wrapper for deserialize_solana_pubkey converting the pubkey to a SolanaAddress.
+    May raise DeserializationError if the value is not a valid Solana address.
+    """
+    return SolanaAddress(str(deserialize_solana_pubkey(value)))
+
+
+def deserialize_tx_signature(value: str | bytes) -> Signature:
+    """Deserialize a solana transaction signature from a string or bytes.
+    May raise DeserializationError if the data is invalid.
+    """
+    try:
+        if isinstance(value, bytes):
+            return Signature.from_bytes(value)
+
+        return Signature.from_string(value)
+    except ValueError as e:
+        raise DeserializationError(f'Failed to deserialize solana tx signature due to {e!s}') from e  # noqa: E501
+
+
+def deserialize_btc_tx_id(value: str) -> BTCTxId:
+    """Deserialize a bitcoin transaction id from a string.
+    May raise DeserializationError if the data is not a valid bitcoin transaction id.
+    """
+    try:
+        tx_id_bytes = bytes.fromhex(value)
+    except ValueError as e:
+        raise DeserializationError(f'Failed to deserialize bitcoin tx id due to {e!s}') from e
+
+    if (id_len := len(tx_id_bytes)) != 32:
+        raise DeserializationError(f'Failed to deserialize bitcoin tx id due to invalid length {id_len}. Expected 32 bytes.')  # noqa: E501
+
+    return BTCTxId(tx_id_bytes.hex())
 
 
 def deserialize_int_from_str(symbol: str, location: str) -> int:
@@ -542,7 +589,13 @@ def deserialize_evm_transaction(
     source = 'etherscan' if evm_inquirer is None else 'web3'
     raw_receipt_data = None
     try:
-        tx_hash = parent_tx_hash if parent_tx_hash is not None else deserialize_evm_tx_hash(data['hash'])  # noqa: E501
+        if parent_tx_hash is not None:
+            tx_hash = parent_tx_hash
+        elif (raw_tx_hash := data.get('hash')) is not None:
+            tx_hash = deserialize_evm_tx_hash(raw_tx_hash)
+        else:  # for internal transactions blockscout has a `transactionHash` key instead.
+            tx_hash = deserialize_evm_tx_hash(data['transactionHash'])
+
         block_number = read_integer(data, 'blockNumber', source)
         block_data = None
         if 'timeStamp' not in data:
@@ -578,12 +631,12 @@ def deserialize_evm_transaction(
                 parent_tx_hash=tx_hash,
                 chain_id=chain_id,
                 # traceId is missing when querying by parent hash
-                trace_id=int(data.get('traceId', '0')),
+                trace_id=int(data.get('traceId', '0') or 0),  # use `or 0` since the key can also be present but have an empty string value.  # noqa: E501
                 from_address=from_address,
                 to_address=to_address,
                 value=value,
-                gas=int(data.get('gas', '0')),
-                gas_used=int(data.get('gasUsed', '0')),
+                gas=int(data.get('gas', '0') or 0),
+                gas_used=int(data.get('gasUsed', '0') or 0),
             ), None
 
         # else normal transaction
@@ -625,9 +678,8 @@ def deserialize_evm_transaction(
                     try:
                         l1_fee = maybe_read_integer(raw_receipt_data, 'l1Fee', source)
                     except DeserializationError as e:  # Fall back to etherscan (via txlist)
-                        log.warning(f'Failed to get L1 fee from receipt due to {e!s}. Falling back to etherscan.')  # noqa: E501
-                        l1_fee = evm_inquirer.etherscan.maybe_get_l1_fees(
-                            chain_id=chain_id,  # type: ignore[arg-type]  # mypy doesn't understand that the if check above limits chain_id
+                        log.warning(f'Failed to get L1 fee from receipt due to {e!s}. Falling back to indexers.')  # noqa: E501
+                        l1_fee = evm_inquirer.maybe_get_l1_fees(
                             account=from_address,
                             tx_hash=tx_hash,
                             block_number=block_number,
@@ -636,7 +688,7 @@ def deserialize_evm_transaction(
             if l1_fee is None:
                 log.error(
                     f'Failed to retrieve L1 fee while deserializing {chain_id.to_name()} '
-                    f'transaction {tx_hash.hex()}. Using 0 L1 fee.',
+                    f'transaction {tx_hash!s}. Using 0 L1 fee.',
                 )
                 l1_fee = 0
 

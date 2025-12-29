@@ -1,11 +1,11 @@
 import type { useAssetIconApi } from '@/composables/api/assets/icon';
 import type { Suggestion } from '@/types/filtering';
 import { toSentenceCase } from '@rotki/common';
+import { createCustomPinia } from '@test/utils/create-pinia';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { setActivePinia } from 'pinia';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SuggestedItem from '@/components/table-filter/SuggestedItem.vue';
-import { createCustomPinia } from '../../../utils/create-pinia';
 
 vi.mock('@/composables/assets/retrieval', () => ({
   useAssetInfoRetrieval: vi.fn().mockReturnValue({
@@ -126,9 +126,9 @@ describe('table-filter/SuggestedItem.vue', () => {
     };
     wrapper = createWrapper({ suggestion, chip: true });
 
-    expect(wrapper.find('span > span:nth-child(2)').classes()).toEqual(
-      expect.arrayContaining([expect.stringMatching(/_comparator_/)]),
-    );
+    const comparatorClasses = wrapper.find('span > span:nth-child(2)').classes();
+    expect(comparatorClasses).toContain('border-l');
+    expect(comparatorClasses).toContain('border-r');
   });
 
   it('for boolean value', async () => {

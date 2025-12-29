@@ -29,7 +29,7 @@ from rotkehlchen.history.events.structures.swap import (
     get_swap_spend_receive,
 )
 from rotkehlchen.history.events.structures.types import HistoryEventType
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -228,12 +228,13 @@ class Cryptocom(ExchangeInterface, SignatureGeneratorMixin):
          - DeserializationError
          - UnknownAsset
          - UnsupportedAsset
+         - KeyError
         """
         return create_asset_movement_with_fee(
             location=self.location,
             location_label=self.name,
             event_type=event_type,
-            timestamp=deserialize_timestamp_ms_from_intms(raw_result['update_time']),
+            timestamp=deserialize_timestamp_ms_from_intms(raw_result['create_time']),
             asset=(asset := asset_from_cryptocom(raw_result['currency'])),
             amount=deserialize_fval(raw_result['amount']),
             fee=AssetAmount(
@@ -243,7 +244,9 @@ class Cryptocom(ExchangeInterface, SignatureGeneratorMixin):
             unique_id=str(raw_result['id']),
             extra_data=maybe_set_transaction_extra_data(
                 address=raw_result.get('address'),
-                transaction_id=raw_result.get('txid'),
+                # the txid field from the api sometimes contains something like `/27` at the end
+                # so only take the actual hash (`0x` + 64 chars) from the beginning of the string.
+                transaction_id=txid[:66] if (txid := raw_result.get('txid')) is not None else None,
                 extra_data=AssetMovementExtraData({'reference': str(raw_result['id'])}),
             ),
         )
@@ -255,12 +258,13 @@ class Cryptocom(ExchangeInterface, SignatureGeneratorMixin):
          - DeserializationError
          - UnknownAsset
          - UnsupportedAsset
+         - KeyError
         """
         # Parse the instrument name (e.g., "BTC_USDT")
         base_asset_str, quote_asset_str = raw_result['instrument_name'].split('_')
         spend, receive = get_swap_spend_receive(
             is_buy=raw_result['side'] == 'BUY',
-            base_asset=(base_asset := asset_from_cryptocom(base_asset_str)),
+            base_asset=asset_from_cryptocom(base_asset_str),
             quote_asset=asset_from_cryptocom(quote_asset_str),
             amount=deserialize_fval(raw_result['traded_quantity']),
             rate=Price(deserialize_fval(raw_result['traded_price'])),
@@ -271,11 +275,11 @@ class Cryptocom(ExchangeInterface, SignatureGeneratorMixin):
             spend=spend,
             receive=receive,
             fee=AssetAmount(
-                asset=base_asset,
+                asset=asset_from_cryptocom(raw_result['fee_instrument_name']),
                 amount=deserialize_fval_force_positive(raw_fee),
             ) if (raw_fee := raw_result.get('fees')) is not None else None,
             location_label=self.name,
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=self.location,
                 unique_id=str(raw_result['trade_id']),
             ),
@@ -306,7 +310,7 @@ class Cryptocom(ExchangeInterface, SignatureGeneratorMixin):
                 asset = asset_from_cryptocom(instrument_name)
                 existing_balances[asset] += Balance(
                     amount=amount,
-                    usd_value=amount * Inquirer.find_usd_price(asset=asset),
+                    value=amount * Inquirer.find_main_currency_price(asset),
                 )
         except UnsupportedAsset as e:
             self.msg_aggregator.add_warning(
@@ -326,7 +330,7 @@ class Cryptocom(ExchangeInterface, SignatureGeneratorMixin):
         except RemoteError as e:
             self.msg_aggregator.add_error(
                 f'Error processing {self.name} {instrument_name} balance result due to inability '
-                f'to query USD price: {e!s}. Skipping balance result.',
+                f'to query price: {e!s}. Skipping balance result.',
             )
 
         return existing_balances
@@ -469,10 +473,11 @@ class Cryptocom(ExchangeInterface, SignatureGeneratorMixin):
                 for raw_asset_movement in (raw_list := result.result.get(result_key, [])):
                     try:
                         events.extend(deserialize_fn(raw_asset_movement))
-                    except (DeserializationError, UnsupportedAsset, UnknownAsset) as e:
+                    except (DeserializationError, UnsupportedAsset, UnknownAsset, KeyError) as e:
+                        msg = f'missing key: {e!s}' if isinstance(e, KeyError) else str(e)
                         log.error(
                             f'Error processing {self.name} {query_type}: '
-                            f'{raw_asset_movement} due to {e!s}',
+                            f'{raw_asset_movement} due to {msg}',
                         )
                         self.msg_aggregator.add_error(
                             f'Failed to deserialize a {self.name} {query_type}. '
@@ -496,6 +501,7 @@ class Cryptocom(ExchangeInterface, SignatureGeneratorMixin):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
+            force_refresh: bool = False,
     ) -> tuple[list['HistoryBaseEntry'], Timestamp]:
         """Return the Crypto.com asset movements and swap events"""
         self.first_connection()

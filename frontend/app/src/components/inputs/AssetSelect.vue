@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import type { AssetInfoWithId } from '@/types/asset';
 import type { NftAsset } from '@/types/nfts';
-import { assert, getValidSelectorFromEvmAddress, transformCase } from '@rotki/common';
-import { CanceledError } from 'axios';
+import {
+  assert,
+  type AssetInfoWithId,
+  getValidSelectorFromEvmAddress,
+  transformCase,
+} from '@rotki/common';
 import AssetDetailsBase from '@/components/helper/AssetDetailsBase.vue';
 import NftDetails from '@/components/helper/NftDetails.vue';
 import { useAssetInfoApi } from '@/composables/api/assets/info';
+import { useSupportedChains } from '@/composables/info/chains';
 import { useIgnoredAssetsStore } from '@/store/assets/ignored';
+import { isAbortError } from '@/utils';
+import { getAssetSearchTypeParams, getSanitizedChain, parseAssetSearchKeyword } from '@/utils/assets';
 import { uniqueObjects } from '@/utils/data';
 
 defineOptions({
@@ -30,13 +36,12 @@ const props = withDefaults(defineProps<{
   hideDetails?: boolean;
   includeNfts?: boolean;
   asset?: AssetInfoWithId | NftAsset;
-  evmChain?: string;
+  chain?: string;
 }>(), {
   asset: undefined,
   clearable: false,
   disabled: false,
   errorMessages: () => [],
-  evmChain: undefined,
   excludes: () => [],
   hideDetails: false,
   hint: '',
@@ -59,6 +64,7 @@ defineSlots<{
 
 const { errorMessages, excludes, includeNfts, items, showIgnored } = toRefs(props);
 const { useIsAssetIgnored } = useIgnoredAssetsStore();
+const { getEvmChainName, matchChain } = useSupportedChains();
 
 const search = ref<string>('');
 const assets = ref<(AssetInfoWithId | NftAsset)[]>([]);
@@ -82,10 +88,12 @@ const visibleAssets = computed<AssetInfoWithId[]>(() => {
   const itemsVal = get(items);
   const excludesVal = get(excludes);
   const knownAssets = get(assets);
+  const currentValue = get(modelValue);
 
   const includeIgnored = get(showIgnored);
   const filtered = knownAssets.filter(({ identifier }: AssetInfoWithId) => {
-    const unIgnored = includeIgnored || !get(useIsAssetIgnored(identifier));
+    const isCurrentValue = identifier === currentValue;
+    const unIgnored = includeIgnored || isCurrentValue || !get(useIsAssetIgnored(identifier));
 
     const included = itemsVal && itemsVal.length > 0 ? itemsVal.includes(identifier) : true;
 
@@ -103,12 +111,16 @@ const visibleAssets = computed<AssetInfoWithId[]>(() => {
 async function searchAssets(keyword: string, signal: AbortSignal): Promise<void> {
   set(loading, true);
   try {
+    const { address, value } = parseAssetSearchKeyword(keyword);
+    const usedChain = getSanitizedChain(props.chain, matchChain, getEvmChainName);
+
     const fetchedAssets = await assetSearch({
-      evmChain: props.evmChain,
+      address,
+      ...getAssetSearchTypeParams(usedChain),
       limit: 50,
       searchNfts: get(includeNfts),
       signal,
-      value: keyword,
+      value,
     });
     if (get(modelValue))
       await retainSelectedValueInOptions(fetchedAssets);
@@ -119,7 +131,7 @@ async function searchAssets(keyword: string, signal: AbortSignal): Promise<void>
     set(loading, false);
   }
   catch (error_: any) {
-    if (!(error_ instanceof CanceledError)) {
+    if (!isAbortError(error_)) {
       set(loading, false);
       set(error, error_.message);
     }
@@ -185,13 +197,22 @@ watchDebounced(search, async (search) => {
   await searchAssets(search, pending.signal);
 }, { debounce: 800 });
 
-watch(visibleAssets, () => {
+watch(visibleAssets, (_, oldVisibleAssets) => {
   const identifier = get(modelValue);
-  if (identifier && !getVisibleAsset(identifier))
+  if (!identifier || !oldVisibleAssets)
+    return;
+
+  // Only clear if the asset was previously visible and is now not visible
+  // This prevents clearing newly selected values that haven't been loaded yet
+  const wasVisible = oldVisibleAssets.some(asset => asset.identifier === identifier);
+  if (!wasVisible)
+    return;
+
+  if (!getVisibleAsset(identifier))
     onUpdateModelValue('');
 });
 
-watch(() => props.evmChain, async () => {
+watch(() => [props.chain], async () => {
   if (!get(modelValue)) {
     return;
   }
@@ -245,7 +266,7 @@ onUnmounted(() => {
         />
         <AssetDetailsBase
           v-else
-          class="py-0 pl-1"
+          class="!py-0 pl-1"
           :asset="item"
           hide-menu
         />
@@ -261,7 +282,7 @@ onUnmounted(() => {
       <AssetDetailsBase
         v-else
         :id="`asset-${getValidSelectorFromEvmAddress(item.identifier.toLocaleLowerCase())}`"
-        class="py-0 -my-1"
+        class="!py-0 -my-1"
         :asset="item"
         hide-menu
       />

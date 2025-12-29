@@ -29,8 +29,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'refresh'): void;
-  (e: 'edit', value: ManualBalance): void;
+  refresh: [];
+  edit: [value: ManualBalance];
 }>();
 
 const { type } = toRefs(props);
@@ -61,7 +61,7 @@ const {
 >(fetch, {
   defaultSortBy: [
     {
-      column: 'usdValue',
+      column: 'value',
       direction: 'desc',
     },
   ],
@@ -84,7 +84,7 @@ async function refresh() {
 function edit(balance: ManualBalanceWithPrice) {
   emit('edit', {
     ...omit(balance, [
-      'usdValue',
+      'value',
       'usdPrice',
       'assetIsMissing',
     ]),
@@ -125,7 +125,7 @@ const cols = computed<DataTableColumn<ManualBalanceWithPrice>[]>(() => [{
   sortable: true,
 }, {
   align: 'end',
-  key: 'usdValue',
+  key: 'value',
   label: t('common.value_in_symbol', {
     symbol: get(currencySymbol),
   }),
@@ -258,15 +258,15 @@ watchDebounced(
           :value="row.amount"
         />
       </template>
-      <template #item.usdValue="{ row }">
+      <template #item.value="{ row }">
         <AmountDisplay
           v-if="!row.assetIsMissing"
           show-currency="symbol"
           :amount="row.amount"
           :price-asset="row.asset"
           :price-of-asset="row.usdPrice"
-          fiat-currency="USD"
-          :value="row.usdValue"
+          force-currency
+          :value="row.value"
         />
         <template v-else>
           -
@@ -302,12 +302,12 @@ watchDebounced(
           </template>
 
           <AmountDisplay
-            v-if="state.totalUsdValue"
+            v-if="state.totalValue"
             show-currency="symbol"
             class="p-4"
-            :fiat-currency="currencySymbol"
+            force-currency
             data-cy="manual-balances__amount"
-            :value="state.totalUsdValue"
+            :value="state.totalValue"
           />
         </RowAppend>
       </template>

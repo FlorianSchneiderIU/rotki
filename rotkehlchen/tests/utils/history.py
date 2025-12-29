@@ -4,14 +4,13 @@ from typing import TYPE_CHECKING, NamedTuple, cast
 from unittest.mock import _patch, patch
 
 from rotkehlchen.accounting.mixins.event import AccountingEventMixin
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_BTC, A_DAI, A_ETH, A_ETH2, A_USDC, A_USDT
 from rotkehlchen.constants.resolver import strethaddress_to_identifier
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.errors.price import NoPriceForGivenTimestamp
 from rotkehlchen.exchanges.data_structures import MarginPosition
-from rotkehlchen.externalapis.etherscan import Etherscan
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
@@ -34,6 +33,7 @@ from rotkehlchen.types import Location, Timestamp
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import Asset
+    from rotkehlchen.externalapis.etherscan_like import EtherscanLikeApi
     from rotkehlchen.tests.utils.kraken import MockKraken
 
 TEST_END_TS = 1559427707
@@ -328,7 +328,8 @@ def mock_exchange_responses(rotki: Rotkehlchen, remote_errors: bool):
                 'capital/withdraw' in url or
                 'fiat/orders' in url or
                 'fiat/payments' in url or
-                'asset/get-funding-asset' in url
+                'asset/get-funding-asset' in url or
+                'convert/tradeFlow' in url
         ):
             payload = '[]'
         else:
@@ -557,7 +558,7 @@ def mock_history_processing(
 
         # TODO: terrible way to check. Figure out something better
         limited_range_test = False
-        expected_swap_events_num = 21
+        expected_swap_events_num = 22
         expected_margin_num = 1
         expected_asset_movements_num = 21
         if not limited_range_test:
@@ -719,7 +720,11 @@ def mock_history_processing(
     )
 
 
-def mock_etherscan_transaction_response(etherscan: Etherscan, remote_errors: bool):
+def mock_etherscan_like_transaction_response(
+        etherscan_like_api: 'EtherscanLikeApi',
+        remote_errors: bool,
+        session_mock_attribute: str = 'get',
+) -> _patch:
     def mocked_request_dict(url, params, *_args, **_kwargs):
         if remote_errors:
             return MockResponse(200, '[{')
@@ -772,7 +777,11 @@ def mock_etherscan_transaction_response(etherscan: Etherscan, remote_errors: boo
 
         return MockResponse(200, payload)
 
-    return patch.object(etherscan.session, 'get', wraps=mocked_request_dict)
+    return patch.object(
+        target=etherscan_like_api.session,
+        attribute=session_mock_attribute,
+        wraps=mocked_request_dict,
+    )
 
 
 class TradesTestSetup(NamedTuple):
@@ -781,6 +790,8 @@ class TradesTestSetup(NamedTuple):
     bitmex_patch: _patch
     accountant_patch: _patch
     etherscan_patch: _patch
+    blockscout_patch: _patch
+    routescan_patch: _patch
 
 
 def mock_history_processing_and_exchanges(
@@ -809,16 +820,25 @@ def mock_history_processing_and_exchanges(
         rotki,
         remote_errors,
     )
-    etherscan_patch = mock_etherscan_transaction_response(
-        etherscan=rotki.chains_aggregator.ethereum.node_inquirer.etherscan,
-        remote_errors=remote_errors,
-    )
+    assert rotki.chains_aggregator.ethereum.node_inquirer.blockscout is not None
     return TradesTestSetup(
         polo_patch=polo_patch,
         binance_patch=binance_patch,
         bitmex_patch=bitmex_patch,
         accountant_patch=accountant_patch,
-        etherscan_patch=etherscan_patch,
+        etherscan_patch=mock_etherscan_like_transaction_response(
+            etherscan_like_api=rotki.chains_aggregator.ethereum.node_inquirer.etherscan,
+            remote_errors=remote_errors,
+        ),
+        blockscout_patch=mock_etherscan_like_transaction_response(
+            etherscan_like_api=rotki.chains_aggregator.ethereum.node_inquirer.blockscout,
+            remote_errors=remote_errors,
+            session_mock_attribute='request',  # blockscout uses both post and get via session.request()  # noqa: E501
+        ),
+        routescan_patch=mock_etherscan_like_transaction_response(
+            etherscan_like_api=rotki.chains_aggregator.ethereum.node_inquirer.routescan,
+            remote_errors=remote_errors,
+        ),
     )
 
 

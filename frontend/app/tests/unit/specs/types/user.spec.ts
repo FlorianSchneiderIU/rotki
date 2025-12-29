@@ -1,6 +1,6 @@
 import { BigNumber, Blockchain, Theme, TimeFramePeriod } from '@rotki/common';
 import { describe, expect, it } from 'vitest';
-import { snakeCaseTransformer } from '@/services/axios-transformers';
+import { snakeCaseTransformer } from '@/modules/api/transformers';
 import { CurrencyLocation } from '@/types/currency-location';
 import { DateFormat } from '@/types/date-format';
 import { PrivacyMode } from '@/types/session';
@@ -17,7 +17,7 @@ import { OtherSettings } from '@/types/user';
 describe('types/user', () => {
   it('otherSettings parsed correctly', () => {
     const frontendSettings: FrontendSettings = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       defiSetupDone: true,
       language: SupportedLanguage.EN,
       timeframeSetting: TimeFramePeriod.YEAR,
@@ -79,10 +79,11 @@ describe('types/user', () => {
       dateInputFormat: DateFormat.DateMonthYearHourMinuteSecond,
       versionUpdateCheckFrequency: 24,
       enableAliasNames: true,
+      enablePasswordConfirmation: true,
       blockchainRefreshButtonBehaviour: BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
       subscriptDecimals: false,
       savedFilters: {},
-      balanceUsdValueThreshold: {},
+      balanceValueThreshold: {},
       useHistoricalAssetBalances: false,
       scrambleData: false,
       scrambleMultiplier: 1,
@@ -90,6 +91,8 @@ describe('types/user', () => {
       persistPrivacySettings: false,
       evmQueryIndicatorMinOutOfSyncPeriod: 12,
       evmQueryIndicatorDismissalThreshold: 6,
+      lastPasswordConfirmed: 0,
+      passwordConfirmationInterval: 604800,
     };
 
     const raw = {

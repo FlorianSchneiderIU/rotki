@@ -1,13 +1,18 @@
-import type { ActionResult } from '@rotki/common';
-import type { PendingTask } from '@/types/task';
-import { setupTransformer, snakeCaseTransformer } from '@/services/axios-transformers';
-import { api } from '@/services/rotkehlchen-api';
-import { handleResponse, validAccountOperationStatus, validAuthorizedStatus, validStatus } from '@/services/utils';
-import { AccountSession, type CreateAccountPayload, type LoginCredentials } from '@/types/login';
+import { apiUrls } from '@/modules/api/api-urls';
+import { api } from '@/modules/api/rotki-api';
+import { VALID_ACCOUNT_OPERATION_STATUS } from '@/modules/api/utils';
+import {
+  AccountSession,
+  type BasicLoginCredentials,
+  type CreateAccountPayload,
+  type LoginCredentials,
+} from '@/types/login';
+import { type PendingTask, PendingTaskSchema } from '@/types/task';
 
 interface UseUserApiReturn {
   createAccount: (payload: CreateAccountPayload) => Promise<PendingTask>;
   login: (credentials: LoginCredentials) => Promise<PendingTask>;
+  colibriLogin: (credentials: BasicLoginCredentials) => Promise<boolean>;
   checkIfLogged: (username: string) => Promise<boolean>;
   loggedUsers: () => Promise<string[]>;
   getUserProfiles: () => Promise<string[]>;
@@ -17,10 +22,10 @@ interface UseUserApiReturn {
 
 export function useUsersApi(): UseUserApiReturn {
   const getUsers = async (): Promise<AccountSession> => {
-    const response = await api.instance.get<ActionResult<AccountSession>>(`/users`, {
-      transformResponse: setupTransformer(true),
+    const response = await api.get<AccountSession>(`/users`, {
+      skipRootCamelCase: true,
     });
-    return AccountSession.parse(handleResponse(response));
+    return AccountSession.parse(response);
   };
 
   const getUserProfiles = async (): Promise<string[]> => Object.keys(await getUsers());
@@ -39,16 +44,27 @@ export function useUsersApi(): UseUserApiReturn {
     return loggedUsers;
   };
 
-  const logout = async (username: string): Promise<boolean> => {
-    const response = await api.instance.patch<ActionResult<boolean>>(
-      `/users/${username}`,
-      {
-        action: 'logout',
-      },
-      { validateStatus: validAccountOperationStatus },
-    );
+  const colibriLogout = async (): Promise<boolean> => api.post<boolean>(
+    '/user/logout',
+    undefined,
+    {
+      baseURL: apiUrls.colibriApiUrl,
+      validStatuses: VALID_ACCOUNT_OPERATION_STATUS,
+      treat409AsSuccess: true,
+    },
+  );
 
-    const success = response.status === 409 ? true : handleResponse(response);
+  const logout = async (username: string): Promise<boolean> => {
+    await colibriLogout();
+    const success = await api.patch<boolean>(
+      `/users/${username}`,
+      { action: 'logout' },
+      {
+        validStatuses: VALID_ACCOUNT_OPERATION_STATUS,
+        treat409AsSuccess: true,
+      },
+    );
+    api.cancelAllQueued();
     api.cancel();
     return success;
   };
@@ -57,9 +73,9 @@ export function useUsersApi(): UseUserApiReturn {
     const { credentials, initialSettings, premiumSetup } = payload;
     const { password, username } = credentials;
 
-    const response = await api.instance.put<ActionResult<PendingTask>>(
+    const response = await api.put<PendingTask>(
       '/users',
-      snakeCaseTransformer({
+      {
         asyncQuery: true,
         initialSettings,
         name: username,
@@ -67,49 +83,49 @@ export function useUsersApi(): UseUserApiReturn {
         premiumApiKey: premiumSetup?.apiKey,
         premiumApiSecret: premiumSetup?.apiSecret,
         syncDatabase: premiumSetup?.syncDatabase,
-      }),
-      {
-        validateStatus: validStatus,
       },
     );
-    return handleResponse(response);
+    return PendingTaskSchema.parse(response);
   };
 
   const login = async (credentials: LoginCredentials): Promise<PendingTask> => {
     const { username, ...otherFields } = credentials;
-    const response = await api.instance.post<ActionResult<PendingTask>>(
+    const response = await api.post<PendingTask>(
       `/users/${username}`,
-      snakeCaseTransformer({
+      {
         ...otherFields,
         asyncQuery: true,
-      }),
+      },
       {
-        validateStatus: validAccountOperationStatus,
+        validStatuses: VALID_ACCOUNT_OPERATION_STATUS,
       },
     );
 
-    return handleResponse(response);
+    return PendingTaskSchema.parse(response);
   };
 
-  const changeUserPassword = async (username: string, currentPassword: string, newPassword: string): Promise<true> => {
-    const response = await api.instance.patch<ActionResult<true>>(
-      `/users/${username}/password`,
-      {
-        current_password: currentPassword,
-        name: username,
-        new_password: newPassword,
-      },
-      {
-        validateStatus: validAuthorizedStatus,
-      },
-    );
+  const colibriLogin = async (payload: BasicLoginCredentials): Promise<boolean> => api.post<boolean>(
+    '/user',
+    payload,
+    {
+      baseURL: apiUrls.colibriApiUrl,
+      validStatuses: VALID_ACCOUNT_OPERATION_STATUS,
+    },
+  );
 
-    return handleResponse(response);
-  };
+  const changeUserPassword = async (username: string, currentPassword: string, newPassword: string): Promise<true> => api.patch<true>(
+    `/users/${username}/password`,
+    {
+      currentPassword,
+      name: username,
+      newPassword,
+    },
+  );
 
   return {
     changeUserPassword,
     checkIfLogged,
+    colibriLogin,
     createAccount,
     getUserProfiles,
     loggedUsers,

@@ -3,17 +3,16 @@ from typing import Any, Literal, NamedTuple
 
 from rotkehlchen.utils.mixins.enums import SerializableEnumNameMixin
 
-EVM_EVENT_FIELDS = tuple[
-    bytes,          # tx_hash
+# Represents common blockchain metadata fields.
+CHAIN_EVENT_FIELDS_TYPE = tuple[
+    bytes,  # tx_hash
     str | None,  # counterparty
-    str | None,  # product
     str | None,  # address
 ]
 
-
-EVM_EVENT_DB_TUPLE_READ = tuple[
+CHAIN_EVENT_DB_TUPLE_READ = tuple[
     int,            # identifier
-    str,            # event_identifier
+    str,            # group_identifier
     int,            # sequence_index
     int,            # timestamp
     str,            # location
@@ -28,7 +27,6 @@ EVM_EVENT_DB_TUPLE_READ = tuple[
     bytes,          # tx_hash
     str,            # address
     str | None,  # counterparty
-    str | None,  # product
 ]
 
 
@@ -53,6 +51,7 @@ class HistoryEventType(SerializableEnumNameMixin):
     MINT = auto()
     BURN = auto()
     MULTI_TRADE = auto()
+    MARGIN = auto()
 
 
 class HistoryEventSubType(SerializableEnumNameMixin):
@@ -100,6 +99,9 @@ class HistoryEventSubType(SerializableEnumNameMixin):
     DELEGATE = auto()
     LIQUIDITY_PROVISION_LOSS = auto()
     BURN = auto()
+    MESSAGE = auto()
+    PROFIT = auto()
+    LOSS = auto()
 
     def serialize_or_none(self) -> str | None:
         return self.serialize()
@@ -176,8 +178,8 @@ class EventCategory(Enum):
     RECEIVE_PAYMENT = 41, EventDirection.IN
     RECEIVE_GRANT = 42, EventDirection.IN
     INTEREST = 43, EventDirection.IN
-    CEX_DEPOSIT = 44, EventDirection.IN
-    CEX_WITHDRAWAL = 45, EventDirection.OUT
+    CEX_DEPOSIT = 44, EventDirection.NEUTRAL
+    CEX_WITHDRAWAL = 45, EventDirection.NEUTRAL
     CASHBACK = 46, EventDirection.IN
     HACK_LOSS = 47, EventDirection.OUT
     CLAWBACK = 48, EventDirection.OUT
@@ -188,6 +190,10 @@ class EventCategory(Enum):
     LOSS = 53, EventDirection.OUT
     LIQUIDITY_PROVISION_LOSS = 54, EventDirection.OUT
     RETURN = 55, EventDirection.OUT
+    MESSAGE = 56, EventDirection.NEUTRAL
+    ACCOUNT_DEPOSIT = 57, EventDirection.NEUTRAL
+    ACCOUNT_WITHDRAWAL = 58, EventDirection.NEUTRAL
+    PROFIT = 59, EventDirection.IN
 
     @property
     def direction(self) -> EventDirection:

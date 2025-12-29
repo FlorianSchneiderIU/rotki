@@ -24,8 +24,8 @@ vi.mock('@/store/tasks', async () => {
 });
 
 vi.mock('@/composables/api/history/events', async () => {
-  const { camelCaseTransformer } = await import('@/services/axios-transformers.ts');
-  const historyEvents = await import('../../../fixtures/history-events.json');
+  const { camelCaseTransformer } = await import('@/modules/api/transformers');
+  const historyEvents = await import('@test/fixtures/history-events.json');
   return {
     useHistoryEventsApi: vi.fn().mockReturnValue({
       addTransactionHash: vi.fn(),
@@ -46,7 +46,7 @@ vi.mock('@/composables/info/chains', async () => {
   const { Blockchain } = await import('@rotki/common');
   return {
     useSupportedChains: vi.fn().mockReturnValue({
-      evmAndEvmLikeTxChainsInfo: computed(() => [
+      decodableTxChainsInfo: computed(() => [
         {
           evmChainName: 'ethereum',
           id: Blockchain.ETH,
@@ -75,8 +75,8 @@ describe('composables::history/events/tx', () => {
     const eventsCollection = await useHistoryEvents().fetchHistoryEvents({
       limit: -1,
       offset: 0,
-      eventIdentifiers: [],
-      groupByEventIds: false,
+      groupIdentifiers: [],
+      aggregateByGroupIds: false,
     });
 
     events = eventsCollection.data;
@@ -107,9 +107,9 @@ describe('composables::history/events/tx', () => {
 
     // add a hash and check the spy function is called
     await addTransactionHash({
-      txHash: '0x9',
+      txRef: '0x9',
       associatedAddress: '0x0...',
-      evmChain: '',
+      blockchain: '',
     });
 
     expect(addHistorySpy).toHaveBeenCalledOnce();
@@ -129,7 +129,7 @@ describe('composables::history/events/tx', () => {
     await redecodeTransactions();
 
     expect(decodeTxSpy).toHaveBeenCalledOnce();
-    expect(decodeTxSpy).toHaveBeenCalledWith(expect.anything(), expect.anything(), true);
+    expect(decodeTxSpy).toHaveBeenCalledWith(expect.anything(), true);
 
     // delete transaction with empty array and check the spy function is not called
     await deleteHistoryEvent([], true);

@@ -16,7 +16,11 @@ from typing import (
 )
 
 from rotkehlchen.assets.asset import Asset, AssetWithOracles, EvmToken, FiatAsset, UnderlyingToken
-from rotkehlchen.assets.utils import TokenEncounterInfo, get_or_create_evm_token
+from rotkehlchen.assets.utils import (
+    TokenEncounterInfo,
+    get_or_create_evm_token,
+    token_normalized_value_decimals,
+)
 from rotkehlchen.chain.arbitrum_one.modules.umami.constants import CPT_UMAMI
 from rotkehlchen.chain.arbitrum_one.modules.umami.utils import get_umami_vault_token_price
 from rotkehlchen.chain.ethereum.defi.price import handle_defi_price_query
@@ -25,7 +29,6 @@ from rotkehlchen.chain.ethereum.modules.yearn.constants import (
     CPT_YEARN_V2,
     CPT_YEARN_V3,
 )
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import ETH_SPECIAL_ADDRESS
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.chain.evm.decoding.aura_finance.constants import CPT_AURA_FINANCE
@@ -55,16 +58,18 @@ from rotkehlchen.chain.evm.decoding.morpho.constants import CPT_MORPHO
 from rotkehlchen.chain.evm.decoding.morpho.utils import get_morpho_vault_token_price
 from rotkehlchen.chain.evm.decoding.pendle.constants import CPT_PENDLE
 from rotkehlchen.chain.evm.decoding.pendle.utils import query_pendle_price
+from rotkehlchen.chain.evm.decoding.quickswap.constants import CPT_QUICKSWAP_V3, CPT_QUICKSWAP_V4
+from rotkehlchen.chain.evm.decoding.quickswap.v3.utils import get_quickswap_v3_position_price
+from rotkehlchen.chain.evm.decoding.quickswap.v4.utils import get_quickswap_v4_position_price
 from rotkehlchen.chain.evm.decoding.uniswap.constants import CPT_UNISWAP_V3, CPT_UNISWAP_V4
 from rotkehlchen.chain.evm.decoding.uniswap.v3.utils import get_uniswap_v3_position_price
-from rotkehlchen.chain.evm.decoding.uniswap.v4.utils import get_uniswap_v4_position_price
+from rotkehlchen.chain.evm.decoding.uniswap.v4.price import get_uniswap_v4_position_price
 from rotkehlchen.chain.evm.protocol_constants import (
     EVM_PROTOCOLS_WITH_PRICE_LOGIC,
     LP_TOKEN_AS_POOL_PROTOCOLS,
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.evm.utils import lp_price_from_uniswaplike_pool_contract
-from rotkehlchen.chain.polygon_pos.constants import POLYGON_POS_POL_HARDFORK
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import (
     A_3CRV,
@@ -111,6 +116,7 @@ from rotkehlchen.constants.assets import (
 from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.constants.resolver import ethaddress_to_identifier, evm_address_to_identifier
 from rotkehlchen.constants.timing import DAY_IN_SECONDS, MONTH_IN_SECONDS
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.defi import DefiPoolError
 from rotkehlchen.errors.misc import (
@@ -267,6 +273,10 @@ def get_underlying_asset_price(token: EvmToken) -> tuple[Price | None, CurrentPr
             evm_inquirer=Inquirer.get_evm_manager(chain_id=token.chain_id).node_inquirer,
             price_func=Inquirer.find_usd_price,
         )
+    elif token.protocol == CPT_QUICKSWAP_V3 and token.chain_id == ChainID.POLYGON_POS:  # V3 is only in polygon  # noqa: E501
+        price = get_quickswap_v3_position_price(inquirer=Inquirer(), token=token)
+    elif token.protocol == CPT_QUICKSWAP_V4 and token.chain_id == ChainID.BASE:  # V4 is only in base  # noqa: E501
+        price = get_quickswap_v4_position_price(inquirer=Inquirer(), token=token)
     elif token.protocol == CPT_PENDLE:
         price = query_pendle_price(token)
     elif token.protocol == CPT_BEEFY_FINANCE:
@@ -621,17 +631,14 @@ class Inquirer:
         return unpriced_assets, found_prices
 
     @staticmethod
-    def _get_special_usd_prices(
+    def _get_special_prices(
             from_assets: list[Asset],
             to_asset: Asset,
     ) -> tuple[list[Asset], dict[Asset, tuple[Price, CurrentPriceOracle]]]:
-        """Handle some special cases when finding usd prices.
+        """Handle some special cases when finding prices.
         Returns a tuple containing a list of assets without prices and a dict of found prices.
-        If to_asset is not USD, it will simply return from_assets and an empty dict.
+        For non-USD target currencies, converts the USD prices to the target currency.
         """
-        if to_asset != A_USD:
-            return from_assets, {}
-
         found_prices, assets_without_special_price = {}, []
         for from_asset in from_assets:
             if from_asset == A_BSQ:
@@ -646,6 +653,16 @@ class Inquirer:
                 found_prices[from_asset] = price_and_oracle
             else:
                 assets_without_special_price.append(from_asset)
+
+        if (
+                to_asset != A_USD and
+                len(found_prices) > 0 and
+                (rate_price := Inquirer.find_price(from_asset=A_USD, to_asset=to_asset)) != ZERO_PRICE  # noqa: E501
+        ):  # convert USD prices to target currency if needed
+            found_prices = {
+                asset: (Price(price * rate_price), oracle)
+                for asset, (price, oracle) in found_prices.items()
+            }
 
         return assets_without_special_price, found_prices
 
@@ -701,16 +718,13 @@ class Inquirer:
     @staticmethod
     def _maybe_replace_asset(asset: Asset) -> Asset:
         """Get the asset to actually use when finding the price of the specified asset.
-        Uses the main asset for collection assets and also handles special cases like ETH2 and POL.
+        Uses the main asset for collection assets and also handles the ETH2 special case.
         Returns either a replacement asset, or the original asset.
         """
         if asset == A_ETH2:
             return A_ETH
-        elif (
-            (collection_main_asset_id := GlobalDBHandler.get_collection_main_asset(asset.identifier)) is not None and  # noqa: E501
-            (collection_main_asset_id != 'eip155:1/erc20:0x455e53CBB86018Ac2B8092FdCd39d8444aFFC3F6' or ts_now() > POLYGON_POS_POL_HARDFORK)  # only use the pol token after the hardfork.  # noqa: E501
-        ):
-            return Asset(collection_main_asset_id)
+        elif (main_asset_id := GlobalDBHandler.get_collection_main_asset(asset.identifier)) is not None:  # noqa: E501
+            return Asset(main_asset_id)
 
         return asset
 
@@ -760,7 +774,7 @@ class Inquirer:
         """Returns a dict mapping from_assets to tuples containing the current price of the
         from_asset in to_asset valuation and the oracle that was used to get that price.
 
-        Note: For special assets, only USD prices are supported in _get_special_usd_prices.
+        Note: For special assets, only USD prices are supported in _get_special_prices.
 
         If all options for finding a price are unsuccessful the price will be set to ZERO_PRICE,
         and any errors will be logged in the logs.
@@ -774,7 +788,7 @@ class Inquirer:
             for func in (
                 Inquirer._get_manual_prices,
                 Inquirer._query_fiat_pairs,
-                Inquirer._get_special_usd_prices,
+                Inquirer._get_special_prices,
             ):
                 unpriced_assets, new_found_prices = func(
                     from_assets=unpriced_assets,
@@ -844,6 +858,34 @@ class Inquirer:
         return Inquirer._find_prices(
             from_assets=from_assets,
             to_asset=to_asset,
+            ignore_cache=ignore_cache,
+            skip_onchain=skip_onchain,
+        )
+
+    @staticmethod
+    def find_main_currency_price(
+            from_asset: Asset,
+            ignore_cache: bool = False,
+            skip_onchain: bool = False,
+    ) -> Price:
+        """Find the price of an asset in the user's main currency."""
+        return Inquirer.find_price(
+            from_asset=from_asset,
+            to_asset=CachedSettings().main_currency,
+            ignore_cache=ignore_cache,
+            skip_onchain=skip_onchain,
+        )
+
+    @staticmethod
+    def find_main_currency_prices(
+            from_assets: Sequence[Asset],
+            ignore_cache: bool = False,
+            skip_onchain: bool = False,
+    ) -> dict[Asset, Price]:
+        """Find the prices of multiple assets in the user's main currency."""
+        return Inquirer.find_prices(
+            from_assets=from_assets,
+            to_asset=CachedSettings().main_currency,
             ignore_cache=ignore_cache,
             skip_onchain=skip_onchain,
         )

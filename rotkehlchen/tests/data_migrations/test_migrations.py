@@ -13,7 +13,7 @@ from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.gnosis.constants import BRIDGE_QUERIED_ADDRESS_PREFIX
 from rotkehlchen.constants import APPDIR_NAME, ONE
 from rotkehlchen.constants.assets import A_BTC, A_ETH
-from rotkehlchen.data_migrations.constants import LAST_DATA_MIGRATION
+from rotkehlchen.data_migrations.constants import LAST_USERDB_DATA_MIGRATION
 from rotkehlchen.data_migrations.manager import (
     MIGRATION_LIST,
     DataMigrationManager,
@@ -21,6 +21,7 @@ from rotkehlchen.data_migrations.manager import (
 )
 from rotkehlchen.db.constants import UpdateType
 from rotkehlchen.db.dbhandler import DBHandler
+from rotkehlchen.exchanges.manager import ExchangeManager
 from rotkehlchen.externalapis.coingecko import Coingecko
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.cache import globaldb_delete_general_cache_values
@@ -67,10 +68,25 @@ class MockRotkiForMigrations(Rotkehlchen):
         self.msg_aggregator = db.msg_aggregator
 
 
+class MockRotkiForMigrationsWithExchangeManager(MockRotkiForMigrations):
+    """Mock rotki for migration tests that also includes an exchange manager."""
+
+    def __init__(self, db: DBHandler) -> None:
+        super().__init__(db=db)
+        self.exchange_manager = ExchangeManager(msg_aggregator=self.msg_aggregator)
+        with db.conn.write_ctx() as cursor:
+            exchange_credentials = db.get_exchange_credentials(cursor)
+
+        self.exchange_manager.initialize_exchanges(
+            exchange_credentials=exchange_credentials,
+            database=db,
+        )
+
+
 def assert_progress_message(msg: dict[str, Any], step_num: int, description: str | None, migration_version: int, migration_steps: int) -> None:  # noqa: E501
     assert msg['type'] == 'data_migration_status'
     assert msg['data']['start_version'] == migration_version
-    assert msg['data']['target_version'] == LAST_DATA_MIGRATION
+    assert msg['data']['target_version'] == LAST_USERDB_DATA_MIGRATION
     migration = msg['data']['current_migration']
     assert migration['version'] == migration_version
     assert migration['total_steps'] == (migration_steps if step_num != 0 else 0)
@@ -247,7 +263,7 @@ def test_migration_1(database: DBHandler) -> None:
     check_saved_events_for_exchange(Location.POLONIEX, rotki.data.db, should_exist=True)
     check_saved_events_for_exchange(Location.KRAKEN, rotki.data.db, should_exist=False)
     with database.conn.read_ctx() as cursor:
-        assert rotki.data.db.get_settings(cursor).last_data_migration == LAST_DATA_MIGRATION
+        assert rotki.data.db.get_settings(cursor).last_data_migration == LAST_USERDB_DATA_MIGRATION
 
 
 @pytest.mark.parametrize('use_custom_database', ['data_migration_v0.db'])
@@ -676,12 +692,12 @@ def test_new_db_remembers_last_migration_even_if_no_migrations_run(database: DBH
 
     with rotki.data.db.conn.read_ctx() as cursor:
         cursor.execute("SELECT value FROM settings WHERE name='last_data_migration'")
-        assert int(cursor.fetchone()[0]) == LAST_DATA_MIGRATION
+        assert int(cursor.fetchone()[0]) == LAST_USERDB_DATA_MIGRATION
 
 
 def test_last_data_migration_constant() -> None:
-    """Test that the LAST_DATA_MIGRATION constant is updated correctly"""
-    assert max(x.version for x in MIGRATION_LIST) == LAST_DATA_MIGRATION
+    """Test that the LAST_USERDB_DATA_MIGRATION constant is updated correctly"""
+    assert max(x.version for x in MIGRATION_LIST) == LAST_USERDB_DATA_MIGRATION
 
 
 @pytest.mark.parametrize('data_migration_version', [18])

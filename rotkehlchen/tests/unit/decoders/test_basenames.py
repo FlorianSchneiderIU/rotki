@@ -9,7 +9,7 @@ from rotkehlchen.chain.base.modules.basenames.constants import (
     BASENAMES_REGISTRY,
     CPT_BASENAMES,
 )
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ONE, ZERO
@@ -17,6 +17,7 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import Location, Timestamp, TimestampMS, deserialize_evm_tx_hash
 
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0xc37b40ABdB939635068d3c5f13E7faF686F03B65']])
 def test_basenames_register(
         base_inquirer: 'BaseInquirer',
@@ -36,7 +38,7 @@ def test_basenames_register(
     timestamp, user_address, gas_amount, token_id = TimestampMS(1726738619000), base_accounts[0], '0.000001963384627852', 26612040215479394739615825115912800930061094786769410446114278812336794170041  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -48,7 +50,7 @@ def test_basenames_register(
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=182,
             timestamp=timestamp,
             location=Location.BASE,
@@ -61,7 +63,7 @@ def test_basenames_register(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_REGISTRY,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=183,
             timestamp=timestamp,
             location=Location.BASE,
@@ -74,7 +76,7 @@ def test_basenames_register(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_REGISTRAR_CONTROLLER,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=186,
             timestamp=timestamp,
             location=Location.BASE,
@@ -87,7 +89,7 @@ def test_basenames_register(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_L2_RESOLVER,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=189,
             timestamp=timestamp,
             location=Location.BASE,
@@ -100,7 +102,7 @@ def test_basenames_register(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_REGISTRY,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=190,
             timestamp=timestamp,
             location=Location.BASE,
@@ -113,7 +115,7 @@ def test_basenames_register(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_REGISTRAR_CONTROLLER,
         ), EvmSwapEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=191,
             timestamp=timestamp,
             location=Location.BASE,
@@ -126,7 +128,7 @@ def test_basenames_register(
             address=BASENAMES_REGISTRAR_CONTROLLER,
             extra_data={'name': 'yabir.base.eth', 'expires': 1758296219},
         ), EvmSwapEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=192,
             timestamp=timestamp,
             location=Location.BASE,
@@ -142,6 +144,7 @@ def test_basenames_register(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0x706A70067BE19BdadBea3600Db0626859Ff25D74']])
 def test_basenames_register_with_discount(
         base_inquirer: 'BaseInquirer',
@@ -152,7 +155,7 @@ def test_basenames_register_with_discount(
     timestamp, user_address, gas_amount, token_id = TimestampMS(1730993703000), base_accounts[0], '0.000005269375874545', 7069226722341729763252382492637378743849472286311622838562285205711946962668  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -164,7 +167,7 @@ def test_basenames_register_with_discount(
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=402,
             timestamp=timestamp,
             location=Location.BASE,
@@ -177,7 +180,7 @@ def test_basenames_register_with_discount(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_REGISTRY,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=403,
             timestamp=timestamp,
             location=Location.BASE,
@@ -190,7 +193,7 @@ def test_basenames_register_with_discount(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_REGISTRAR_CONTROLLER,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=406,
             timestamp=timestamp,
             location=Location.BASE,
@@ -203,7 +206,7 @@ def test_basenames_register_with_discount(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_L2_RESOLVER,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=409,
             timestamp=timestamp,
             location=Location.BASE,
@@ -216,7 +219,7 @@ def test_basenames_register_with_discount(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_REGISTRY,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=410,
             timestamp=timestamp,
             location=Location.BASE,
@@ -229,7 +232,7 @@ def test_basenames_register_with_discount(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_REGISTRAR_CONTROLLER,
         ), EvmSwapEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=411,
             timestamp=timestamp,
             location=Location.BASE,
@@ -242,7 +245,7 @@ def test_basenames_register_with_discount(
             address=BASENAMES_REGISTRAR_CONTROLLER,
             extra_data={'name': 'javxq.base.eth', 'expires': 1762551303},
         ), EvmSwapEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=412,
             timestamp=timestamp,
             location=Location.BASE,
@@ -258,6 +261,7 @@ def test_basenames_register_with_discount(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0x706A70067BE19BdadBea3600Db0626859Ff25D74']])
 def test_basenames_set_attribute(
         base_inquirer: 'BaseInquirer',
@@ -268,7 +272,7 @@ def test_basenames_set_attribute(
     timestamp, user_address, gas_amount = TimestampMS(1730993863000), base_accounts[0], '0.000000860174471941'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -280,7 +284,7 @@ def test_basenames_set_attribute(
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=444,
             timestamp=timestamp,
             location=Location.BASE,
@@ -297,6 +301,7 @@ def test_basenames_set_attribute(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0x1208a26FAa0F4AC65B42098419EB4dAA5e580AC6']])
 def test_basenames_content_hash_changed(
         base_inquirer: 'BaseInquirer',
@@ -307,7 +312,7 @@ def test_basenames_content_hash_changed(
     timestamp, user_address, gas_amount = TimestampMS(1725571165000), base_accounts[0], '0.000000178301347708'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -319,7 +324,7 @@ def test_basenames_content_hash_changed(
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=341,
             timestamp=timestamp,
             location=Location.BASE,
@@ -336,6 +341,7 @@ def test_basenames_content_hash_changed(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize(('action', 'base_accounts'), [
     ('Transfer', ['0x2B97eb170a57fa2B5ea499b9f0176Ef587c6F54d', '0x6722d0fED54f02C60e9Cb6948aA18130eAc627c7']),  # noqa: E501
     ('Send', ['0x2B97eb170a57fa2B5ea499b9f0176Ef587c6F54d']),
@@ -372,7 +378,7 @@ def test_basenames_transfer_name(database, base_inquirer, action, base_accounts,
     events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=tx_hash)
     timestamp, token_id = TimestampMS(1731055033000), 112426549028048856546593988202926666418642845280196262619695088491431122056723  # noqa: E501
     gas_event = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.BASE,
@@ -389,7 +395,7 @@ def test_basenames_transfer_name(database, base_inquirer, action, base_accounts,
     if action != 'Receive':
         expected_events.append(gas_event)
     expected_events.append(EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=sequence_index,
         timestamp=timestamp,
         location=Location.BASE,
@@ -406,6 +412,7 @@ def test_basenames_transfer_name(database, base_inquirer, action, base_accounts,
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0x5C68b865B73271A9A1a3ee3792d396DacDe85702']])
 def test_basenames_new_owner(
         base_inquirer: 'BaseInquirer',
@@ -416,7 +423,7 @@ def test_basenames_new_owner(
     timestamp, user_address, gas_amount = TimestampMS(1730924307000), base_accounts[0], '0.000001274267527917'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -428,7 +435,7 @@ def test_basenames_new_owner(
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=294,
             timestamp=timestamp,
             location=Location.BASE,
@@ -441,7 +448,7 @@ def test_basenames_new_owner(
             counterparty=CPT_BASENAMES,
             address=BASENAMES_REGISTRY,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=295,
             timestamp=timestamp,
             location=Location.BASE,

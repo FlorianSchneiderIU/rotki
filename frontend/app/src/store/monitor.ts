@@ -1,6 +1,7 @@
 import { startPromise } from '@shared/utils';
 import { isEqual } from 'es-toolkit';
 import { useBalances } from '@/composables/balances';
+import { useAutoLogin } from '@/composables/user/account';
 import { useExchanges } from '@/modules/balances/exchanges/use-exchanges';
 import { useManualBalances } from '@/modules/balances/manual/use-manual-balances';
 import { useBalancesStore } from '@/modules/balances/use-balances-store';
@@ -12,6 +13,7 @@ import { useHistoryStore } from '@/store/history';
 import { useSessionAuthStore } from '@/store/session/auth';
 import { usePeriodicStore } from '@/store/session/periodic';
 import { useFrontendSettingsStore } from '@/store/settings/frontend';
+import { useSessionSettingsStore } from '@/store/settings/session';
 import { useTaskStore } from '@/store/tasks';
 import { useWebsocketStore } from '@/store/websocket';
 import { BalanceSource } from '@/types/settings/frontend-settings';
@@ -21,11 +23,14 @@ const PERIODIC = 'periodic';
 const TASK = 'task';
 const BALANCES = 'balances';
 const EVM_EVENTS_STATUS = 'evm_events_status';
+const PASSWORD_CONFIRMATION = 'password_confirmation';
 
 export const useMonitorStore = defineStore('monitor', () => {
   const monitors = ref<Record<string, any>>({});
 
-  const { canRequestData } = storeToRefs(useSessionAuthStore());
+  const authStore = useSessionAuthStore();
+  const { canRequestData, logged, username } = storeToRefs(authStore);
+  const { checkIfPasswordConfirmationNeeded } = useAutoLogin();
   const { check } = usePeriodicStore();
   const { consume } = useMessageHandling();
   const { monitor } = useTaskStore();
@@ -35,10 +40,11 @@ export const useMonitorStore = defineStore('monitor', () => {
   const { fetchBlockchainBalances } = useBlockchainBalances();
   const { removeIgnoredAssets } = useBalancesStore();
   const { processing } = useHistoryEventsStatus();
-  const { fetchEvmTransactionStatus } = useHistoryStore();
+  const { fetchTransactionStatusSummary } = useHistoryStore();
+  const { connectedExchanges } = storeToRefs(useSessionSettingsStore());
 
   const frontendStore = useFrontendSettingsStore();
-  const { balanceUsdValueThreshold, queryPeriod, refreshPeriod } = storeToRefs(frontendStore);
+  const { balanceValueThreshold, queryPeriod, refreshPeriod } = storeToRefs(frontendStore);
 
   const ws = useWebsocketStore();
   const { connected } = storeToRefs(ws);
@@ -98,11 +104,29 @@ export const useMonitorStore = defineStore('monitor', () => {
     const period = 10 * 60 * 1000; // fetch every 10 mins
     if (!activeMonitors[EVM_EVENTS_STATUS]) {
       if (get(canRequestData))
-        startPromise(fetchEvmTransactionStatus());
+        startPromise(fetchTransactionStatusSummary());
 
       activeMonitors[EVM_EVENTS_STATUS] = setInterval(() => {
         if (get(canRequestData))
-          startPromise(fetchEvmTransactionStatus());
+          startPromise(fetchTransactionStatusSummary());
+      }, period);
+      set(monitors, activeMonitors);
+    }
+  };
+
+  const startPasswordConfirmationMonitoring = (): void => {
+    const activeMonitors = get(monitors);
+    const period = 60 * 60 * 1000; // check every 1 hour
+    if (!activeMonitors[PASSWORD_CONFIRMATION]) {
+      activeMonitors[PASSWORD_CONFIRMATION] = setInterval(() => {
+        if (!get(logged))
+          return;
+
+        const currentUsername = get(username);
+        if (!currentUsername)
+          return;
+
+        startPromise(checkIfPasswordConfirmationNeeded(currentUsername));
       }, period);
       set(monitors, activeMonitors);
     }
@@ -117,6 +141,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     startTaskMonitoring(restarting);
     startBalanceRefresh();
     startEvmStatusMonitoring();
+    startPasswordConfirmationMonitoring();
   };
 
   const stop = (): void => {
@@ -134,7 +159,7 @@ export const useMonitorStore = defineStore('monitor', () => {
     start(true);
   };
 
-  watch(balanceUsdValueThreshold, (current, old) => {
+  watch(balanceValueThreshold, (current, old) => {
     if (!isEqual(current[BalanceSource.MANUAL], old[BalanceSource.MANUAL])) {
       startPromise(fetchManualBalances(true));
     }
@@ -162,15 +187,16 @@ export const useMonitorStore = defineStore('monitor', () => {
     }
   });
 
-  watch(processing, async (currentProcessing, previousProcessing) => {
-    if (currentProcessing !== previousProcessing) {
-      await fetchEvmTransactionStatus();
+  watch([processing, connectedExchanges], async ([currentProcessing, connectedExchanges], [previousProcessing, previousConnectedExchanges]) => {
+    if (currentProcessing !== previousProcessing || !isEqual(connectedExchanges, previousConnectedExchanges)) {
+      await fetchTransactionStatusSummary();
     }
   });
 
   return {
     restart,
     start,
+    startTaskMonitoring,
     stop,
   };
 });

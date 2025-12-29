@@ -1,11 +1,11 @@
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.constants import BURN_TOPIC, MINT_TOPIC
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.quickswap.constants import CPT_QUICKSWAP_V2
 from rotkehlchen.chain.evm.decoding.quickswap.utils import decode_quickswap_swap
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.uniswap.v2.constants import UNISWAP_V2_SWAP_SIGNATURE
 from rotkehlchen.chain.evm.decoding.uniswap.v2.decoder import UNISWAP_V2_INIT_CODE_HASH
 from rotkehlchen.chain.evm.decoding.uniswap.v2.utils import (
@@ -14,19 +14,19 @@ from rotkehlchen.chain.evm.decoding.uniswap.v2.utils import (
 from rotkehlchen.types import ChecksumEvmAddress, EvmTransaction
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
 
 
-class Quickswapv2CommonDecoder(DecoderInterface):
+class Quickswapv2CommonDecoder(EvmDecoderInterface):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             router_address: 'ChecksumEvmAddress',
             factory_address: 'ChecksumEvmAddress',
@@ -64,8 +64,8 @@ class Quickswapv2CommonDecoder(DecoderInterface):
             all_logs=all_logs,
             is_deposit=is_deposit,
             counterparty=CPT_QUICKSWAP_V2,
-            database=self.evm_inquirer.database,
-            evm_inquirer=self.evm_inquirer,
+            database=self.node_inquirer.database,
+            evm_inquirer=self.node_inquirer,
             factory_address=self.factory_address,
             init_code_hash=UNISWAP_V2_INIT_CODE_HASH,
             tx_hash=transaction.tx_hash,

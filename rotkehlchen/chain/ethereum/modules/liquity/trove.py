@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
 
 from rotkehlchen.accounting.structures.balance import AssetBalance, Balance, BalanceSheet
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.proxies_inquirer import ProxyType
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
@@ -106,9 +106,12 @@ class Liquity(EthereumModule):
         """Query liquity contract to detect open troves and
         query total collateral ratio of the protocol"""
         addresses = list(given_addresses)  # turn to a mutable list copy to add proxies
-        proxied_addresses = self.ethereum.proxies_inquirer.get_accounts_having_proxy(proxy_type=ProxyType.DS)  # At least v1 had only DS proxy # noqa: E501
-        proxies_to_address = {v: k for k, v in proxied_addresses.items()}
-        addresses += proxied_addresses.values()
+        proxy_mapping = self.ethereum.proxies_inquirer.get_accounts_having_proxy(proxy_type=ProxyType.DS)  # At least v1 had only DS proxy # noqa: E501
+        proxies_to_address = {}
+        for user_address, proxy_addresses in proxy_mapping.items():
+            addresses.extend(proxy_addresses)
+            for proxy_address in proxy_addresses:
+                proxies_to_address[proxy_address] = user_address
 
         calls = [
             (self.trove_manager_contract.address, self.trove_manager_contract.encode(method_name='Troves', arguments=[x]))  # noqa: E501
@@ -120,8 +123,9 @@ class Liquity(EthereumModule):
         )
 
         data: dict[ChecksumEvmAddress, Trove] = {}
-        eth_price = Inquirer.find_usd_price(A_ETH)
-        lusd_price = Inquirer.find_usd_price(A_LUSD)
+        main_currency_prices = Inquirer.find_main_currency_prices([A_ETH, A_LUSD])
+        eth_price = main_currency_prices[A_ETH]
+        lusd_price = main_currency_prices[A_LUSD]
         for idx, output in enumerate(outputs):
             status, result = output
             if status is True:
@@ -140,21 +144,21 @@ class Liquity(EthereumModule):
                         asset=A_ETH,
                         balance=Balance(
                             amount=collateral,
-                            usd_value=eth_price * collateral,
+                            value=eth_price * collateral,
                         ),
                     )
                     debt_balance = AssetBalance(
                         asset=A_LUSD,
                         balance=Balance(
                             amount=debt,
-                            usd_value=lusd_price * debt,
+                            value=lusd_price * debt,
                         ),
                     )
                     # Avoid division errors
                     collateralization_ratio: FVal | None
                     liquidation_price: FVal | None
                     if debt > 0:
-                        collateralization_ratio = eth_price * collateral / debt * 100
+                        collateralization_ratio = eth_price * collateral / (lusd_price * debt) * 100  # noqa: E501
                     else:
                         collateralization_ratio = None
                     if collateral > 0:
@@ -203,7 +207,8 @@ class Liquity(EthereumModule):
         """
         addresses = list(given_addresses)  # turn to a mutable list copy to add proxies
         for proxy_mappings in self.ethereum.proxies_inquirer.get_accounts_having_proxy().values():
-            addresses += proxy_mappings.values()
+            for proxy_addresses in proxy_mappings.values():
+                addresses.extend(proxy_addresses)
 
         # Build the calls that need to be made in order to get the status in the SP
         calls = [
@@ -234,17 +239,17 @@ class Liquity(EthereumModule):
             # make sure that variables always have a value set. It is guaranteed that the response
             # will have the desired format because we include and process failed queries.
             key, asset, gain_info = keys[0], assets[0], 0
-            for method_idx, (method, _asset, _key) in enumerate(zip(methods, assets, keys, strict=True)):  # noqa: E501
+            for method_idx, (method, i_asset, i_key) in enumerate(zip(methods, assets, keys, strict=True)):  # noqa: E501
                 # get the asset, key used in the response and the amount based on the index
                 # for this address
                 if idx % 3 == method_idx:
-                    asset = _asset
-                    key = _key
+                    asset = i_asset
+                    key = i_key
                     gain_info = contract.decode(result, method, arguments=[current_address])[0]
                     break
 
             # get price information for the asset and deserialize the amount
-            asset_price = Inquirer.find_usd_price(asset)
+            asset_price = Inquirer.find_main_currency_price(asset)
             amount = deserialize_fval(
                 token_normalized_value_decimals(gain_info, 18),
             )
@@ -262,7 +267,7 @@ class Liquity(EthereumModule):
                     asset=asset,
                     balance=Balance(
                         amount=amount,
-                        usd_value=asset_price * amount,
+                        value=asset_price * amount,
                     ),
                 )
             else:
@@ -273,7 +278,7 @@ class Liquity(EthereumModule):
                     asset=asset,
                     balance=Balance(
                         amount=amount,
-                        usd_value=asset_price * amount,
+                        value=asset_price * amount,
                     ),
                 )
         return data

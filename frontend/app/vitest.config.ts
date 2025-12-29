@@ -15,7 +15,7 @@ export default mergeConfig(
   defineConfig({
     test: {
       globals: true,
-      environment: 'jsdom',
+      environment: 'happy-dom',
       testTimeout: 15_000,
       env: {
         TZ: 'UTC',
@@ -32,7 +32,7 @@ export default mergeConfig(
           'Date',
         ],
       },
-      exclude: [...configDefaults.exclude, 'tests/e2e/**'],
+      exclude: [...configDefaults.exclude, 'tests/e2e/**', 'tests/contract/**'],
       root: fileURLToPath(new URL('./', import.meta.url)),
       server: {
         deps: {

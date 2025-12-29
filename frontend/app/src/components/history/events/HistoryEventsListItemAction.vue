@@ -9,13 +9,11 @@ import type {
 import RowActions from '@/components/helper/RowActions.vue';
 import HistoryEventAction from '@/components/history/events/HistoryEventAction.vue';
 import {
-  isEvmSwapEvent,
   isGroupEditableHistoryEvent,
   isSwapTypeEvent,
 } from '@/modules/history/management/forms/form-guards';
 import {
   isAssetMovementEvent,
-  isEventAccountingRuleProcessed,
   isEventMissingAccountingRule,
   isEvmEvent,
 } from '@/utils/history/events';
@@ -41,7 +39,7 @@ function hideActions(item: HistoryEventEntry, index: number): boolean {
 }
 
 function getEmittedEvent(item: HistoryEvent): HistoryEventEditData {
-  if (isGroupEditableHistoryEvent(item) || isEvmSwapEvent(item)) {
+  if (isGroupEditableHistoryEvent(item) || isSwapTypeEvent(item.entryType)) {
     return {
       eventsInGroup: props.events as GroupEditableHistoryEvents[],
       type: 'edit-group',
@@ -105,12 +103,8 @@ function deleteEvent(item: HistoryEventEntry) {
       {{ t('actions.history_events.missing_rule.title') }}
     </RuiTooltip>
     <HistoryEventAction
-      v-else-if="!isEventAccountingRuleProcessed(item)"
-      :event="item"
-    />
-    <div
       v-else
-      class="w-10 h-10"
+      :event="item"
     />
   </RowActions>
 </template>

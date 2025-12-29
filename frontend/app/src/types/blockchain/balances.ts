@@ -9,7 +9,7 @@ const AssetBalancesSchema = z.record(z.string(), Balance);
 
 export type AssetBalances = z.infer<typeof AssetBalancesSchema>;
 
-export const AssetProtocolBalancesSchema = z.record(z.string(), ProtocolBalances);
+const AssetProtocolBalancesSchema = z.record(z.string(), ProtocolBalances);
 
 export type AssetProtocolBalances = z.infer<typeof AssetProtocolBalancesSchema>;
 
@@ -52,3 +52,17 @@ export const BlockchainBalances = z.object({
 });
 
 export type BlockchainBalances = z.infer<typeof BlockchainBalances>;
+
+export interface BlockchainBalancePayload {
+  readonly addresses?: string[];
+  readonly blockchain?: string | string[];
+  readonly ignoreCache: boolean;
+  readonly isXpub?: boolean;
+}
+
+export interface FetchBlockchainBalancePayload {
+  readonly addresses?: string[];
+  readonly isXpub?: boolean;
+  readonly blockchain: string;
+  readonly ignoreCache: boolean;
+}

@@ -3,16 +3,16 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.constants import WITHDRAW_TOPIC
 from rotkehlchen.chain.evm.contracts import EvmContract
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.types import ChecksumEvmAddress
@@ -21,7 +21,7 @@ from .constants import CPT_DXDAO_MESA
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.user_messages import MessagesAggregator
 
 DEPOSIT = b'\xc1\x1c\xc3N\x93\xc6z\x938+\x99\xf2I\x8e\x997\x19\x87\x98\xf3\xc1\xc2\x88\x80\x08\xff\xc0\xee\xb8/h\xc4'  # noqa: E501
@@ -29,12 +29,12 @@ ORDER_PLACEMENT = b'\xde\xcfo\xde\x82C\x98\x12\x99\xf7\xb7\xa7v\xf2\x9a\x9f\xc6z
 WITHDRAW_REQUEST = b',bE\xafPo\x0f\xc1\x08\x99\x18\xc0,\x1d\x01\xbd\xe9\xcc\x80v\t\xb34\xb3\xe7dMm\xfbZl^'  # noqa: E501
 
 
-class DxdaomesaDecoder(DecoderInterface):
+class DxdaomesaDecoder(EvmDecoderInterface):
 
     def __init__(  # pylint: disable=super-init-not-called
             self,
             ethereum_inquirer: 'EthereumInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -51,7 +51,7 @@ class DxdaomesaDecoder(DecoderInterface):
             deployed_block=contracts['DXDAOMESA']['deployed_block'],
         )
 
-    def _decode_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] == DEPOSIT:
             return self._decode_deposit(context=context)
         if context.tx_log.topics[0] == ORDER_PLACEMENT:
@@ -61,9 +61,9 @@ class DxdaomesaDecoder(DecoderInterface):
         if context.tx_log.topics[0] == WITHDRAW_TOPIC:
             return self._decode_withdraw(context=context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_deposit(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_deposit(self, context: DecoderContext) -> EvmDecodingOutput:
         topic_data, log_data = self.contract.decode_event(
             tx_log=context.tx_log,
             event_name='Deposit',
@@ -81,9 +81,9 @@ class DxdaomesaDecoder(DecoderInterface):
                 event.notes = f'Deposit {amount} {deposited_asset.symbol} to DXDao mesa exchange'
                 break
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_withdraw(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_withdraw(self, context: DecoderContext) -> EvmDecodingOutput:
         topic_data, log_data = self.contract.decode_event(
             tx_log=context.tx_log,
             event_name='Withdraw',
@@ -101,9 +101,9 @@ class DxdaomesaDecoder(DecoderInterface):
                 event.notes = f'Withdraw {amount} {withdraw_asset.symbol} from DXDao mesa exchange'
                 break
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_withdraw_request(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_withdraw_request(self, context: DecoderContext) -> EvmDecodingOutput:
         topic_data, log_data = self.contract.decode_event(
             tx_log=context.tx_log,
             event_name='WithdrawRequest',
@@ -111,7 +111,7 @@ class DxdaomesaDecoder(DecoderInterface):
         )
         user = topic_data[0]
         if not self.base.is_tracked(user):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         token = self.base.get_or_create_evm_asset(topic_data[1])
         amount = asset_normalized_value(amount=log_data[0], asset=token)
@@ -128,9 +128,9 @@ class DxdaomesaDecoder(DecoderInterface):
             counterparty=CPT_DXDAO_MESA,
             address=context.transaction.to_address,
         )
-        return DecodingOutput(events=[event])
+        return EvmDecodingOutput(events=[event])
 
-    def _decode_order_placement(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_order_placement(self, context: DecoderContext) -> EvmDecodingOutput:
         """Some docs: https://docs.cow.fi/cow-protocol/tutorials/cow-swap/limit"""
         topic_data, log_data = self.contract.decode_event(
             tx_log=context.tx_log,
@@ -139,9 +139,9 @@ class DxdaomesaDecoder(DecoderInterface):
         )
         owner = topic_data[0]
         if not self.base.is_tracked(owner):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
-        result = self.evm_inquirer.multicall_specific(
+        result = self.node_inquirer.multicall_specific(
             contract=self.contract,
             method_name='tokenIdToAddressMap',
             arguments=[[topic_data[1]], [topic_data[2]]],
@@ -162,7 +162,7 @@ class DxdaomesaDecoder(DecoderInterface):
             counterparty=CPT_DXDAO_MESA,
             address=context.transaction.to_address,
         )
-        return DecodingOutput(events=[event])
+        return EvmDecodingOutput(events=[event])
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         return {

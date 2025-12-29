@@ -7,21 +7,24 @@ import RowAppend from '@/components/helper/RowAppend.vue';
 import BalanceTopProtocols from '@/modules/balances/protocols/BalanceTopProtocols.vue';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useGeneralSettingsStore } from '@/store/settings/general';
-import { CURRENCY_USD } from '@/types/currencies';
 import { sum } from '@/utils/balances';
 
 interface AccountAssetBalancesProps {
   assets: AssetBalanceWithPrice[];
   title: string;
   flat?: boolean;
+  selectionMode?: boolean;
 }
+
+const selected = defineModel<string[] | undefined>('selected', { required: true });
 
 const props = withDefaults(defineProps<AccountAssetBalancesProps>(), {
   flat: false,
+  selectionMode: false,
 });
 
 const sort = ref<DataTableSortData<AssetBalanceWithPrice>>({
-  column: 'usdValue',
+  column: 'value',
   direction: 'desc' as const,
 });
 
@@ -64,7 +67,7 @@ const cols = computed<DataTableColumn<AssetBalanceWithPrice>[]>(() => [{
   align: 'end',
   cellClass: 'py-1',
   class: 'text-no-wrap',
-  key: 'usdValue',
+  key: 'value',
   label: t('common.value_in_symbol', {
     symbol: get(currencySymbol),
   }),
@@ -87,6 +90,7 @@ useRememberTableSorting<AssetBalanceWithPrice>(TableId.ACCOUNT_ASSET_BALANCES, s
       {{ title }}
     </template>
     <RuiDataTable
+      v-model="selected"
       v-model:sort="sort"
       :rows="assets"
       :cols="cols"
@@ -121,21 +125,21 @@ useRememberTableSorting<AssetBalanceWithPrice>(TableId.ACCOUNT_ASSET_BALANCES, s
       <template #item.amount="{ row }">
         <AmountDisplay :value="row.amount" />
       </template>
-      <template #item.usdValue="{ row }">
+      <template #item.value="{ row }">
         <AmountDisplay
-          fiat-currency="USD"
-          :value="row.usdValue"
+          force-currency
+          :value="row.value"
           show-currency="symbol"
         />
       </template>
       <template #body.append>
         <RowAppend
-          label-colspan="3"
+          :label-colspan="selectionMode ? 5 : 4"
           :label="t('common.total')"
           class="[&>td]:p-4"
         >
           <AmountDisplay
-            :fiat-currency="CURRENCY_USD"
+            force-currency
             :value="totalValue"
             show-currency="symbol"
           />

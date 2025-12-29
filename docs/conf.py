@@ -23,9 +23,9 @@ project_copyright = '2018-2020, Eleftherios Karapetsas. 2020-2025, Rotki Solutio
 author = 'The rotki team'
 
 # The short X.Y version
-version = '1.40.0'
+version = '1.41.3'
 # The full version, including alpha/beta/rc tags
-release = '1.40.0'
+release = '1.41.3'
 
 
 # -- General configuration ---------------------------------------------------
@@ -41,6 +41,7 @@ extensions = [
     'releases',
     'sphinx.ext.mathjax',
     'sphinx.ext.ifconfig',
+    'sphinx.ext.extlinks',
     'sphinxcontrib.httpdomain',
     'sphinxcontrib.httpexample',
     'sphinx_inline_tabs',
@@ -50,6 +51,11 @@ extensions = [
 # 'releases' (changelog) settings
 releases_issue_uri = 'https://github.com/rotki/rotki/issues/%s'
 releases_release_uri = 'https://github.com/rotki/rotki/releases/tag/v%s'
+
+# 'extlinks' settings for custom link roles
+extlinks = {
+    'releasetag': ('https://github.com/rotki/rotki/releases/tag/v%s', '%s'),
+}
 # Enables 0.x.y releases to not be grouped into feature and bugfix releases
 # see: http://releases.readthedocs.io/en/latest/concepts.html#unstable-prehistory-mode
 # This needs to be kept enabled even once 1.0 has been reached!

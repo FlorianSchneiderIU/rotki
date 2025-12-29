@@ -13,7 +13,7 @@ from rotkehlchen.chain.base.transactions import BaseTransactions
 from rotkehlchen.chain.binance_sc.decoding.decoder import BinanceSCTransactionDecoder
 from rotkehlchen.chain.binance_sc.transactions import BinanceSCTransactions
 from rotkehlchen.chain.ethereum.constants import (
-    ETHEREUM_ETHERSCAN_NODE,
+    EVM_INDEXERS_NODE,
 )
 from rotkehlchen.chain.ethereum.decoding.decoder import EthereumTransactionDecoder
 from rotkehlchen.chain.ethereum.transactions import EthereumTransactions
@@ -77,19 +77,8 @@ PRUNED_AND_NOT_ARCHIVED_NODE = WeightedNode(
     active=True,
     weight=ONE,
 )
-ANKR_NODE = WeightedNode(
-    node_info=NodeName(
-        name='own',
-        endpoint='https://rpc.ankr.com/eth',
-        owned=True,
-        blockchain=SupportedBlockchain.ETHEREUM,
-    ),
-    weight=ONE,
-    active=True,
-)
-
 ETHERSCAN_AND_INFURA_PARAMS: tuple[str, list[tuple]] = ('ethereum_manager_connect_at_start, call_order', [  # noqa: E501
-    ((), (ETHEREUM_ETHERSCAN_NODE,)),
+    ((), (EVM_INDEXERS_NODE,)),
     (
         (WeightedNode(node_info=NodeName(name='own', endpoint=INFURA_TEST, owned=True, blockchain=SupportedBlockchain.ETHEREUM), weight=ONE, active=True),),  # noqa: E501
         (WeightedNode(node_info=NodeName(name='own', endpoint=INFURA_TEST, owned=True, blockchain=SupportedBlockchain.ETHEREUM), weight=ONE, active=True),),  # noqa: E501
@@ -99,7 +88,7 @@ ETHERSCAN_AND_INFURA_PARAMS: tuple[str, list[tuple]] = ('ethereum_manager_connec
 
 ETHERSCAN_AND_INFURA_AND_ALCHEMY: tuple[str, list[tuple]] = ('ethereum_manager_connect_at_start, call_order', [  # noqa: E501
     # Query etherscan only
-    ((), (ETHEREUM_ETHERSCAN_NODE,)),
+    ((), (EVM_INDEXERS_NODE,)),
     # For "our own" node querying use infura
     (
         (WeightedNode(node_info=NodeName(name='own', endpoint=INFURA_TEST, owned=True, blockchain=SupportedBlockchain.ETHEREUM), weight=ONE, active=True),),  # noqa: E501
@@ -129,7 +118,7 @@ ETHEREUM_WEB3_AND_ETHERSCAN_TEST_PARAMETERS = (
     'ethereum_manager_connect_at_start',
     [
         (INFURA_ETH_NODE,),
-        (ETHEREUM_ETHERSCAN_NODE,),
+        (EVM_INDEXERS_NODE,),
     ],
 )
 
@@ -139,7 +128,7 @@ ETHEREUM_NODES_PARAMETERS_WITH_PRUNED_AND_NOT_ARCHIVED = (
     [
         (PRUNED_AND_NOT_ARCHIVED_NODE,),
         (INFURA_ETH_NODE,),
-        (ETHEREUM_ETHERSCAN_NODE,),
+        (EVM_INDEXERS_NODE,),
         (ETHERSCAN_AND_INFURA_AND_ALCHEMY[1][2][0][0],),
     ],
 )
@@ -160,7 +149,7 @@ if 'GITHUB_WORKFLOW' in os.environ:  # TODO: Undo this if once all tests where i
     # from Github actions hangs and times out
     ETHEREUM_TEST_PARAMETERS = ('ethereum_manager_connect_at_start, call_order', [
         # Query etherscan only
-        ((), (ETHEREUM_ETHERSCAN_NODE,)),
+        ((), (EVM_INDEXERS_NODE,)),
     ])
 else:
     # For Travis and local tests also use Infura, works fine
@@ -199,7 +188,7 @@ def txreceipt_to_data(receipt: EvmTxReceipt) -> dict[str, Any]:
     serialization snake case would be used.
     """
     data: dict[str, Any] = {
-        'transactionHash': receipt.tx_hash.hex(),
+        'transactionHash': str(receipt.tx_hash),
         'type': hex(receipt.tx_type),
         'contractAddress': receipt.contract_address,
         'status': int(receipt.status),
@@ -259,9 +248,9 @@ def setup_ethereum_transactions_test(
     transactions = [transaction1, transaction2]
     if transaction_already_queried is True:
         with database.user_write() as cursor:
-            dbevmtx.add_evm_transactions(cursor, evm_transactions=[transaction1], relevant_address=TEST_ADDR1)  # noqa: E501
-            dbevmtx.add_evm_transactions(cursor, evm_transactions=[transaction2], relevant_address=TEST_ADDR2)  # noqa: E501
-            result = dbevmtx.get_evm_transactions(cursor, EvmTransactionsFilterQuery.make(chain_id=ChainID.ETHEREUM))  # noqa: E501
+            dbevmtx.add_transactions(cursor, evm_transactions=[transaction1], relevant_address=TEST_ADDR1)  # noqa: E501
+            dbevmtx.add_transactions(cursor, evm_transactions=[transaction2], relevant_address=TEST_ADDR2)  # noqa: E501
+            result = dbevmtx.get_transactions(cursor, EvmTransactionsFilterQuery.make(chain_id=ChainID.ETHEREUM))  # noqa: E501
         assert result == transactions
 
     expected_receipt1 = EvmTxReceipt(

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import StatisticPlaceholder from '@/components/graphs/StatisticPlaceholder.vue';
-import { usePremium } from '@/composables/premium';
+import { usePremiumHelper } from '@/composables/premium';
 import { PremiumStatistics } from '@/premium/premium';
 import { NoteLocation } from '@/types/notes';
+import { PremiumFeature } from '@/types/session';
 
 definePage({
   meta: {
@@ -11,12 +12,14 @@ definePage({
   name: 'statistics-graphs',
 });
 
-const premium = usePremium();
+const { isFeatureAllowed } = usePremiumHelper();
+
+const allowed = isFeatureAllowed(PremiumFeature.GRAPHS_VIEW);
 </script>
 
 <template>
   <div class="container">
-    <PremiumStatistics v-if="premium" />
+    <PremiumStatistics v-if="allowed" />
     <StatisticPlaceholder v-else />
   </div>
 </template>

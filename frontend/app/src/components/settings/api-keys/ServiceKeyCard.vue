@@ -16,6 +16,8 @@ const props = withDefaults(
     hideAction?: boolean;
     primaryAction?: string;
     actionDisabled?: boolean;
+    addButtonText?: string;
+    editButtonText?: string;
   }>(),
   {
     actionDisabled: false,
@@ -29,7 +31,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: 'confirm'): void;
+  confirm: [];
 }>();
 
 defineSlots<{
@@ -62,12 +64,26 @@ watch(route, async (route) => {
     await router.replace({ query: {} });
   }
 }, { immediate: true });
+
+const addButtonTextComputed = computed<string>(() => props.addButtonText || t('external_services.actions.enter_api_key'));
+
+const editButtonTextComputed = computed<string>(() => props.editButtonText || t('external_services.actions.replace_key'));
+
+const primaryActionTextComputed = computed<string>(() => props.primaryAction || (props.keySet
+  ? t('external_services.actions.replace_key')
+  : t('external_services.actions.save_key')));
+
+defineExpose({
+  openDialog,
+  setOpen,
+});
 </script>
 
 <template>
   <RuiCard
     no-padding
     class="h-full"
+    :class="{ '!border-rui-success/50 bg-rui-success/5 dark:bg-rui-success/5': keySet }"
     content-class="h-full flex flex-col"
   >
     <div class="grow">
@@ -97,6 +113,7 @@ watch(route, async (route) => {
     <div
       v-else
       class="px-6 py-4 border-t border-default"
+      :class="{ '!border-rui-success/20': keySet }"
     >
       <RuiButton
         variant="outlined"
@@ -105,8 +122,8 @@ watch(route, async (route) => {
       >
         {{
           keySet
-            ? t('external_services.replace_key')
-            : t('external_services.enter_api_key')
+            ? editButtonTextComputed
+            : addButtonTextComputed
         }}
         <template #append>
           <RuiIcon
@@ -121,7 +138,7 @@ watch(route, async (route) => {
       :title="title"
       :subtitle="subtitle"
       :action-hidden="hideAction"
-      :primary-action="primaryAction"
+      :primary-action="primaryActionTextComputed"
       :action-disabled="actionDisabled"
       :secondary-action="t('common.actions.close')"
       @cancel="setOpen(false)"

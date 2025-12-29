@@ -1,4 +1,3 @@
-
 import pytest
 
 from rotkehlchen.accounting.accountant import Accountant
@@ -12,11 +11,12 @@ from rotkehlchen.db.accounting_rules import DBAccountingRules, query_missing_acc
 from rotkehlchen.db.constants import NO_ACCOUNTING_COUNTERPARTY
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.filtering import AccountingRulesFilterQuery
+from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.misc import InputError
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.factories import make_evm_tx_hash
-from rotkehlchen.tests.utils.history_base_entry import store_and_retrieve_events
+from rotkehlchen.tests.utils.history_base_entry import add_entries, store_and_retrieve_events
 from rotkehlchen.types import Location, TimestampMS
 
 
@@ -52,8 +52,8 @@ def test_managing_accounting_rules(database: DBHandler) -> None:
     with database.conn.read_ctx() as cursor:
         entries = cursor.execute(query_all_rules).fetchall()
         assert entries == [
-            (1, 'trade', 'receive', 'uniswap', 1, 1, 1, TxAccountingTreatment.SWAP.serialize_for_db()),  # noqa: E501
-            (2, 'trade', 'receive', NO_ACCOUNTING_COUNTERPARTY, 1, 1, 1, TxAccountingTreatment.SWAP.serialize_for_db()),  # noqa: E501
+            (1, 'trade', 'receive', 'uniswap', 1, 1, 1, TxAccountingTreatment.SWAP.serialize_for_db(), 0),  # noqa: E501
+            (2, 'trade', 'receive', NO_ACCOUNTING_COUNTERPARTY, 1, 1, 1, TxAccountingTreatment.SWAP.serialize_for_db(), 0),  # noqa: E501
         ]
 
     # try to edit it
@@ -70,17 +70,15 @@ def test_managing_accounting_rules(database: DBHandler) -> None:
     with database.conn.read_ctx() as cursor:
         entries = cursor.execute(query_all_rules).fetchall()
         assert entries == [
-            (1, 'trade', 'receive', 'uniswap', 1, 1, 0, None),
-            (2, 'trade', 'receive', NO_ACCOUNTING_COUNTERPARTY, 1, 1, 1, TxAccountingTreatment.SWAP.serialize_for_db()),  # noqa: E501
+            (1, 'trade', 'receive', 'uniswap', 1, 1, 0, None, 0),
+            (2, 'trade', 'receive', NO_ACCOUNTING_COUNTERPARTY, 1, 1, 1, TxAccountingTreatment.SWAP.serialize_for_db(), 0),  # noqa: E501
         ]
 
     # try to delete first the general rule
     db.remove_accounting_rule(rule_id=2)
     with database.conn.read_ctx() as cursor:
         entries = cursor.execute(query_all_rules).fetchall()
-        assert entries == [
-            (1, 'trade', 'receive', 'uniswap', 1, 1, 0, None),
-        ]
+        assert entries == [(1, 'trade', 'receive', 'uniswap', 1, 1, 0, None, 0)]
 
     # and now delete all the rules
     db.remove_accounting_rule(rule_id=1)
@@ -146,6 +144,7 @@ def test_accounting_rules_linking(database: 'DBHandler', counterparty: str) -> N
     assert len(rules) == 1
     assert rules[0] == {
         'identifier': 1,
+        'event_ids': None,
         'event_type': HistoryEventType.SPEND.serialize(),
         'event_subtype': HistoryEventSubType.FEE.serialize(),
         'counterparty': counterparty,
@@ -181,7 +180,7 @@ def test_missing_accounting_rules_accounting_treatment(
     )
     tx_hash = make_evm_tx_hash()
     swap_event_spend = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=TimestampMS(16433333000),
         location=Location.GNOSIS,
@@ -193,7 +192,7 @@ def test_missing_accounting_rules_accounting_treatment(
         notes='my notes',
     )
     swap_event_receive = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=TimestampMS(16433333000),
         location=Location.GNOSIS,
@@ -205,7 +204,7 @@ def test_missing_accounting_rules_accounting_treatment(
         notes='my notes',
     )
     swap_event_fee = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=TimestampMS(16433333000),
         location=Location.GNOSIS,
@@ -251,7 +250,7 @@ def test_events_affected_by_others_accounting_treatment(
     )
     tx_hash = make_evm_tx_hash()
     return_wrapped = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
@@ -263,7 +262,7 @@ def test_events_affected_by_others_accounting_treatment(
         notes='my notes',
     )
     remove_asset = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
@@ -313,7 +312,7 @@ def test_events_affected_by_others_accounting_treatment_with_fee(
     )
     tx_hash = make_evm_tx_hash()
     return_wrapped = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
@@ -325,7 +324,7 @@ def test_events_affected_by_others_accounting_treatment_with_fee(
         notes='my notes',
     )
     remove_asset = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
@@ -337,7 +336,7 @@ def test_events_affected_by_others_accounting_treatment_with_fee(
         notes='my notes',
     )
     fee_event = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
@@ -401,7 +400,7 @@ def test_correct_accounting_treatment_is_selected(
 
     tx_hash = make_evm_tx_hash()
     return_wrapped = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
@@ -413,7 +412,7 @@ def test_correct_accounting_treatment_is_selected(
         notes='my notes',
     )
     remove_asset = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
@@ -433,3 +432,124 @@ def test_correct_accounting_treatment_is_selected(
         events=events,
         accountant=accountant,
     ) == [EventAccountingRuleStatus.HAS_RULE, EventAccountingRuleStatus.PROCESSED]
+
+
+def test_event_specific_rule_adds_to_existing_rule(database: DBHandler) -> None:
+    """Test that event-specific rules remove events
+    from existing rules and add to existing event-specific rule"""
+    db = DBAccountingRules(database)
+    rule = BaseEventSettings(
+        taxable=True,
+        count_entire_amount_spend=True,
+        count_cost_basis_pnl=True,
+        accounting_treatment=None,
+    )
+
+    # Create test events using the utility function
+    entries = add_entries(DBHistoryEvents(database))
+    event_ids = [int(entry.identifier) for entry in entries[:3]]  # type: ignore[arg-type]  # id is present
+
+    # Create initial event-specific rule for first two events
+    rule_id_1 = db.add_accounting_rule(
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.SPEND,
+        counterparty='uniswap',
+        rule=rule,
+        links={},
+        event_ids=event_ids[:2],
+    )
+
+    # Verify the rule was created correctly
+    with database.conn.read_ctx() as cursor:
+        rule_events = cursor.execute(
+            'SELECT event_id FROM accounting_rule_events WHERE rule_id=?',
+            (rule_id_1,),
+        ).fetchall()
+        assert {row[0] for row in rule_events} == set(event_ids[:2])
+
+    # Try to add third event to the existing rule (default event-specific behavior)
+    rule_id_2 = db.add_accounting_rule(
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.SPEND,
+        counterparty='uniswap',
+        rule=rule,
+        links={},
+        event_ids=[event_ids[2]],
+    )
+    assert rule_id_1 == rule_id_2
+
+    # Verify that third event was added to the existing rule
+    with database.conn.read_ctx() as cursor:
+        rule_events = cursor.execute(
+            'SELECT event_id FROM accounting_rule_events WHERE rule_id=?',
+            (rule_id_1,),
+        ).fetchall()
+        assert {row[0] for row in rule_events} == set(event_ids)
+        assert cursor.execute('SELECT COUNT(*) FROM accounting_rules').fetchone()[0] == 1
+
+
+def test_event_specific_rule_creates_new_rule(database: DBHandler) -> None:
+    """Test that event-specific rules remove events
+    from existing rules and create new event-specific rule"""
+    db = DBAccountingRules(database)
+    rule = BaseEventSettings(
+        taxable=True,
+        count_entire_amount_spend=True,
+        count_cost_basis_pnl=True,
+        accounting_treatment=None,
+    )
+
+    # Create test events using the utility function
+    entries = add_entries(DBHistoryEvents(database))
+    event_ids = [int(entry.identifier) for entry in entries[:3]]  # type: ignore[arg-type]  # id is present
+
+    # Create first event-specific rule for all three events
+    rule_id_1 = db.add_accounting_rule(
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.SPEND,
+        counterparty='uniswap',
+        rule=rule,
+        links={},
+        event_ids=event_ids,
+    )
+
+    # Verify initial state
+    with database.conn.read_ctx() as cursor:
+        rule_1_events = cursor.execute(
+            'SELECT event_id FROM accounting_rule_events WHERE rule_id=?',
+            (rule_id_1,),
+        ).fetchall()
+        assert {row[0] for row in rule_1_events} == set(event_ids)
+        assert cursor.execute('SELECT COUNT(*) FROM accounting_rules').fetchone()[0] == 1
+
+    # Create new event-specific rule with different type/subtype/counterparty
+    # This should create a separate rule since the combination is different
+    rule_id_2 = db.add_accounting_rule(
+        event_type=HistoryEventType.TRADE,
+        event_subtype=HistoryEventSubType.SPEND,
+        counterparty='uniswap',
+        rule=BaseEventSettings(
+            taxable=False,
+            count_entire_amount_spend=True,
+            count_cost_basis_pnl=True,
+            accounting_treatment=None,
+        ),
+        links={},
+        event_ids=[event_ids[1]],
+    )
+    assert rule_id_1 != rule_id_2
+
+    # Verify that second event was removed from rule_1 and a new rule was created
+    with database.conn.read_ctx() as cursor:
+        rule_1_events = cursor.execute(
+            'SELECT event_id FROM accounting_rule_events WHERE rule_id=?',
+            (rule_id_1,),
+        ).fetchall()
+        assert {row[0] for row in rule_1_events} == {event_ids[0], event_ids[2]}  # second event removed  # noqa: E501
+
+        rule_2_events = cursor.execute(
+            'SELECT event_id FROM accounting_rule_events WHERE rule_id=?',
+            (rule_id_2,),
+        ).fetchall()
+        assert {row[0] for row in rule_2_events} == {event_ids[1]}  # second event in new rule
+        assert cursor.execute('SELECT COUNT(*) FROM accounting_rules').fetchone()[0] == 2

@@ -1,21 +1,20 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.assets.utils import get_or_create_evm_token
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value, get_or_create_evm_token
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.constants import ETH_SPECIAL_ADDRESS
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.socket_bridge.constants import (
     BRIDGE_TOPIC,
     CPT_SOCKET,
     GATEWAY_ADDRESS,
 )
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -25,7 +24,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import CryptoAsset
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -33,13 +32,13 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class SocketBridgeDecoder(DecoderInterface):
+class SocketBridgeDecoder(EvmDecoderInterface):
     """The gateway contract is deployed in all the chains with the same address"""
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -49,9 +48,9 @@ class SocketBridgeDecoder(DecoderInterface):
         )
         self.eth = A_ETH.resolve_to_crypto_asset()
 
-    def _decode_bridged_asset(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_bridged_asset(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != BRIDGE_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount_raw = int.from_bytes(context.tx_log.data[0:32])
         token_address = bytes_to_address(context.tx_log.data[32:64])
@@ -60,10 +59,10 @@ class SocketBridgeDecoder(DecoderInterface):
             bridged_asset: CryptoAsset = self.eth
         else:
             bridged_asset = get_or_create_evm_token(
-                userdb=self.evm_inquirer.database,
+                userdb=self.node_inquirer.database,
                 evm_address=token_address,
-                chain_id=self.evm_inquirer.chain_id,
-                evm_inquirer=self.evm_inquirer,
+                chain_id=self.node_inquirer.chain_id,
+                evm_inquirer=self.node_inquirer,
             )
         amount = asset_normalized_value(amount=amount_raw, asset=bridged_asset)
         sender = bytes_to_address(context.tx_log.data[128:160])
@@ -93,7 +92,7 @@ class SocketBridgeDecoder(DecoderInterface):
                     f'Bridge {amount} {bridged_asset.symbol} to {receiver} at {target_chain} using Socket'  # noqa: E501
                 )
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

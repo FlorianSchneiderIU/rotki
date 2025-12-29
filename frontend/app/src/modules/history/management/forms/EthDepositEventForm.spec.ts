@@ -51,16 +51,15 @@ describe('form/EthDepositEventForm.vue', () => {
     asset: asset.symbol,
     counterparty: 'eth2',
     entryType: HistoryEventEntryType.ETH_DEPOSIT_EVENT,
-    eventIdentifier: '10x3849ac4b278cac18f0e52a7d1a1dc1c14b1b4f50d6c11087e9a6591fd7b62d08',
     eventSubtype: 'deposit asset',
     eventType: 'staking',
+    groupIdentifier: '10x3849ac4b278cac18f0e52a7d1a1dc1c14b1b4f50d6c11087e9a6591fd7b62d08',
     identifier: 11344,
     location: 'ethereum',
     locationLabel: '0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12',
-    product: 'staking',
     sequenceIndex: 12,
     timestamp: 1697522243000,
-    txHash: '0x3849ac4b278cac18f0e52a7d1a1dc1c14b1b4f50d6c11087e9a6591fd7b62d08',
+    txRef: '0x3849ac4b278cac18f0e52a7d1a1dc1c14b1b4f50d6c11087e9a6591fd7b62d08',
     userNotes: 'Deposit 3.2 ETH to validator 223',
     validatorIndex: 223,
   };
@@ -108,18 +107,18 @@ describe('form/EthDepositEventForm.vue', () => {
     wrapper = createWrapper();
     await vi.advanceTimersToNextTimerAsync();
 
-    await wrapper.find('[data-cy=eth-deposit-event-form__advance] .accordion__header').trigger('click');
+    await wrapper.find('[data-cy=eth-deposit-event-form__advance] [data-accordion-trigger]').trigger('click');
     await vi.advanceTimersToNextTimerAsync();
 
     const validatorIndexInput = wrapper.find<HTMLInputElement>('[data-cy=validatorIndex] input');
-    const txHashInput = wrapper.find<HTMLInputElement>('[data-cy=tx-hash] input');
-    const eventIdentifierInput = wrapper.find<HTMLInputElement>('[data-cy=eventIdentifier] input');
+    const txRefInput = wrapper.find<HTMLInputElement>('[data-cy=tx-ref] input');
+    const groupIdentifierInput = wrapper.find<HTMLInputElement>('[data-cy=groupIdentifier] input');
     const depositorInput = wrapper.find<HTMLInputElement>('[data-cy=depositor] .input-value');
     const sequenceIndexInput = wrapper.find<HTMLInputElement>('[data-cy=sequence-index] input');
 
     expect(validatorIndexInput.element.value).toBe('');
-    expect(txHashInput.element.value).toBe('');
-    expect(eventIdentifierInput.element.value).toBe('');
+    expect(txRefInput.element.value).toBe('');
+    expect(groupIdentifierInput.element.value).toBe('');
     expect(depositorInput.element.value).toBe('');
     expect(sequenceIndexInput.element.value).toBe('0');
   });
@@ -129,19 +128,19 @@ describe('form/EthDepositEventForm.vue', () => {
     await vi.advanceTimersToNextTimerAsync();
     await wrapper.setProps({ data: { group: event, nextSequenceId: '10', type: 'group-add' } });
 
-    await wrapper.find('[data-cy=eth-deposit-event-form__advance] .accordion__header').trigger('click');
+    await wrapper.find('[data-cy=eth-deposit-event-form__advance] [data-accordion-trigger]').trigger('click');
     await vi.advanceTimersToNextTimerAsync();
 
     const validatorIndexInput = wrapper.find<HTMLInputElement>('[data-cy=validatorIndex] input');
-    const txHashInput = wrapper.find<HTMLInputElement>('[data-cy=tx-hash] input');
-    const eventIdentifierInput = wrapper.find<HTMLInputElement>('[data-cy=eventIdentifier] input');
+    const txRefInput = wrapper.find<HTMLInputElement>('[data-cy=tx-ref] input');
+    const groupIdentifierInput = wrapper.find<HTMLInputElement>('[data-cy=groupIdentifier] input');
     const depositorInput = wrapper.find<HTMLInputElement>('[data-cy=depositor] .input-value');
     const amountInput = wrapper.find<HTMLInputElement>('[data-cy=amount] input');
     const sequenceIndexInput = wrapper.find<HTMLInputElement>('[data-cy=sequence-index] input');
 
     expect(validatorIndexInput.element.value).toBe(event.validatorIndex.toString());
-    expect(txHashInput.element.value).toBe(event.txHash);
-    expect(eventIdentifierInput.element.value).toBe(event.eventIdentifier);
+    expect(txRefInput.element.value).toBe(event.txRef);
+    expect(groupIdentifierInput.element.value).toBe(event.groupIdentifier);
     expect(depositorInput.element.value).toBe(event.locationLabel);
     expect(amountInput.element.value).toBe('0');
     expect(sequenceIndexInput.element.value).toBe('10');
@@ -152,19 +151,19 @@ describe('form/EthDepositEventForm.vue', () => {
     await vi.advanceTimersToNextTimerAsync();
     await wrapper.setProps({ data: { event, nextSequenceId: '1', type: 'edit' } });
 
-    await wrapper.find('[data-cy=eth-deposit-event-form__advance] .accordion__header').trigger('click');
+    await wrapper.find('[data-cy=eth-deposit-event-form__advance] [data-accordion-trigger]').trigger('click');
     await vi.advanceTimersToNextTimerAsync();
 
     const validatorIndexInput = wrapper.find<HTMLInputElement>('[data-cy=validatorIndex] input');
-    const txHashInput = wrapper.find<HTMLInputElement>('[data-cy=tx-hash] input');
-    const eventIdentifierInput = wrapper.find<HTMLInputElement>('[data-cy=eventIdentifier] input');
+    const txRefInput = wrapper.find<HTMLInputElement>('[data-cy=tx-ref] input');
+    const groupIdentifierInput = wrapper.find<HTMLInputElement>('[data-cy=groupIdentifier] input');
     const depositorInput = wrapper.find<HTMLInputElement>('[data-cy=depositor] .input-value');
     const amountInput = wrapper.find<HTMLInputElement>('[data-cy=amount] input');
     const sequenceIndexInput = wrapper.find<HTMLInputElement>('[data-cy=sequence-index] input');
 
     expect(validatorIndexInput.element.value).toBe(event.validatorIndex.toString());
-    expect(txHashInput.element.value).toBe(event.txHash);
-    expect(eventIdentifierInput.element.value).toBe(event.eventIdentifier);
+    expect(txRefInput.element.value).toBe(event.txRef);
+    expect(groupIdentifierInput.element.value).toBe(event.groupIdentifier);
     expect(depositorInput.element.value).toBe(event.locationLabel);
     expect(amountInput.element.value).toBe(event.amount.toString());
     expect(sequenceIndexInput.element.value.replace(',', '')).toBe(event.sequenceIndex.toString());
@@ -179,7 +178,7 @@ describe('form/EthDepositEventForm.vue', () => {
     const nowInMs = now.valueOf();
 
     await wrapper.find('[data-cy=amount] input').setValue('2.5');
-    await wrapper.find('[data-cy=tx-hash] input').setValue('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef');
+    await wrapper.find('[data-cy=tx-ref] input').setValue('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef');
     await wrapper.find('[data-cy=validatorIndex] input').setValue('123');
     await wrapper.find('[data-cy=depositor] .input-value').setValue('0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12');
     await wrapper.find('[data-cy=sequence-index] input').setValue('5');
@@ -198,11 +197,11 @@ describe('form/EthDepositEventForm.vue', () => {
       amount: bigNumberify('2.5'),
       depositor: '0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12',
       entryType: HistoryEventEntryType.ETH_DEPOSIT_EVENT,
-      eventIdentifier: null,
       extraData: {},
+      groupIdentifier: null,
       sequenceIndex: '5',
       timestamp: nowInMs,
-      txHash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+      txRef: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
       validatorIndex: 123,
     });
   });
@@ -265,12 +264,12 @@ describe('form/EthDepositEventForm.vue', () => {
       amount: bigNumberify('4.5'),
       depositor: event.locationLabel,
       entryType: HistoryEventEntryType.ETH_DEPOSIT_EVENT,
-      eventIdentifier: event.eventIdentifier,
       extraData: {},
+      groupIdentifier: event.groupIdentifier,
       identifier: event.identifier,
       sequenceIndex: event.sequenceIndex.toString(),
       timestamp: event.timestamp,
-      txHash: event.txHash,
+      txRef: event.txRef,
       validatorIndex: 224,
     });
   });
@@ -287,7 +286,7 @@ describe('form/EthDepositEventForm.vue', () => {
     });
 
     editHistoryEventMock.mockResolvedValueOnce({
-      message: { txHash: ['transaction hash is required'] },
+      message: { txRef: ['transaction hash is required'] },
       success: false,
     });
 
@@ -302,7 +301,7 @@ describe('form/EthDepositEventForm.vue', () => {
 
     expect(editHistoryEventMock).toHaveBeenCalled();
     expect(saveResult).toBe(false);
-    expect(wrapper.find('[data-cy=tx-hash] .details').text()).toBe('transaction hash is required');
+    expect(wrapper.find('[data-cy=tx-ref] .details').text()).toBe('transaction hash is required');
   });
 
   it('should display validation errors when the form is invalid', async () => {
@@ -314,6 +313,6 @@ describe('form/EthDepositEventForm.vue', () => {
 
     expect(wrapper.find('[data-cy=depositor] .details').exists()).toBe(true);
     expect(wrapper.find('[data-cy=validatorIndex] .details').exists()).toBe(true);
-    expect(wrapper.find('[data-cy=tx-hash] .details').exists()).toBe(true);
+    expect(wrapper.find('[data-cy=tx-ref] .details').exists()).toBe(true);
   });
 });

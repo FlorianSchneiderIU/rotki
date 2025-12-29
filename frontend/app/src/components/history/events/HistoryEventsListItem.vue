@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { UseHistoryEventsSelectionModeReturn } from '@/modules/history/events/composables/use-selection-mode';
 import type { HistoryEventDeletePayload } from '@/modules/history/events/types';
 import type { HistoryEventEditData } from '@/modules/history/management/forms/form-types';
 import type { HistoryEventEntry } from '@/types/history/events/schemas';
@@ -11,6 +12,8 @@ import HistoryEventNote from '@/components/history/events/HistoryEventNote.vue';
 import HistoryEventsListItemAction from '@/components/history/events/HistoryEventsListItemAction.vue';
 import HistoryEventType from '@/components/history/events/HistoryEventType.vue';
 import { useSupportedChains } from '@/composables/info/chains';
+import { useRefMap } from '@/composables/utils/useRefMap';
+import { useIgnoredAssetsStore } from '@/store/assets/ignored';
 
 const props = defineProps<{
   item: HistoryEventEntry;
@@ -20,6 +23,8 @@ const props = defineProps<{
   isLast: boolean;
   isHighlighted?: boolean;
   compact?: boolean;
+  hideActions?: boolean;
+  selection?: UseHistoryEventsSelectionModeReturn;
 }>();
 
 const emit = defineEmits<{
@@ -29,9 +34,11 @@ const emit = defineEmits<{
   'refresh': [];
 }>();
 
+const { item } = toRefs(props);
+
 const { getChain } = useSupportedChains();
 
-function isNoTxHash(item: HistoryEventEntry) {
+function isNoTxRef(item: HistoryEventEntry) {
   return (
     item.entryType === HistoryEventEntryType.EVM_EVENT
     && ((item.counterparty === 'eth2' && item.eventSubtype === 'deposit asset')
@@ -77,6 +84,32 @@ function getEventNoteAttrs(event: HistoryEventEntry) {
     ...data,
   };
 }
+
+const showCheckbox = computed<boolean>(() => {
+  if (!props.selection) {
+    return false;
+  }
+  return get(props.selection.isSelectionMode);
+});
+
+const isSelected = computed<boolean>({
+  get() {
+    if (!props.selection) {
+      return false;
+    }
+    return props.selection.isEventSelected(props.item.identifier);
+  },
+  set(value: boolean) {
+    if (value !== get(isSelected)) {
+      props.selection?.actions.toggleEvent(props.item.identifier);
+    }
+  },
+});
+
+const eventAsset = useRefMap(item, ({ asset }) => asset);
+
+const { useIsAssetIgnored } = useIgnoredAssetsStore();
+const isIgnoredAsset = useIsAssetIgnored(eventAsset);
 </script>
 
 <template>
@@ -86,51 +119,61 @@ function getEventNoteAttrs(event: HistoryEventEntry) {
     :class="{
       'bg-rui-error/[0.05]': isHighlighted,
       'border-b': !isLast && !compact,
+      '!opacity-50': isIgnoredAsset,
     }"
   >
-    <div
-      class="transition-all duration-300 ease-in-out"
-      :class="{
-        'grid md:grid-cols-10 gap-x-2 gap-y-1 @5xl:!grid-cols-[repeat(20,minmax(0,1fr))] items-center py-3 px-0 md:pl-3': !compact,
-        'py-2 md:py-2': compact,
-      }"
-    >
-      <HistoryEventType
-        v-if="!compact"
-        :event="item"
-        :chain="getChain(item.location)"
-        class="col-span-10 md:col-span-4 @5xl:!col-span-5 pt-1.5 pb-4 @5xl:py-0"
+    <div class="transition-all duration-300 ease-in-out flex items-center">
+      <RuiCheckbox
+        v-if="showCheckbox"
+        v-model="isSelected"
+        color="primary"
+        hide-details
+        class="ml-2"
       />
-
-      <HistoryEventAsset
-        :event="item"
-        class="transition-all duration-300"
+      <div
+        class="transition-all duration-300 ease-in-out flex-1"
         :class="{
-          'col-span-10 md:col-span-6 @5xl:!col-span-4': !compact,
-          'w-full !py-0': compact,
+          'grid md:grid-cols-10 gap-x-2 gap-y-1 @5xl:!grid-cols-[repeat(20,minmax(0,1fr))] items-center py-3 px-0 md:pl-3': !compact,
+          '!md:pl-0': showCheckbox,
         }"
-        @refresh="emit('refresh')"
-      />
+      >
+        <HistoryEventType
+          v-if="!compact"
+          :event="item"
+          :chain="getChain(item.location)"
+          class="col-span-10 md:col-span-4 @5xl:!col-span-5 pt-1.5 pb-4 @5xl:py-0"
+        />
 
-      <HistoryEventNote
-        v-if="!compact"
-        v-bind="getEventNoteAttrs(item)"
-        :amount="item.amount"
-        :chain="getChain(item.location)"
-        :no-tx-hash="isNoTxHash(item)"
-        class="break-words leading-6 col-span-10 @md:col-span-7 @5xl:!col-span-8"
-      />
+        <HistoryEventAsset
+          :event="item"
+          class="transition-all duration-300"
+          :class="{
+            'col-span-10 md:col-span-6 @5xl:!col-span-4': !compact,
+            'w-full !py-0': compact,
+          }"
+          @refresh="emit('refresh')"
+        />
 
-      <HistoryEventsListItemAction
-        v-if="!compact"
-        class="col-span-10 @md:col-span-3"
-        :item="item"
-        :index="index"
-        :events="events"
-        @edit-event="emit('edit-event', $event)"
-        @delete-event="emit('delete-event', $event)"
-        @show:missing-rule-action="emit('show:missing-rule-action', $event)"
-      />
+        <HistoryEventNote
+          v-if="!compact"
+          v-bind="getEventNoteAttrs(item)"
+          :amount="item.amount"
+          :chain="getChain(item.location)"
+          :no-tx-ref="isNoTxRef(item)"
+          class="break-words leading-6 col-span-10 @md:col-span-7 @5xl:!col-span-8"
+        />
+
+        <HistoryEventsListItemAction
+          v-if="!compact && !hideActions"
+          class="col-span-10 @md:col-span-3"
+          :item="item"
+          :index="index"
+          :events="events"
+          @edit-event="emit('edit-event', $event)"
+          @delete-event="emit('delete-event', $event)"
+          @show:missing-rule-action="emit('show:missing-rule-action', $event)"
+        />
+      </div>
     </div>
   </LazyLoader>
 </template>

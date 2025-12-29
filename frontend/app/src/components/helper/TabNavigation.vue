@@ -32,7 +32,7 @@ function getTabClass(route: RouteLocationRaw): string {
       color="primary"
       class="border-default"
       :class="{
-        'border rounded bg-white dark:bg-rui-grey-900 flex max-w-min  mx-auto mb-5': !plain,
+        'border rounded bg-white dark:bg-rui-grey-900 flex max-w-min mx-auto mb-5': !plain,
         'border-b': plain,
       }"
     >
@@ -43,7 +43,7 @@ function getTabClass(route: RouteLocationRaw): string {
         link
         :to="tab.route"
         :exact-path="false"
-        :class="getTabClass(tab.route)"
+        :data-cy="getTabClass(tab.route)"
       >
         <template #prepend>
           <RuiIcon

@@ -55,7 +55,7 @@ def test_kraken_staking_events(accountant, google_service, event_start_timestamp
     ts_addition = 3854824000
     history = [
         HistoryEvent(
-            event_identifier=b'XXX',
+            group_identifier=b'XXX',
             sequence_index=0,
             timestamp=event_start_timestamp + ts_addition,
             location=Location.KRAKEN,
@@ -66,7 +66,7 @@ def test_kraken_staking_events(accountant, google_service, event_start_timestamp
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.REWARD,
         ), HistoryEvent(
-            event_identifier=b'YYY',
+            group_identifier=b'YYY',
             sequence_index=0,
             timestamp=event_start_timestamp,
             location=Location.KRAKEN,
@@ -113,7 +113,7 @@ def test_mev_events(accountant: Accountant, ethereum_accounts: list[ChecksumEvmA
             block_number=17508810,
             is_mev_reward=False,
         ), HistoryEvent(
-            event_identifier='XXX',
+            group_identifier='XXX',
             sequence_index=0,
             timestamp=TimestampMS(1687117319001),
             location=Location.KRAKEN,
@@ -164,8 +164,8 @@ def test_mev_events(accountant: Accountant, ethereum_accounts: list[ChecksumEvmA
             block_number=block_number,
             is_mev_reward=True,
         ), EvmEvent(
-            tx_hash=tx_hash,
-            event_identifier=f'BP1_{block_number}',
+            tx_ref=tx_hash,
+            group_identifier=f'BP1_{block_number}',
             sequence_index=2,
             timestamp=TimestampMS(1687117319001),
             location=Location.ETHEREUM,
@@ -173,11 +173,11 @@ def test_mev_events(accountant: Accountant, ethereum_accounts: list[ChecksumEvmA
             address=mevbot_address,
             asset=A_ETH2,
             amount=FVal(mev_amount),
-            notes=(mev_notes := f'Receive {mev_amount} ETH from {mevbot_address} as mev reward for block {block_number} in {tx_hash.hex()}'),  # pylint: disable=no-member  # noqa: E501
+            notes=(mev_notes := f'Receive {mev_amount} ETH from {mevbot_address} as mev reward for block {block_number} in {tx_hash!s}'),  # noqa: E501
             event_type=HistoryEventType.STAKING,
             event_subtype=HistoryEventSubType.MEV_REWARD,
         ), HistoryEvent(
-            event_identifier='XXX',
+            group_identifier='XXX',
             sequence_index=0,
             timestamp=TimestampMS(1687117319001),
             location=Location.KRAKEN,
@@ -266,7 +266,7 @@ def test_eth_withdrawal_processing(accountant: Accountant, ethereum_accounts: li
         withdrawal_address=withdraw_address,
         is_exit=False,
     ), EvmEvent(
-        tx_hash=make_evm_tx_hash(),
+        tx_ref=make_evm_tx_hash(),
         sequence_index=1,
         timestamp=TimestampMS(1689000001000),
         location=Location.ETHEREUM,
@@ -304,7 +304,7 @@ def test_eth_withdrawal_processing(accountant: Accountant, ethereum_accounts: li
         withdrawal_address=withdraw_address,
         is_exit=True,
     ), EthDepositEvent(
-        tx_hash=make_evm_tx_hash(),
+        tx_ref=make_evm_tx_hash(),
         validator_index=v_accum_2,
         sequence_index=1,
         timestamp=TimestampMS(1729100004000),

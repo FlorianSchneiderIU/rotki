@@ -1,10 +1,10 @@
 import pytest
 
 from rotkehlchen.assets.asset import EvmToken
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.airdrops import AIRDROP_IDENTIFIER_KEY
 from rotkehlchen.chain.ethereum.decoding.decoder import EthereumTransactionDecoder
 from rotkehlchen.chain.ethereum.modules.airdrops.constants import CPT_ONEINCH
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.structures import EvmTxReceipt, EvmTxReceiptLog
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
@@ -28,10 +28,9 @@ def test_1inch_claim(database, ethereum_inquirer, eth_transactions):
     """Data for claim taken from
     https://etherscan.io/tx/0x0582a0db79de3fa21d3b92a8658e0b1034c51ea54a8e06ea84fbb91d41b8fe17
     """
-    tx_hex = '0x0582a0db79de3fa21d3b92a8658e0b1034c51ea54a8e06ea84fbb91d41b8fe17'
-    evmhash = deserialize_evm_tx_hash(tx_hex)
+    tx_hash = deserialize_evm_tx_hash('0x0582a0db79de3fa21d3b92a8658e0b1034c51ea54a8e06ea84fbb91d41b8fe17')  # noqa: E501
     transaction = EvmTransaction(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         timestamp=1646375440,
         block_number=14351442,
@@ -45,7 +44,7 @@ def test_1inch_claim(database, ethereum_inquirer, eth_transactions):
         nonce=19,
     )
     receipt = EvmTxReceipt(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         contract_address=None,
         status=True,
@@ -78,14 +77,14 @@ def test_1inch_claim(database, ethereum_inquirer, eth_transactions):
         transactions=eth_transactions,
     )
     with dbevmtx.db.user_write() as cursor, patch_decoder_reload_data():
-        dbevmtx.add_evm_transactions(cursor, [transaction], relevant_address=None)
+        dbevmtx.add_transactions(cursor, [transaction], relevant_address=None)
         decoder.reload_data(cursor)
     events, _, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
     assert len(events) == 2
     timestamp = TimestampMS(1646375440000)
     expected_events = [
         EvmEvent(
-            tx_hash=deserialize_evm_tx_hash(
+            tx_ref=deserialize_evm_tx_hash(
                 '0x0582a0db79de3fa21d3b92a8658e0b1034c51ea54a8e06ea84fbb91d41b8fe17',
             ),
             sequence_index=0,
@@ -99,7 +98,7 @@ def test_1inch_claim(database, ethereum_inquirer, eth_transactions):
             notes='Burn 0.00393701451 ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=deserialize_evm_tx_hash(
+            tx_ref=deserialize_evm_tx_hash(
                 '0x0582a0db79de3fa21d3b92a8658e0b1034c51ea54a8e06ea84fbb91d41b8fe17',
             ),
             sequence_index=298,
@@ -124,10 +123,9 @@ def test_gitcoin_claim(database, ethereum_inquirer, eth_transactions):
     """Data for claim taken from
     https://etherscan.io/tx/0x0e22cbdbac56c785f186bec44d715ab0834ceeadd96573c030f2fae1550b64fa
     """
-    tx_hex = '0x0e22cbdbac56c785f186bec44d715ab0834ceeadd96573c030f2fae1550b64fa'
-    evmhash = deserialize_evm_tx_hash(tx_hex)
+    tx_hash = deserialize_evm_tx_hash('0x0e22cbdbac56c785f186bec44d715ab0834ceeadd96573c030f2fae1550b64fa')  # noqa: E501
     transaction = EvmTransaction(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         timestamp=1646375440,
         block_number=14351442,
@@ -141,7 +139,7 @@ def test_gitcoin_claim(database, ethereum_inquirer, eth_transactions):
         nonce=12,
     )
     receipt = EvmTxReceipt(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         contract_address=None,
         status=True,
@@ -174,13 +172,13 @@ def test_gitcoin_claim(database, ethereum_inquirer, eth_transactions):
         transactions=eth_transactions,
     )
     with dbevmtx.db.user_write() as cursor, patch_decoder_reload_data():
-        dbevmtx.add_evm_transactions(cursor, [transaction], relevant_address=None)
+        dbevmtx.add_transactions(cursor, [transaction], relevant_address=None)
         decoder.reload_data(cursor)
     events, _, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
     assert len(events) == 2
     expected_events = [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=TimestampMS(1646375440000),
             location=Location.ETHEREUM,
@@ -192,7 +190,7 @@ def test_gitcoin_claim(database, ethereum_inquirer, eth_transactions):
             notes='Burn 0.00393701451 ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=474,
             timestamp=TimestampMS(1646375440000),
             location=Location.ETHEREUM,

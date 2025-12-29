@@ -4,23 +4,20 @@ import AppIndicators from '@/components/app/AppIndicators.vue';
 import AppSidebars from '@/components/app/AppSidebars.vue';
 import NotificationPopup from '@/components/status/notifications/NotificationPopup.vue';
 import { useInterop } from '@/composables/electron-interop';
-import { initGraph } from '@/composables/graphs';
+import { initGraph } from '@/composables/init-graph';
 import { useCoreScroll } from '@/composables/use-core-scroll';
 import { useSessionAuthStore } from '@/store/session/auth';
 import { useAreaVisibilityStore } from '@/store/session/visibility';
 import { useStatisticsStore } from '@/store/statistics';
 
 const visibilityStore = useAreaVisibilityStore();
-const { isMini, showDrawer, showPinned } = storeToRefs(visibilityStore);
+const { expanded, isMini, showPinned } = storeToRefs(visibilityStore);
 const { overall } = storeToRefs(useStatisticsStore());
 const { logged } = storeToRefs(useSessionAuthStore());
-const toggleDrawer = visibilityStore.toggleDrawer;
+const { toggleDrawer } = visibilityStore;
 
-const { isXlAndDown } = useBreakpoint();
 const { updateTray } = useInterop();
 const { scrollToTop, shouldShowScrollToTopButton } = useCoreScroll();
-
-const expanded = logicAnd(showDrawer, logicNot(isXlAndDown));
 
 watch(overall, (overall) => {
   if (overall.percentage === '-')
@@ -31,10 +28,6 @@ watch(overall, (overall) => {
 
 onBeforeMount(() => {
   initGraph();
-});
-
-onMounted(() => {
-  set(showDrawer, !get(isXlAndDown));
 });
 </script>
 
@@ -61,11 +54,11 @@ onMounted(() => {
 
     <AppSidebars />
     <div
-      class="app-main"
+      class="pt-6 pb-16 w-full transition-all min-h-[calc(100vh-64px)]"
       :class="{
-        small: isMini,
-        expanded,
-        pinned: showPinned,
+        'pl-[3.5rem]': isMini,
+        'pl-[300px]': expanded,
+        'xl:pr-[500px]': showPinned,
       }"
     >
       <main>
@@ -119,24 +112,3 @@ onMounted(() => {
     </div>
   </div>
 </template>
-
-<style scoped lang="scss">
-.app {
-  &-main {
-    @apply pt-6 pb-16 w-full transition-all;
-    min-height: calc(100vh - 64px);
-
-    &.small {
-      @apply pl-[3.5rem];
-    }
-
-    &.expanded {
-      @apply pl-[300px];
-    }
-
-    &.pinned {
-      @apply xl:pr-[500px];
-    }
-  }
-}
-</style>

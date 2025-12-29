@@ -15,7 +15,7 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.tests.utils.constants import A_AIR2
 from rotkehlchen.tests.utils.exchanges import (
     POLONIEX_BALANCES_RESPONSE,
@@ -63,7 +63,7 @@ def test_trade_from_poloniex():
         asset=A_ETH,
         amount=FVal(TEST_AMOUNT_STR),
         location_label=exchange_name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.POLONIEX,
             unique_id='192167',
         ),
@@ -74,7 +74,7 @@ def test_trade_from_poloniex():
         asset=A_BTC,
         amount=FVal('0.1411665444631867'),
         location_label=exchange_name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.POLONIEX,
             unique_id='192167',
         ),
@@ -85,7 +85,7 @@ def test_trade_from_poloniex():
         asset=A_BTC,
         amount=FVal(TEST_FEE_STR),
         location_label=exchange_name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.POLONIEX,
             unique_id='192167',
         ),
@@ -166,7 +166,7 @@ def test_query_trade_history(poloniex: 'Poloniex'):
             event_subtype=HistoryEventSubType.SPEND,
             asset=A_BCH,
             amount=FVal('1.40308443'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.POLONIEX,
                 unique_id='394131412',
             ),
@@ -177,7 +177,7 @@ def test_query_trade_history(poloniex: 'Poloniex'):
             event_subtype=HistoryEventSubType.RECEIVE,
             asset=A_BTC,
             amount=FVal('0.0973073287465092'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.POLONIEX,
                 unique_id='394131412',
             ),
@@ -188,7 +188,7 @@ def test_query_trade_history(poloniex: 'Poloniex'):
             event_subtype=HistoryEventSubType.FEE,
             asset=A_BTC,
             amount=FVal('0.00009730732'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.POLONIEX,
                 unique_id='394131412',
             ),
@@ -199,7 +199,7 @@ def test_query_trade_history(poloniex: 'Poloniex'):
             event_subtype=HistoryEventSubType.SPEND,
             asset=A_BTC,
             amount=FVal('0.1235704463578728'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.POLONIEX,
                 unique_id='13536350',
             ),
@@ -210,7 +210,7 @@ def test_query_trade_history(poloniex: 'Poloniex'):
             event_subtype=HistoryEventSubType.RECEIVE,
             asset=A_ETH,
             amount=FVal('3600.53748129'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.POLONIEX,
                 unique_id='13536350',
             ),
@@ -221,7 +221,7 @@ def test_query_trade_history(poloniex: 'Poloniex'):
             event_subtype=HistoryEventSubType.FEE,
             asset=A_ETH,
             amount=FVal('7.20107496258'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.POLONIEX,
                 unique_id='13536350',
             ),
@@ -336,9 +336,9 @@ def test_poloniex_query_balances_unknown_asset(poloniex):
     assert msg == ''
     assert len(balances) == 2
     assert balances[A_BTC].amount == FVal('5.5')
-    assert balances[A_BTC].usd_value == FVal('8.25')
+    assert balances[A_BTC].value == FVal('8.25')
     assert balances[A_ETH].amount == FVal('11.0')
-    assert balances[A_ETH].usd_value == FVal('16.5')
+    assert balances[A_ETH].value == FVal('16.5')
 
     messages = poloniex.msg_aggregator.rotki_notifier.messages
     assert len(messages) == 2
@@ -371,7 +371,7 @@ def test_poloniex_deposits_withdrawal_unknown_asset(poloniex: 'Poloniex') -> Non
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1458994442000),
         asset=A_BTC,
-        amount=FVal('5.0'),
+        amount=FVal('4.5'),
         unique_id='withdrawal_1',
         extra_data={
             'address': '131rdg5Rzn6BFufnnQaHhVa5ZtRU1J2EZR',
@@ -392,7 +392,7 @@ def test_poloniex_deposits_withdrawal_unknown_asset(poloniex: 'Poloniex') -> Non
         event_type=HistoryEventType.WITHDRAWAL,
         timestamp=TimestampMS(1468994442000),
         asset=A_ETH,
-        amount=FVal('10.0'),
+        amount=FVal('9.9'),
         unique_id='withdrawal_2',
         extra_data={
             'address': '0xB7E033598Cb94EF5A35349316D3A2e4f95f308Da',

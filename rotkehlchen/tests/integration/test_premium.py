@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import os
 import tempfile
@@ -8,6 +10,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import call, patch
 
 import gevent
+import machineid
 import pytest
 
 from rotkehlchen.api.websockets.typedefs import DBUploadStatusStep, WSMessageType
@@ -17,15 +20,16 @@ from rotkehlchen.db.settings import ModifiableDBSettings
 from rotkehlchen.errors.api import (
     IncorrectApiKeyFormat,
     PremiumAuthenticationError,
+    PremiumPermissionError,
     RotkehlchenPermissionError,
 )
-from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.premium.premium import (
     DOCKER_PLATFORM_KEY,
     KUBERNETES_PLATFORM_KEY,
     Premium,
     PremiumCredentials,
     check_docker_container,
+    extended_get_machine_id,
     get_kubernetes_pod_name,
 )
 from rotkehlchen.tests.utils.constants import A_GBP, DEFAULT_TESTS_MAIN_CURRENCY
@@ -598,7 +602,7 @@ def test_upload_data_to_server_db_already_in_use(rotkehlchen_instance):
     )
     chain_manager = rotkehlchen_instance.chains_aggregator.get_evm_manager(ChainID.ETHEREUM)
 
-    def mock_stuff(chain_id, limit):
+    def mock_stuff(filter_query):
         """Just mock get_transaction_hashes_not_decoded which is called during
         get_and_decode_undecoded_transactions() to add some DB work and some sleeping.
         This triggers the threadpool deadlock problem in 50% of the test runs"""
@@ -610,7 +614,7 @@ def test_upload_data_to_server_db_already_in_use(rotkehlchen_instance):
         return []
 
     patched_get_hashes_not_decoded = patch.object(
-        chain_manager.transactions_decoder.dbevmtx,
+        chain_manager.transactions_decoder.dbtx,
         'get_transaction_hashes_not_decoded',
         wraps=mock_stuff,
     )  # Mix in calls to decoding and calls to maybe_upload to emulate the deadlock of different threadpool greenlet that's mentioned in the docstring  # noqa: E501
@@ -761,13 +765,14 @@ def test_device_limits(rotkehlchen_instance: 'Rotkehlchen', device_limit: int) -
 
     def mock_device_registration(url, **kwargs):  # pylint: disable=unused-argument
         nonlocal device_registered
+        if device_limit_reached:
+            return MockResponse(HTTPStatus.UNPROCESSABLE_ENTITY, json.dumps({'error': f'Device limit of {device_limit} exceeded'}))  # noqa: E501
+
         device_registered = True
         return MockResponse(HTTPStatus.CREATED, json.dumps({'registered': True}))
 
     def mock_device_check(url, **kwargs):  # pylint: disable=unused-argument
-        if device_limit_reached:
-            return MockResponse(HTTPStatus.FORBIDDEN, '')
-
+        # return NOT_FOUND to trigger device registration attempt
         status_code = HTTPStatus.OK if device_registered else HTTPStatus.NOT_FOUND
         return MockResponse(status_code, '')
 
@@ -780,7 +785,7 @@ def test_device_limits(rotkehlchen_instance: 'Rotkehlchen', device_limit: int) -
         patch.object(premium.session, 'put', side_effect=mock_device_registration),
     ):
         if device_limit_reached is True:
-            with pytest.raises(PremiumAuthenticationError):
+            with pytest.raises(PremiumPermissionError):
                 premium.authenticate_device()
         else:
             premium.authenticate_device()
@@ -798,7 +803,7 @@ def test_limits_caching(rotkehlchen_instance: 'Rotkehlchen') -> None:
     premium._cached_limits = None
     assert premium._cached_limits is None
 
-    limits_data = {  # mock limits response
+    limits_data = {  # mock server response for limits endpoint
         'history_events': 10000,
         'pnl_reports': 50,
         'devices': 3,
@@ -807,23 +812,12 @@ def test_limits_caching(rotkehlchen_instance: 'Rotkehlchen') -> None:
         premium.session,
         'get',
         return_value=MockResponse(200, json.dumps(limits_data)),
-    ) as mock_get:
-        # First call should hit the API
-        limits1 = premium.fetch_limits()
-        assert limits1 == limits_data
-        assert premium._cached_limits == limits_data
-        assert mock_get.call_count == 1
-
-        # Second call should use cache, not hit API
-        limits2 = premium.fetch_limits()
-        assert limits2 == limits_data
-        assert premium._cached_limits == limits_data
-        assert mock_get.call_count == 1  # Should still be 1, not 2
-
-        # Third call should also use cache
-        limits3 = premium.fetch_limits()
-        assert limits3 == limits_data
-        assert mock_get.call_count == 1  # Should still be 1, not 2
+    ) as mock_get:  # multiple calls should use cache after first API hit
+        for _i in range(3):
+            limits = premium.fetch_limits()
+            assert limits == limits_data
+            assert premium._cached_limits == limits_data
+            assert mock_get.call_count == 1  # should always be 1 after first call
 
     # check that cache is cleared when credentials are reset
     premium.reset_credentials(premium.credentials)
@@ -837,6 +831,7 @@ def test_limits_caching(rotkehlchen_instance: 'Rotkehlchen') -> None:
         limits4 = premium.fetch_limits()
         assert limits4 == limits_data
         assert premium._cached_limits == limits_data
+        assert mock_get.call_count == 1
 
 
 def test_docker_device_version_update(rotki_premium_object, database):
@@ -858,7 +853,7 @@ def test_docker_device_version_update(rotki_premium_object, database):
             patch.object(premium.session, 'delete') as mock_delete,
         ):
             # No cached info, should just fail
-            with pytest.raises(RemoteError):
+            with pytest.raises(PremiumPermissionError):
                 premium._register_new_device('test_device_id')
             mock_delete.assert_not_called()
 
@@ -870,7 +865,7 @@ def test_docker_device_version_update(rotki_premium_object, database):
             patch.object(premium.session, 'put', return_value=MockResponse(HTTPStatus.UNPROCESSABLE_ENTITY, '{}')),  # noqa: E501
             patch.object(premium.session, 'delete') as mock_delete,
         ):
-            with pytest.raises(RemoteError):
+            with pytest.raises(PremiumPermissionError):
                 premium._register_new_device('test_device_id')
             mock_delete.assert_not_called()
 
@@ -913,3 +908,34 @@ def test_get_kubernetes_pod_name_reads_hostname():
     ):
         assert get_kubernetes_pod_name() == pod_id
         assert check_docker_container() == (pod_id, KUBERNETES_PLATFORM_KEY)
+
+
+def test_check_docker_container_detects_podman():
+    """Ensures podman container IDs are detected and treated as docker platform."""
+    podman_container_id = '235e0319f7ad6649a7e822f8d4e542eab7fe778de7c31663b5579fb080421249'
+    mountinfo = (
+        '27 23 0:22 / / rw,relatime - overlay overlay rw,lowerdir=/var/lib/containers/storage/overlay,'  # noqa: E501
+        f'upperdir=/var/lib/containers/storage/overlay-containers/{podman_container_id}/userdata'
+    )
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        patch('rotkehlchen.premium.premium.Path.read_text', return_value=mountinfo),
+    ):
+        assert check_docker_container() == (podman_container_id[:12], DOCKER_PLATFORM_KEY)
+
+
+def test_extended_get_machine_id_uses_container_identifier():
+    """Ensure extended_get_machine_id falls back to container identifier when needed."""
+    username = 'test-user'
+    container_identifier = 'abc123def456'
+
+    with (
+        patch('rotkehlchen.premium.premium.machineid.hashed_id', side_effect=machineid.MachineIdNotFound),  # noqa: E501
+        patch('rotkehlchen.premium.premium.check_docker_container', return_value=(container_identifier, DOCKER_PLATFORM_KEY)),  # noqa: E501
+    ):
+        expected = hmac.new(
+            key=username.encode(),
+            msg=container_identifier.encode(),
+            digestmod=hashlib.sha256,
+        ).hexdigest()
+        assert extended_get_machine_id(username) == expected

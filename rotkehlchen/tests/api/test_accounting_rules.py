@@ -14,7 +14,11 @@ from rotkehlchen.chain.ethereum.modules.compound.constants import CPT_COMPOUND
 from rotkehlchen.chain.evm.accounting.structures import TxAccountingTreatment
 from rotkehlchen.constants.assets import A_CUSDC, A_USDC
 from rotkehlchen.constants.misc import ONE
-from rotkehlchen.db.constants import LINKABLE_ACCOUNTING_PROPERTIES
+from rotkehlchen.db.constants import (
+    LINKABLE_ACCOUNTING_PROPERTIES,
+    NO_ACCOUNTING_COUNTERPARTY,
+)
+from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.updates import RotkiDataUpdater
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -27,7 +31,7 @@ from rotkehlchen.tests.utils.api import (
     assert_simple_ok_response,
 )
 from rotkehlchen.tests.utils.factories import make_evm_tx_hash
-from rotkehlchen.tests.utils.history_base_entry import store_and_retrieve_events
+from rotkehlchen.tests.utils.history_base_entry import add_entries, store_and_retrieve_events
 from rotkehlchen.types import Location, TimestampMS
 
 
@@ -118,6 +122,7 @@ def test_manage_rules(rotkehlchen_api_server: 'APIServer', db_settings: dict[str
         'event_type': HistoryEventType.DEPOSIT.serialize(),
         'event_subtype': HistoryEventSubType.SPEND.serialize(),
         'counterparty': 'uniswap',
+        'event_ids': None,
     }
     rule_2: dict[str, Any] = {
         'taxable': {'value': True},
@@ -126,6 +131,7 @@ def test_manage_rules(rotkehlchen_api_server: 'APIServer', db_settings: dict[str
         'event_type': HistoryEventType.STAKING.serialize(),
         'event_subtype': HistoryEventSubType.SPEND.serialize(),
         'counterparty': None,
+        'event_ids': None,
         'accounting_treatment': 'swap',
     }
     response = requests.put(
@@ -412,7 +418,7 @@ def test_cache_invalidation(rotkehlchen_api_server: APIServer) -> None:
 
     tx_hash = make_evm_tx_hash()
     return_wrapped = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
@@ -424,7 +430,7 @@ def test_cache_invalidation(rotkehlchen_api_server: APIServer) -> None:
         notes='my notes',
     )
     remove_asset = EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=TimestampMS(16433333000),
         location=Location.ETHEREUM,
@@ -440,7 +446,7 @@ def test_cache_invalidation(rotkehlchen_api_server: APIServer) -> None:
         api_url_for(
             rotkehlchen_api_server,
             'historyeventresource',
-        ), json={'event_identifiers': [events[0].event_identifier]},
+        ), json={'group_identifiers': [events[0].group_identifier]},
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result['entries']) == 2
@@ -470,7 +476,7 @@ def test_cache_invalidation(rotkehlchen_api_server: APIServer) -> None:
         api_url_for(
             rotkehlchen_api_server,
             'historyeventresource',
-        ), json={'event_identifiers': [events[0].event_identifier]},
+        ), json={'group_identifiers': [events[0].group_identifier]},
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result['entries']) == 2
@@ -499,7 +505,7 @@ def test_cache_invalidation(rotkehlchen_api_server: APIServer) -> None:
         api_url_for(
             rotkehlchen_api_server,
             'historyeventresource',
-        ), json={'event_identifiers': [events[0].event_identifier]},
+        ), json={'group_identifiers': [events[0].group_identifier]},
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result['entries']) == 2
@@ -520,7 +526,7 @@ def test_cache_invalidation(rotkehlchen_api_server: APIServer) -> None:
         api_url_for(
             rotkehlchen_api_server,
             'historyeventresource',
-        ), json={'event_identifiers': [events[0].event_identifier]},
+        ), json={'group_identifiers': [events[0].group_identifier]},
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result['entries']) == 2
@@ -528,6 +534,81 @@ def test_cache_invalidation(rotkehlchen_api_server: APIServer) -> None:
         entry['event_accounting_rule_status'] == EventAccountingRuleStatus.NOT_PROCESSED.serialize()  # noqa: E501
         for entry in result['entries']
     )
+
+
+@pytest.mark.parametrize('initialize_accounting_rules', [False])
+def test_manage_rules_with_event_ids(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test operations with accounting rules that have event_ids"""
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    existing_entries = add_entries(DBHistoryEvents(rotki.data.db))
+
+    base_rule: dict[str, Any] = {
+        'taxable': {'value': True},
+        'count_entire_amount_spend': {'value': False},
+        'count_cost_basis_pnl': {'value': True},
+        'event_type': HistoryEventType.INFORMATIONAL.serialize(),
+        'event_subtype': HistoryEventSubType.APPROVE.serialize(),
+        'counterparty': 'uniswap-v2',
+        'accounting_treatment': TxAccountingTreatment.SWAP.serialize(),
+    }
+
+    # Test various invalid event field cases
+    for event_ids, expected_error in [
+        ([50_000], 'Event identifiers {50000} are nonexistent or do not match the specified event type/subtype combination.'),  # noqa: E501
+        ([-100], 'Must be greater than or equal to 0'),
+        (['420'], 'Not a valid integer'),
+    ]:
+        invalid_rule = base_rule.copy()
+        invalid_rule['event_ids'] = event_ids
+        response = requests.put(
+            api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+            json=invalid_rule,
+        )
+        assert_error_response(
+            response=response,
+            contained_in_msg=expected_error,
+            status_code=HTTPStatus.BAD_REQUEST,
+        )
+
+    # Test adding rule with valid event_id and sequence_index
+    valid_rule = base_rule.copy()
+    valid_rule['event_ids'] = [existing_entries[0].identifier]
+    assert_proper_sync_response_with_result(requests.put(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json=valid_rule,
+    ))
+    valid_rule.update({'identifier': 1})
+    assert (entries := assert_proper_sync_response_with_result(requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+    ))['entries']) == [valid_rule]
+
+    # Test updating rule with event_id and sequence_index
+    updated_rule = valid_rule.copy()
+    another_event = existing_entries[1]  # Use another INFORMATIONAL/APPROVE event
+    updated_rule['event_ids'].append(another_event.identifier)
+    updated_rule['taxable'] = {'value': False}
+    response = requests.patch(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json={
+            'identifier': (rule_id := entries[0]['identifier']),  # since we've only added one entry  # noqa: E501
+            **updated_rule,
+        },
+    )
+    assert_simple_ok_response(response)
+    updated_rule['identifier'] = rule_id
+    assert assert_proper_sync_response_with_result(requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+    ))['entries'] == [updated_rule]
+
+    # Test removing the rule
+    response = requests.delete(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json={'identifier': rule_id},
+    )
+    assert_simple_ok_response(response)
+    assert len(assert_proper_sync_response_with_result(requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+    ))['entries']) == 0
 
 
 @pytest.mark.parametrize('initialize_accounting_rules', [True])
@@ -574,6 +655,7 @@ def test_import_export_accounting_rules(rotkehlchen_api_server: 'APIServer') -> 
         assert len(rules_data['accounting_rules']) == all_rules_num
         assert rules_data['accounting_rules']['1'] == {
             'event_type': 'deposit',
+            'event_ids': None,
             'event_subtype': 'deposit asset',
             'counterparty': 'aave-v1',
             'rule': {
@@ -586,6 +668,7 @@ def test_import_export_accounting_rules(rotkehlchen_api_server: 'APIServer') -> 
         assert rules_data['accounting_rules']['82'] == {
             'event_type': 'deposit',
             'event_subtype': 'fee',
+            'event_ids': None,
             'counterparty': None,
             'rule': {
                 'taxable': {'value': True},
@@ -658,8 +741,8 @@ def test_import_export_accounting_rules(rotkehlchen_api_server: 'APIServer') -> 
         assert cursor.execute(
             'SELECT * FROM accounting_rules WHERE identifier IN (1, 82);',
         ).fetchall() == [
-            (1, 'deposit', 'deposit asset', 'aave-v1', 0, 0, 1, 'A'),
-            (82, 'deposit', 'fee', 'NONE', 1, 0, 1, None),
+            (1, 'deposit', 'deposit asset', 'aave-v1', 0, 0, 1, 'A', 0),
+            (82, 'deposit', 'fee', NO_ACCOUNTING_COUNTERPARTY, 1, 0, 1, None, 0),
         ] == initial_rules
 
         assert cursor.execute('SELECT * FROM linked_rules_properties').fetchall() == [
@@ -668,3 +751,201 @@ def test_import_export_accounting_rules(rotkehlchen_api_server: 'APIServer') -> 
             (3, 65, 'count_entire_amount_spend', 'include_gas_costs'),
             (4, 65, 'count_cost_basis_pnl', 'include_crypto2crypto'),
         ] == initial_properties
+
+
+@pytest.mark.parametrize('initialize_accounting_rules', [False])
+def test_query_accounting_rules_by_identifiers(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that querying accounting rules by identifiers works"""
+    for rule in (rules := [{  # create three rules
+        'taxable': {'value': False},
+        'count_entire_amount_spend': {'value': True},
+        'count_cost_basis_pnl': {'value': False},
+        'event_type': HistoryEventType.WITHDRAWAL.serialize(),
+        'event_subtype': HistoryEventSubType.RECEIVE.serialize(),
+        'counterparty': 'compound',
+    }, {
+        'taxable': {'value': True},
+        'count_entire_amount_spend': {'value': False},
+        'count_cost_basis_pnl': {'value': True},
+        'event_type': HistoryEventType.DEPOSIT.serialize(),
+        'event_subtype': HistoryEventSubType.SPEND.serialize(),
+        'counterparty': 'uniswap',
+    }, {
+        'taxable': {'value': False},
+        'count_entire_amount_spend': {'value': True},
+        'count_cost_basis_pnl': {'value': False},
+        'event_type': HistoryEventType.WITHDRAWAL.serialize(),
+        'event_subtype': HistoryEventSubType.RECEIVE.serialize(),
+        'counterparty': 'curve',
+    }]):
+        assert_simple_ok_response(requests.put(
+            api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+            json=rule,
+        ))
+
+    response = requests.post(  # get all rules to find their IDs
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert len(result['entries']) == len(rules)
+
+    rule_1_id, rule_2_id = None, None
+    for entry in result['entries']:
+        if entry['counterparty'] == 'compound':
+            rule_1_id = entry['identifier']
+        elif entry['counterparty'] == 'uniswap':
+            rule_2_id = entry['identifier']
+
+    assert all([rule_1_id, rule_2_id])
+
+    # Test querying by single identifier
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json={'identifiers': [rule_1_id]},
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert len(result['entries']) == 1
+    assert result['entries'][0]['identifier'] == rule_1_id
+    assert result['entries'][0]['counterparty'] == 'compound'
+
+    # Test querying by multiple identifiers
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json={'identifiers': [rule_1_id, rule_2_id], 'counterparties': ['uniswap', 'compound']},
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert len(result['entries']) == len(rules) - 1
+    assert {entry['identifier'] for entry in result['entries']} == {rule_1_id, rule_2_id}
+
+    # Test querying by non-existent identifier
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json={'identifiers': [99999]},
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert len(result['entries']) == 0
+    assert result['entries_found'] == 0
+
+
+@pytest.mark.parametrize('initialize_accounting_rules', [False])
+def test_query_accounting_rules_with_event_ids_filter(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test filtering accounting rules by event ids & custom_rule_handling parameter"""
+    # First create some history events using the existing test helper
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    existing_entries = add_entries(DBHistoryEvents(rotki.data.db))
+    for rule in [{
+        'taxable': {'value': True},
+        'count_entire_amount_spend': {'value': False},
+        'count_cost_basis_pnl': {'value': True},
+        'event_type': HistoryEventType.DEPOSIT.serialize(),
+        'event_subtype': HistoryEventSubType.DEPOSIT_ASSET.serialize(),
+        'event_ids': [existing_entries[3].identifier],
+        'counterparty': 'somewhere',
+    }, {
+        'taxable': {'value': False},
+        'count_entire_amount_spend': {'value': True},
+        'count_cost_basis_pnl': {'value': False},
+        'event_type': HistoryEventType.WITHDRAWAL.serialize(),
+        'event_subtype': HistoryEventSubType.RECEIVE.serialize(),
+    }]:
+        assert_simple_ok_response(requests.put(
+            api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+            json=rule,
+        ))
+
+    # Test: Get all rules (default behavior - custom_rule_handling=all)
+    response = requests.post(api_url_for(rotkehlchen_api_server, 'accountingrulesresource'))
+    result = assert_proper_sync_response_with_result(response)
+    assert len(result['entries']) == 2, 'Should have gotten both rules'
+
+    # Test: Get only rules with event_ids
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json={'custom_rule_handling': 'only'},
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert len(result['entries']) == 1, 'Should only get the event-specific rule'
+    assert result['entries'][0]['event_ids'] == [existing_entries[3].identifier]
+    assert result['entries'][0]['counterparty'] == 'somewhere'
+    assert result['entries'][0]['event_type'] == HistoryEventType.DEPOSIT.serialize()
+
+    # Test: Get only rules without event_ids
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json={'custom_rule_handling': 'exclude'},
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert len(result['entries']) == 1, 'Should only get the generic rule'
+    assert result['entries'][0]['event_ids'] is None
+    assert result['entries'][0]['counterparty'] is None
+    assert result['entries'][0]['event_type'] == HistoryEventType.WITHDRAWAL.serialize()
+
+    # Test: Get rules by filtering the with event_ids
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json={'event_ids': [existing_entries[3].identifier]},
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert len(result['entries']) == 1, 'Should only get the specific rule'
+    assert result['entries'][0]['event_ids'] == [existing_entries[3].identifier]
+    assert result['entries'][0]['counterparty'] == 'somewhere'
+    assert result['entries'][0]['event_type'] == HistoryEventType.DEPOSIT.serialize()
+
+    # Test mutual exclusion validation
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json={'custom_rule_handling': 'only', 'event_ids': [existing_entries[3].identifier]},
+    )
+    assert_error_response(
+        response=response,
+        contained_in_msg='Cannot use both custom_rule_handling and event_ids parameters together',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+
+
+@pytest.mark.parametrize('initialize_accounting_rules', [False])
+def test_pagination_with_multiple_event_ids(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that pagination works correctly with accounting rules that have multiple event IDs"""
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    existing_entries = add_entries(DBHistoryEvents(rotki.data.db))
+    for rule in [{  # Add both rules
+        'taxable': {'value': True},
+        'count_entire_amount_spend': {'value': False},
+        'count_cost_basis_pnl': {'value': True},
+        'event_type': HistoryEventType.INFORMATIONAL.serialize(),
+        'event_subtype': HistoryEventSubType.APPROVE.serialize(),
+        'event_ids': [existing_entries[i].identifier for i in range(2)],
+        'counterparty': (event_specific_cpt := 'uniswap'),
+    }, {
+        'taxable': {'value': False},
+        'count_entire_amount_spend': {'value': True},
+        'count_cost_basis_pnl': {'value': False},
+        'event_type': HistoryEventType.WITHDRAWAL.serialize(),
+        'event_subtype': HistoryEventSubType.RECEIVE.serialize(),
+        'counterparty': (regular_rule_cpt := 'compound'),
+    }]:
+        assert_simple_ok_response(requests.put(
+            api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+            json=rule,
+        ))
+
+    # Test pagination with limit=1 to ensure each rule is counted as 1, not by number of events
+    for offset, counterparty in [(0, regular_rule_cpt), (1, event_specific_cpt)]:
+        result = assert_proper_sync_response_with_result(requests.post(
+            api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+            json={'limit': 1, 'offset': offset},
+        ))
+        assert len(result['entries']) == 1
+        assert result['entries_total'] == 2
+        assert result['entries'][0]['counterparty'] == counterparty
+
+    # test getting all rules at once
+    result = assert_proper_sync_response_with_result(requests.post(
+        api_url_for(rotkehlchen_api_server, 'accountingrulesresource'),
+        json={'limit': 10, 'offset': 0},
+    ))
+    assert len(result['entries']) == result['entries_found'] == result['entries_total'] == 2
+    # Verify one rule has multiple event IDs and one has none
+    rules_by_counterparty = {rule['counterparty']: rule for rule in result['entries']}
+    assert len(rules_by_counterparty['uniswap']['event_ids']) == 2
+    assert rules_by_counterparty['compound']['event_ids'] is None

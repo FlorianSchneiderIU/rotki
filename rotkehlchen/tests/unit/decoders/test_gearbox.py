@@ -2,24 +2,31 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.asset import Asset, UnderlyingToken
+from rotkehlchen.assets.utils import get_or_create_evm_token
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.modules.gearbox.constants import GEAR_STAKING_CONTRACT
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.gearbox.constants import CPT_GEARBOX
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_DAI, A_ETH, A_USDC
-from rotkehlchen.constants.misc import ZERO
+from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.fval import FVal
-from rotkehlchen.globaldb.cache import compute_cache_key
-from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
+from rotkehlchen.globaldb.cache import (
+    compute_cache_key,
+    globaldb_set_general_cache_values,
+    globaldb_set_unique_cache_value,
+)
+from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import (
     CacheType,
     ChecksumEvmAddress,
     Location,
     TimestampMS,
+    TokenKind,
     deserialize_evm_tx_hash,
 )
 from rotkehlchen.utils.misc import ts_now
@@ -28,6 +35,7 @@ if TYPE_CHECKING:
     from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
     from rotkehlchen.chain.optimism.node_inquirer import OptimismInquirer
+    from rotkehlchen.globaldb.handler import GlobalDBHandler
 
 
 @pytest.fixture(name='setup_gearbox_cache')
@@ -59,6 +67,97 @@ def _setup_gearbox_cache(globaldb):
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('load_global_caches', [[CPT_GEARBOX]])
+@pytest.mark.parametrize('ethereum_accounts', [['0xfAebCbFbB35935e45afBD6b7EAfA93aB9c4fEc05']])
+def test_gearbox_deposit_non_farming_pool(
+        ethereum_inquirer: 'EthereumInquirer',
+        ethereum_accounts: list['ChecksumEvmAddress'],
+        load_global_caches: list[str],
+        globaldb: 'GlobalDBHandler',
+):
+    """Test a deposit to a pool that doesn't have any farming/lp tokens."""
+    pool_token = get_or_create_evm_token(
+        userdb=ethereum_inquirer.database,
+        evm_address=string_to_evm_address('0x31426271449F60d37Cc5C9AEf7bD12aF3BdC7A94'),
+        chain_id=ethereum_inquirer.chain_id,
+        symbol='dDOLAV3',
+        name='Trade DOLA v3',
+        protocol=CPT_GEARBOX,
+        underlying_tokens=[UnderlyingToken(
+            (underlying_token := get_or_create_evm_token(
+                userdb=ethereum_inquirer.database,
+                evm_address=string_to_evm_address('0x865377367054516e17014CcdED1e7d814EDC9ce4'),
+                chain_id=ethereum_inquirer.chain_id,
+                symbol='DOLA',
+                name='Dola USD Stablecoin',
+            )).evm_address,
+            token_kind=TokenKind.ERC20,
+            weight=ONE,
+        )],
+    )
+    with globaldb.conn.write_ctx() as write_cursor:
+        globaldb_set_general_cache_values(
+            write_cursor=write_cursor,
+            key_parts=(
+                CacheType.GEARBOX_POOL_ADDRESS,
+                (chain_id_str := str(ethereum_inquirer.chain_id.serialize_for_db())),
+            ),
+            values=(pool_token.evm_address,),
+        )
+        globaldb_set_unique_cache_value(
+            write_cursor=write_cursor,
+            key_parts=(CacheType.GEARBOX_POOL_NAME, pool_token.evm_address, chain_id_str),
+            value='Trade DOLA v3',
+        )
+
+    tx_hash = deserialize_evm_tx_hash('0x20a0e17d547a76f797bab8c60c2aa65a6cdbceecb1f50f92a4de4408a461c963')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(
+        evm_inquirer=ethereum_inquirer,
+        tx_hash=tx_hash,
+        load_global_caches=load_global_caches,
+    )
+    assert events == [EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=0,
+        timestamp=(timestamp := TimestampMS(1754383247000)),
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.SPEND,
+        event_subtype=HistoryEventSubType.FEE,
+        asset=A_ETH,
+        amount=FVal(gas := '0.000026282468494372'),
+        location_label=(user_address := ethereum_accounts[0]),
+        notes=f'Burn {gas} ETH for gas',
+        counterparty=CPT_GAS,
+    ), EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=693,
+        timestamp=timestamp,
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.DEPOSIT,
+        event_subtype=HistoryEventSubType.DEPOSIT_FOR_WRAPPED,
+        asset=underlying_token,
+        amount=FVal(deposit_amount := '3162.315537981174820203'),
+        location_label=user_address,
+        notes=f'Deposit {deposit_amount} DOLA to Gearbox',
+        counterparty=CPT_GEARBOX,
+        address=pool_token.evm_address,
+    ), EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=694,
+        timestamp=timestamp,
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.RECEIVE,
+        event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
+        asset=pool_token,
+        amount=FVal(lp_amount := '3128.937248998913842767'),
+        location_label=user_address,
+        notes=f'Receive {lp_amount} dDOLAV3 after depositing in Gearbox',
+        counterparty=CPT_GEARBOX,
+        address=ZERO_ADDRESS,
+    )]
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('load_global_caches', [[CPT_GEARBOX]])
 @pytest.mark.parametrize('ethereum_accounts', [['0x3630220f243288E3EAC4C5676fC191CFf5756431']])
 def test_gearbox_deposit(
         ethereum_inquirer: 'EthereumInquirer',
@@ -83,7 +182,7 @@ def test_gearbox_deposit(
             amount=FVal(gas),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=513,
@@ -95,7 +194,7 @@ def test_gearbox_deposit(
             amount=FVal(deposit_amount),
             location_label=ethereum_accounts[0],
             notes=f'Deposit {deposit_amount} DAI to Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x1aD0780a152fE66FAf7c44A7F875A36b1bf790F0'),
         ), EvmEvent(
@@ -108,7 +207,7 @@ def test_gearbox_deposit(
             amount=FVal(lp_token_amount),
             location_label=ethereum_accounts[0],
             notes=f'Receive {lp_token_amount} farmdDAIV3 after depositing in Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x1aD0780a152fE66FAf7c44A7F875A36b1bf790F0'),
         ),
@@ -142,7 +241,7 @@ def test_gearbox_deposit_usdc(
             amount=FVal(gas),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=154,
@@ -154,7 +253,7 @@ def test_gearbox_deposit_usdc(
             amount=FVal(6500000),
             location_label=ethereum_accounts[0],
             notes=f'Set USDC spending approval of {ethereum_accounts[0]} by 0x53D5BD0E7fAa9ee3eafEf7C5572D54DB1b7f5b25 to {deposit_amount}',  # noqa: E501
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=string_to_evm_address('0x53D5BD0E7fAa9ee3eafEf7C5572D54DB1b7f5b25'),
         ), EvmEvent(
             sequence_index=155,
@@ -166,7 +265,7 @@ def test_gearbox_deposit_usdc(
             amount=FVal(deposit_amount),
             location_label=ethereum_accounts[0],
             notes=f'Deposit {deposit_amount} USDC to Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x53D5BD0E7fAa9ee3eafEf7C5572D54DB1b7f5b25'),
         ), EvmEvent(
@@ -179,7 +278,7 @@ def test_gearbox_deposit_usdc(
             amount=FVal(lp_token_amount),
             location_label=ethereum_accounts[0],
             notes=f'Receive {lp_token_amount} farmdUSDCV3 after depositing in Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x53D5BD0E7fAa9ee3eafEf7C5572D54DB1b7f5b25'),
         ),
@@ -213,7 +312,7 @@ def test_gearbox_withdraw(
             amount=FVal(gas),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=500,
@@ -225,7 +324,7 @@ def test_gearbox_withdraw(
             amount=FVal(lp_amount),
             location_label=ethereum_accounts[0],
             notes=f'Return {lp_amount} farmdDAIV3',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x1aD0780a152fE66FAf7c44A7F875A36b1bf790F0'),
         ), EvmEvent(
@@ -238,7 +337,7 @@ def test_gearbox_withdraw(
             amount=FVal(withdrawn),
             location_label=ethereum_accounts[0],
             notes=f'Withdraw {withdrawn} DAI from Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0xe7146F53dBcae9D6Fa3555FE502648deb0B2F823'),
         ),
@@ -272,7 +371,7 @@ def test_gearbox_deposit_arbitrum(
             amount=FVal(gas),
             location_label=arbitrum_one_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=1,
@@ -284,7 +383,7 @@ def test_gearbox_deposit_arbitrum(
             amount=FVal(deposit_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Deposit {deposit_amount} ETH to Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x78c1B41b825f89FAE4736878Fa63752F8D789BD6'),
         ), EvmEvent(
@@ -297,7 +396,7 @@ def test_gearbox_deposit_arbitrum(
             amount=FVal(lp_token_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Receive {lp_token_amount} farmdWETHV3 after depositing in Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x78c1B41b825f89FAE4736878Fa63752F8D789BD6'),
         ),
@@ -331,7 +430,7 @@ def test_gearbox_deposit_arbitrum_lp(
             amount=FVal(gas),
             location_label=arbitrum_one_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=1,
@@ -343,7 +442,7 @@ def test_gearbox_deposit_arbitrum_lp(
             amount=FVal(deposit_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Deposit {deposit_amount} ETH to Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0xA909d7924a5aeb6c31c6A3AD30E9950d4B40F8cB'),
         ), EvmEvent(
@@ -356,7 +455,7 @@ def test_gearbox_deposit_arbitrum_lp(
             amount=FVal(lp_token_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Receive {lp_token_amount} dWETHV3 after providing liquidity in Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=ZERO_ADDRESS,
         ),
@@ -390,7 +489,7 @@ def test_gearbox_withdraw_arbitrum(
             amount=FVal(gas),
             location_label=arbitrum_one_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=1,
@@ -402,7 +501,7 @@ def test_gearbox_withdraw_arbitrum(
             amount=FVal(withdrawn),
             location_label=arbitrum_one_accounts[0],
             notes=f'Withdraw {withdrawn} ETH from Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x78c1B41b825f89FAE4736878Fa63752F8D789BD6'),
         ), EvmEvent(
@@ -415,7 +514,7 @@ def test_gearbox_withdraw_arbitrum(
             amount=FVal(lp_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Return {lp_amount} farmdWETHV3',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x78c1B41b825f89FAE4736878Fa63752F8D789BD6'),
         ),
@@ -449,7 +548,7 @@ def test_gearbox_deposit_usdc_arbitrum(
             amount=FVal(gas),
             location_label=arbitrum_one_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=7,
@@ -461,7 +560,7 @@ def test_gearbox_deposit_usdc_arbitrum(
             amount=FVal(approval_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Set USDC.e spending approval of {arbitrum_one_accounts[0]} by 0xD72e1B9A5FC74b35435f71603a81dAE217c2D863 to {approval_amount}',  # noqa: E501
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=string_to_evm_address('0xD72e1B9A5FC74b35435f71603a81dAE217c2D863'),
         ), EvmEvent(
             sequence_index=8,
@@ -473,7 +572,7 @@ def test_gearbox_deposit_usdc_arbitrum(
             amount=FVal(deposit_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Deposit {deposit_amount} USDC.e to Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0xD72e1B9A5FC74b35435f71603a81dAE217c2D863'),
         ), EvmEvent(
@@ -486,7 +585,7 @@ def test_gearbox_deposit_usdc_arbitrum(
             amount=ZERO,
             location_label=arbitrum_one_accounts[0],
             notes=f'Revoke USDC.e spending approval of {arbitrum_one_accounts[0]} by 0xD72e1B9A5FC74b35435f71603a81dAE217c2D863',  # noqa: E501
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=string_to_evm_address('0xD72e1B9A5FC74b35435f71603a81dAE217c2D863'),
         ), EvmEvent(
             sequence_index=17,
@@ -498,7 +597,7 @@ def test_gearbox_deposit_usdc_arbitrum(
             amount=FVal(lp_token_amount),
             location_label=arbitrum_one_accounts[0],
             notes=f'Receive {lp_token_amount} farmdUSDCV3 after depositing in Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0xD72e1B9A5FC74b35435f71603a81dAE217c2D863'),
         ),
@@ -507,6 +606,7 @@ def test_gearbox_deposit_usdc_arbitrum(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('load_global_caches', [[CPT_GEARBOX]])
 @pytest.mark.parametrize('optimism_accounts', [['0xb8150a1B6945e75D05769D685b127b41E6335Bbc']])
 def test_gearbox_deposit_optimism(
@@ -532,7 +632,7 @@ def test_gearbox_deposit_optimism(
             amount=FVal(gas),
             location_label=optimism_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=1,
@@ -544,7 +644,7 @@ def test_gearbox_deposit_optimism(
             amount=FVal(deposit_amount),
             location_label=optimism_accounts[0],
             notes=f'Deposit {deposit_amount} ETH to Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0xEa8ca794aEe0f998Ed6AB50F4042c28807E546Eb'),
         ), EvmEvent(
@@ -557,7 +657,7 @@ def test_gearbox_deposit_optimism(
             amount=FVal(lp_token_amount),
             location_label=optimism_accounts[0],
             notes=f'Receive {lp_token_amount} farmdWETHV3 after depositing in Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0xEa8ca794aEe0f998Ed6AB50F4042c28807E546Eb'),
         ),
@@ -566,6 +666,7 @@ def test_gearbox_deposit_optimism(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('load_global_caches', [[CPT_GEARBOX]])
 @pytest.mark.parametrize('optimism_accounts', [['0xb8150a1B6945e75D05769D685b127b41E6335Bbc']])
 def test_gearbox_deposit_usdc_optimism(
@@ -591,7 +692,7 @@ def test_gearbox_deposit_usdc_optimism(
             amount=FVal(gas),
             location_label=optimism_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=3,
@@ -603,7 +704,7 @@ def test_gearbox_deposit_usdc_optimism(
             amount=FVal(deposit_amount),
             location_label=optimism_accounts[0],
             notes=f'Deposit {deposit_amount} USDC.e to Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x931BC69a32BE7A36f9B00Bf63D17Fa8fB9a8C525'),
         ), EvmEvent(
@@ -616,7 +717,7 @@ def test_gearbox_deposit_usdc_optimism(
             amount=FVal(approval_amount),
             location_label=optimism_accounts[0],
             notes=f'Set USDC.e spending approval of {optimism_accounts[0]} by 0x931BC69a32BE7A36f9B00Bf63D17Fa8fB9a8C525 to {approval_amount}',  # noqa: E501
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=string_to_evm_address('0x931BC69a32BE7A36f9B00Bf63D17Fa8fB9a8C525'),
         ), EvmEvent(
             sequence_index=12,
@@ -628,7 +729,7 @@ def test_gearbox_deposit_usdc_optimism(
             amount=FVal(deposit_amount),
             location_label=optimism_accounts[0],
             notes=f'Receive {deposit_amount} farmdUSDCV3 after depositing in Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x931BC69a32BE7A36f9B00Bf63D17Fa8fB9a8C525'),
         ),
@@ -637,6 +738,7 @@ def test_gearbox_deposit_usdc_optimism(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('load_global_caches', [[CPT_GEARBOX]])
 @pytest.mark.parametrize('optimism_accounts', [['0x42ccF4f456D7c7fEBF274242CACcD74AAa0a53d7']])
 def test_gearbox_withdraw_optimism_usdc(
@@ -662,7 +764,7 @@ def test_gearbox_withdraw_optimism_usdc(
             amount=FVal(gas),
             location_label=optimism_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=125,
@@ -674,7 +776,7 @@ def test_gearbox_withdraw_optimism_usdc(
             amount=FVal(lp_amount),
             location_label=optimism_accounts[0],
             notes=f'Return {lp_amount} farmdUSDCV3',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x931BC69a32BE7A36f9B00Bf63D17Fa8fB9a8C525'),
         ), EvmEvent(
@@ -687,7 +789,7 @@ def test_gearbox_withdraw_optimism_usdc(
             amount=FVal(lp_amount),
             location_label=optimism_accounts[0],
             notes=f'Withdraw {lp_amount} USDC.e from Gearbox',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
             address=string_to_evm_address('0x5520dAa93A187f4Ec67344e6D2C4FC9B080B6A35'),
         ),
@@ -715,7 +817,7 @@ def test_gearbox_staking(
             amount=FVal(gas),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=509,
@@ -727,7 +829,7 @@ def test_gearbox_staking(
             amount=FVal(stake_amount),
             location_label=ethereum_accounts[0],
             notes=f'Set GEAR spending approval of {ethereum_accounts[0]} by {GEAR_STAKING_CONTRACT} to {stake_amount}',  # noqa: E501
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=GEAR_STAKING_CONTRACT,
         ), EvmEvent(
             sequence_index=510,
@@ -739,7 +841,7 @@ def test_gearbox_staking(
             amount=ZERO,
             location_label=ethereum_accounts[0],
             notes=f'Revoke GEAR spending approval of {ethereum_accounts[0]} by {GEAR_STAKING_CONTRACT}',  # noqa: E501
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=GEAR_STAKING_CONTRACT,
         ), EvmEvent(
             sequence_index=511,
@@ -751,9 +853,8 @@ def test_gearbox_staking(
             amount=FVal(stake_amount),
             location_label='0x0e414c1c4780df6c09c2f1070990768D44B70b1D',
             notes=f'Stake {stake_amount} GEAR',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
-            product=EvmProduct.STAKING,
             address=GEAR_STAKING_CONTRACT,
         ),
     ]
@@ -780,7 +881,7 @@ def test_gearbox_unstaking(
             amount=FVal(gas),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=308,
@@ -792,9 +893,8 @@ def test_gearbox_unstaking(
             amount=FVal(stake_amount),
             location_label=ethereum_accounts[0],
             notes=f'Unstake {stake_amount} GEAR',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GEARBOX,
-            product=EvmProduct.STAKING,
             address=GEAR_STAKING_CONTRACT,
         ),
     ]
@@ -826,7 +926,7 @@ def test_gearbox_claim_from_angle(
         amount=FVal(gas),
         location_label=(user_account := ethereum_accounts[0]),
         notes=f'Burn {gas} ETH for gas',
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         counterparty=CPT_GAS,
     ), EvmEvent(
         sequence_index=371,
@@ -838,7 +938,7 @@ def test_gearbox_claim_from_angle(
         amount=FVal(gear_amount),
         location_label=user_account,
         notes=f'Claim {gear_amount} GEAR reward from Gearbox',
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         counterparty=CPT_GEARBOX,
         address=string_to_evm_address('0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae'),
     )]
@@ -870,7 +970,7 @@ def test_gearbox_claim(
         amount=FVal(gas),
         location_label=(user_account := ethereum_accounts[0]),
         notes=f'Burn {gas} ETH for gas',
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         counterparty=CPT_GAS,
     ), EvmEvent(
         sequence_index=339,
@@ -882,7 +982,7 @@ def test_gearbox_claim(
         amount=FVal(gear_amount),
         location_label=user_account,
         notes=f'Claim {gear_amount} GEAR reward from Gearbox',
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         counterparty=CPT_GEARBOX,
         address=string_to_evm_address('0x9ef444a6d7F4A5adcd68FD5329aA5240C90E14d2'),
     )]

@@ -2,17 +2,16 @@ import abc
 import logging
 from typing import TYPE_CHECKING, Any, Final
 
-from rotkehlchen.assets.utils import get_or_create_evm_token
+from rotkehlchen.assets.utils import asset_normalized_value, get_or_create_evm_token
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.ethereum.decoding.constants import GNOSIS_CPT_DETAILS
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.utils import bridge_match_transfer, bridge_prepare_data
 from rotkehlchen.constants.assets import A_ETH, A_WETH
 from rotkehlchen.history.events.structures.types import HistoryEventType
@@ -21,7 +20,7 @@ from rotkehlchen.types import ChainID, ChecksumEvmAddress
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -32,12 +31,12 @@ TOKENS_BRIDGING_INITIATED: Final = b'Y\xa9\xa8\x02{\x9c\x87\xb9a\xe2T\x89\x98!\x
 TOKENS_BRIDGED: Final = b'\x9a\xfdG\x90~%\x02\x8c\xda\xca\x89\xd1\x93Q\x8c0+\xbb\x12\x86\x17\xd5\xa9\x92\xc5\xab\xd4X\x15Re\x93'  # noqa: E501
 
 
-class OmnibridgeCommonDecoder(DecoderInterface, abc.ABC):
+class OmnibridgeCommonDecoder(EvmDecoderInterface, abc.ABC):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             bridge_address: ChecksumEvmAddress,
             source_chain: ChainID,
@@ -52,7 +51,7 @@ class OmnibridgeCommonDecoder(DecoderInterface, abc.ABC):
         self.source_chain = source_chain
         self.target_chain = target_chain
 
-    def _decode_bridge_tokens(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_bridge_tokens(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes a bridging event for tokens. Either a deposit or a withdrawal."""
         if context.tx_log.topics[0] == TOKENS_BRIDGING_INITIATED:
             from_address = context.transaction.from_address
@@ -61,13 +60,13 @@ class OmnibridgeCommonDecoder(DecoderInterface, abc.ABC):
             to_address = bytes_to_address(context.tx_log.topics[2])
             from_address = to_address  # We have no from_address information
         else:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         bridged_asset = get_or_create_evm_token(
-            userdb=self.evm_inquirer.database,
+            userdb=self.node_inquirer.database,
             evm_address=bytes_to_address(context.tx_log.topics[1]),
-            chain_id=self.evm_inquirer.chain_id,
-            evm_inquirer=self.evm_inquirer,
+            chain_id=self.node_inquirer.chain_id,
+            evm_inquirer=self.node_inquirer,
         )
         amount = asset_normalized_value(
             amount=int.from_bytes(context.tx_log.data[0:32]),
@@ -118,7 +117,7 @@ class OmnibridgeCommonDecoder(DecoderInterface, abc.ABC):
         else:
             log.error(f'Could not find the transfer event for bridging to {to_address} in {context.transaction}')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

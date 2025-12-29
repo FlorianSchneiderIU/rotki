@@ -13,7 +13,7 @@ from rotkehlchen.types import Location
 if TYPE_CHECKING:
     from rotkehlchen.api.server import APIServer
 
-NUM_PACKAGED_ASSETS_MAPPINGS: Final = 3354
+NUM_PACKAGED_ASSETS_MAPPINGS: Final = 3500
 
 
 def _get_all_location_mappings(rotkehlchen_api_server: 'APIServer') -> Any:
@@ -42,7 +42,7 @@ def test_location_asset_mappings_query(rotkehlchen_api_server: 'APIServer') -> N
         json={'location': None},
     )
     result = assert_proper_sync_response_with_result(response)
-    assert len(result['entries']) == result['entries_found'] == 264
+    assert len(result['entries']) == result['entries_found'] == 296
 
     # query all kraken mappings
     response = requests.post(
@@ -53,7 +53,7 @@ def test_location_asset_mappings_query(rotkehlchen_api_server: 'APIServer') -> N
         json={'location': 'kraken'},
     )
     result = assert_proper_sync_response_with_result(response)
-    assert len(result['entries']) == result['entries_found'] == 305
+    assert len(result['entries']) == result['entries_found'] == 319
 
     # query by symbol all the kraken mappings
     response = requests.post(
@@ -225,7 +225,7 @@ def test_location_asset_mappings_errors(rotkehlchen_api_server: 'APIServer') -> 
         response=response,
         status_code=HTTPStatus.CONFLICT,
         contained_in_msg=(
-            'Failed to add the location asset mapping of AXS in None because it already exists in the DB.'  # noqa: E501
+            'Failed to add the location asset mapping AXS in None because it already exists in the DB.'  # noqa: E501
         ),
     )
 
@@ -264,7 +264,7 @@ def test_location_asset_mappings_errors(rotkehlchen_api_server: 'APIServer') -> 
         response=response,
         status_code=HTTPStatus.CONFLICT,
         contained_in_msg=(
-            'Failed to delete the location asset mapping of DNE in kraken because it does not exist in the DB.'  # noqa: E501
+            'Failed to delete the location asset mapping DNE in kraken because it does not exist in the DB.'  # noqa: E501
         ),
     )
 
@@ -286,6 +286,6 @@ def test_location_asset_mappings_errors(rotkehlchen_api_server: 'APIServer') -> 
         response=response,
         status_code=HTTPStatus.CONFLICT,
         contained_in_msg=(
-            'Failed to update the location asset mapping of DNE in kraken because it does not exist in the DB.'  # noqa: E501
+            'Failed to update the location asset mapping DNE in kraken because it does not exist in the DB.'  # noqa: E501
         ),
     )

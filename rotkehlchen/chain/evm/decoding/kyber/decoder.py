@@ -2,16 +2,16 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.assets.asset import CryptoAsset
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import SWAPPED_TOPIC
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class KyberCommonDecoder(DecoderInterface):
+class KyberCommonDecoder(EvmDecoderInterface):
 
     def _maybe_update_events(
             self,
@@ -67,16 +67,16 @@ class KyberCommonDecoder(DecoderInterface):
             if out_event is not None and in_event is not None:
                 maybe_reshuffle_events(ordered_events=[out_event, in_event], events_list=decoded_events)  # noqa: E501
 
-    def _decode_aggregator_trade(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_aggregator_trade(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes a kyber aggregator swap, updating the events with proper metadata"""
         if context.tx_log.topics[0] != SWAPPED_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         sender = bytes_to_address(context.tx_log.data[:32])
         receiver = bytes_to_address(context.tx_log.data[96:128])
 
         if self.base.any_tracked([sender, receiver]) is False:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         source_token_address = bytes_to_address(context.tx_log.data[32:64])
         destination_token_address = bytes_to_address(context.tx_log.data[64:96])
@@ -97,7 +97,7 @@ class KyberCommonDecoder(DecoderInterface):
             counterparty=CPT_KYBER,
         )
 
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)
 
     # -- DecoderInterface methods
 

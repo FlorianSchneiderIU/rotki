@@ -12,6 +12,7 @@ import CounterpartyInput from '@/components/inputs/CounterpartyInput.vue';
 import { useFormStateWatcher } from '@/composables/form';
 import { useHistoryEvents } from '@/composables/history/events';
 import { useEditModeStateTracker } from '@/composables/history/events/edit-mode-state';
+import { useSupportedChains } from '@/composables/info/chains';
 import EventDateLocation from '@/modules/history/management/forms/common/EventDateLocation.vue';
 import SwapSubEventList from '@/modules/history/management/forms/swap/SwapSubEventList.vue';
 import { useEventFormValidation } from '@/modules/history/management/forms/use-event-form-validation';
@@ -42,9 +43,11 @@ function emptyEvent(): EvmSwapFormData {
     sequenceIndex: '0',
     spend: [emptySubEvent()],
     timestamp: dayjs().valueOf(),
-    txHash: '',
+    txRef: '',
   };
 }
+
+const { txChainsToLocation } = useSupportedChains();
 
 const states = ref<EvmSwapFormData>(emptyEvent());
 const hasFee = ref<boolean>(false);
@@ -70,7 +73,7 @@ const rules = computed(() => ({
   sequenceIndex: commonRules.createRequiredSequenceIndexRule(),
   spend: commonRules.createRequiredAtLeastOne(),
   timestamp: commonRules.createExternalValidationRule(),
-  txHash: commonRules.createValidTxHashRule(),
+  txRef: commonRules.createValidTxHashRule(),
 }));
 
 const v$ = useVuelidate(
@@ -181,7 +184,7 @@ watchImmediate(() => props.data, (data) => {
       location: group.location ?? '',
       sequenceIndex: data.nextSequenceId.toString(),
       timestamp: group.timestamp,
-      txHash: group.txHash,
+      txRef: group.txRef,
     });
   }
   else if (data.type === 'edit-group') {
@@ -206,7 +209,7 @@ watchImmediate(() => props.data, (data) => {
       sequenceIndex: firstSpend.sequenceIndex.toString(),
       spend: spend.map(event => toSubEvent(event)),
       timestamp: firstSpend.timestamp,
-      txHash: firstSpend.txHash,
+      txRef: firstSpend.txRef,
     });
 
     captureEditModeState(get(states));
@@ -224,6 +227,7 @@ watch(errorMessages, (errors) => {
 
 defineExpose({
   save,
+  v$,
 });
 </script>
 
@@ -232,7 +236,8 @@ defineExpose({
     <EventDateLocation
       v-model:timestamp="timestamp"
       v-model:location="states.location"
-      location-disabled
+      :location-disabled="data.type !== 'add'"
+      :locations="txChainsToLocation"
       :error-messages="{
         location: toMessages(v$.location),
         timestamp: toMessages(v$.timestamp),
@@ -243,14 +248,15 @@ defineExpose({
     <RuiDivider class="mb-6 mt-2" />
 
     <RuiTextField
-      v-model="states.txHash"
+      v-model="states.txRef"
       variant="outlined"
       color="primary"
-      disabled
-      data-cy="tx-hash"
+      :disabled="data.type !== 'add'"
+      data-cy="tx-ref"
       :label="t('common.tx_hash')"
-      :error-messages="toMessages(v$.txHash)"
-      @blur="v$.txHash.$touch()"
+      required
+      :error-messages="toMessages(v$.txRef)"
+      @blur="v$.txRef.$touch()"
     />
 
     <RuiDivider class="mb-6 mt-2" />
@@ -314,6 +320,7 @@ defineExpose({
         :disabled="data.type === 'edit-group'"
         data-cy="sequence-index"
         :label="t('transactions.events.form.sequence_index.label')"
+        required
         :error-messages="toMessages(v$.sequenceIndex)"
         @blur="v$.sequenceIndex.$touch()"
       />

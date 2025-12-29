@@ -8,7 +8,8 @@ from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.chain.ethereum.oracles.uniswap import UniswapV2Oracle, UniswapV3Oracle
 from rotkehlchen.chain.evm.decoding.uniswap.constants import CPT_UNISWAP_V2, CPT_UNISWAP_V3
 from rotkehlchen.chain.evm.types import string_to_evm_address
-from rotkehlchen.constants.assets import A_AAVE, A_BTC, A_USD
+from rotkehlchen.chain.polygon_pos.constants import POLYGON_POS_POL_HARDFORK
+from rotkehlchen.constants.assets import A_AAVE, A_BTC, A_ETH_MATIC, A_ETH_POL, A_POL, A_USD
 from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.constants.resolver import strethaddress_to_identifier
 from rotkehlchen.constants.timing import DAY_IN_SECONDS
@@ -363,7 +364,7 @@ def test_price_priority_order():
     assert priority_value == HistoricalPriceOracle.MANUAL.serialize_for_db()
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['apikey', 'api_key'])
 @pytest.mark.parametrize('mocked_price_queries', [mocked_prices])
 @pytest.mark.parametrize('ethereum_manager_connect_at_start', [(INFURA_ETH_NODE,)])
 def test_uniswap_v2_position_price_query(price_historian: PriceHistorian):
@@ -380,10 +381,10 @@ def test_uniswap_v2_position_price_query(price_historian: PriceHistorian):
         timestamp=Timestamp(1742814047),
     )
 
-    assert price == Price(FVal('3599499.14614648204764245778042706722040502098628449234280700474399384952003946'))  # noqa: E501
+    assert price.is_close('3591639.375183')
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['apikey', 'api_key'])
 @pytest.mark.parametrize('mocked_price_queries', [mocked_prices])
 @pytest.mark.parametrize('ethereum_manager_connect_at_start', [(INFURA_ETH_NODE,)])
 def test_uniswap_v3_position_price_query(price_historian: PriceHistorian):
@@ -400,4 +401,20 @@ def test_uniswap_v3_position_price_query(price_historian: PriceHistorian):
         timestamp=Timestamp(1742829743),
     )
 
-    assert price == Price(FVal('91.8899433946849362722178059329153023736079920232915317251968356662350823403461'))  # noqa: E501
+    assert price.is_close('91.707127')
+
+
+@pytest.mark.vcr(filter_query_parameters=['api_key'])
+@pytest.mark.parametrize('should_mock_price_queries', [False])
+def test_matic_pol_hardforked_price(price_historian: PriceHistorian) -> None:
+    """Test that pol/matic tokens all get proper prices before/after the hardfork."""
+    for timestamp, expected_price in (
+            (Timestamp(POLYGON_POS_POL_HARDFORK - 1000000), '0.543'),
+            (Timestamp(POLYGON_POS_POL_HARDFORK + 1000000), '0.381'),
+    ):
+        for asset in (A_POL, A_ETH_POL, A_ETH_MATIC):
+            assert price_historian.query_historical_price(
+                from_asset=asset,
+                to_asset=A_USD,
+                timestamp=timestamp,
+            ).is_close(expected_price, max_diff='0.003')

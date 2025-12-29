@@ -4,16 +4,21 @@ from unittest.mock import patch
 import pytest
 
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.modules.gitcoin.constants import GITCOIN_GRANTS_OLD1
 from rotkehlchen.chain.evm.constants import GENESIS_HASH, ZERO_ADDRESS
-from rotkehlchen.chain.evm.decoding.constants import CPT_ACCOUNT_DELEGATION, CPT_GAS
+from rotkehlchen.chain.evm.decoding.constants import CPT_ACCOUNT_DELEGATION
 from rotkehlchen.chain.evm.l2_with_l1_fees.types import L2WithL1FeesTransaction
 from rotkehlchen.chain.evm.types import EvmAccount, string_to_evm_address
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_ETH, A_SAI
-from rotkehlchen.db.constants import EVMTX_DECODED, EVMTX_SPAM
+from rotkehlchen.db.constants import TX_DECODED, TX_SPAM
 from rotkehlchen.db.evmtx import DBEvmTx
-from rotkehlchen.db.filtering import EvmEventFilterQuery, EvmTransactionsFilterQuery
+from rotkehlchen.db.filtering import (
+    EvmEventFilterQuery,
+    EvmTransactionsFilterQuery,
+    EvmTransactionsNotDecodedFilterQuery,
+)
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.l2withl1feestx import DBL2WithL1FeesTx
 from rotkehlchen.fval import FVal
@@ -51,11 +56,11 @@ def _add_transactions_to_db(
         ethereum_accounts: list[ChecksumEvmAddress],
 ) -> tuple[EVMTxHash, EVMTxHash, EVMTxHash]:
     """Add to the database transactions in different optimism and ethereum for testing"""
-    evmhash_opt = deserialize_evm_tx_hash('0x063d45910f29e0954a52aee39febba9be784d49af7588a590dc2fd7d156b4665')  # noqa: E501
-    evmhash_eth = deserialize_evm_tx_hash('0x3f313e90ed07044fdbb1016ff7986fd26adaeb05e8e9d3252ae0a8318cb8100d')  # noqa: E501
-    evmhash_eth_yabir = deserialize_evm_tx_hash('0x91016e7fb9f524449dd1a0b4faef9bc630e9c01c31b6d3383c94975269335afe')  # noqa: E501
+    tx_hash_opt = deserialize_evm_tx_hash('0x063d45910f29e0954a52aee39febba9be784d49af7588a590dc2fd7d156b4665')  # noqa: E501
+    tx_hash_eth = deserialize_evm_tx_hash('0x3f313e90ed07044fdbb1016ff7986fd26adaeb05e8e9d3252ae0a8318cb8100d')  # noqa: E501
+    tx_hash_eth_yabir = deserialize_evm_tx_hash('0x91016e7fb9f524449dd1a0b4faef9bc630e9c01c31b6d3383c94975269335afe')  # noqa: E501
     transaction_opt = L2WithL1FeesTransaction(
-        tx_hash=evmhash_opt,
+        tx_hash=tx_hash_opt,
         chain_id=ChainID.OPTIMISM,
         timestamp=Timestamp(1646375440),
         block_number=14318825,
@@ -70,7 +75,7 @@ def _add_transactions_to_db(
         l1_fee=455063072063200,
     )
     transaction_eth = EvmTransaction(
-        tx_hash=evmhash_eth,
+        tx_hash=tx_hash_eth,
         chain_id=ChainID.ETHEREUM,
         timestamp=Timestamp(1646375440),
         block_number=14318825,
@@ -84,7 +89,7 @@ def _add_transactions_to_db(
         nonce=507,
     )
     transaction_eth_yabir = EvmTransaction(
-        tx_hash=evmhash_eth_yabir,
+        tx_hash=tx_hash_eth_yabir,
         chain_id=ChainID.ETHEREUM,
         timestamp=Timestamp(1646375440),
         block_number=14318825,
@@ -101,11 +106,11 @@ def _add_transactions_to_db(
     dbevmtx = DBEvmTx(db)
     dbl2withl1feestx = DBL2WithL1FeesTx(db)
     with db.user_write() as cursor:
-        dbl2withl1feestx.add_evm_transactions(cursor, [transaction_opt], relevant_address=ethereum_accounts[0])  # noqa: E501
-        dbevmtx.add_evm_transactions(cursor, [transaction_eth], relevant_address=ethereum_accounts[0])  # noqa: E501
-        dbevmtx.add_evm_transactions(cursor, [transaction_eth_yabir], relevant_address=ethereum_accounts[1])  # noqa: E501
+        dbl2withl1feestx.add_transactions(cursor, [transaction_opt], relevant_address=ethereum_accounts[0])  # noqa: E501
+        dbevmtx.add_transactions(cursor, [transaction_eth], relevant_address=ethereum_accounts[0])
+        dbevmtx.add_transactions(cursor, [transaction_eth_yabir], relevant_address=ethereum_accounts[1])  # noqa: E501
 
-    return evmhash_eth, evmhash_eth_yabir, evmhash_opt
+    return tx_hash_eth, tx_hash_eth_yabir, tx_hash_opt
 
 
 def assert_events_equal(e1: HistoryBaseEntry, e2: HistoryBaseEntry) -> None:
@@ -123,7 +128,7 @@ def test_tx_decode(ethereum_transaction_decoder, database):
     addr1 = '0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12'
     approve_tx_hash = deserialize_evm_tx_hash('0x5cc0e6e62753551313412492296d5e57bea0a9d1ce507cc96aa4aa076c5bde7a')  # noqa: E501
     with database.conn.read_ctx() as cursor:
-        transactions = dbevmtx.get_evm_transactions(
+        transactions = dbevmtx.get_transactions(
             cursor=cursor,
             filter_=EvmTransactionsFilterQuery.make(
                 accounts=[EvmAccount(addr1)],
@@ -142,7 +147,7 @@ def test_tx_decode(ethereum_transaction_decoder, database):
                     assert len(events) == 2
                     assert_events_equal(events[0], EvmEvent(
                         # The no-member is due to https://github.com/PyCQA/pylint/issues/3162
-                        tx_hash=approve_tx_hash,
+                        tx_ref=approve_tx_hash,
                         sequence_index=0,
                         timestamp=1569924574000,
                         location=Location.ETHEREUM,
@@ -157,7 +162,7 @@ def test_tx_decode(ethereum_transaction_decoder, database):
                     ))
                     assert_events_equal(events[1], EvmEvent(
                         # The no-member is due to https://github.com/PyCQA/pylint/issues/3162
-                        tx_hash=approve_tx_hash,
+                        tx_ref=approve_tx_hash,
                         sequence_index=163,
                         timestamp=1569924574000,
                         location=Location.ETHEREUM,
@@ -185,13 +190,13 @@ def test_tx_decode(ethereum_transaction_decoder, database):
 
     with database.user_write() as write_cursor:
         assert write_cursor.execute('SELECT COUNT(*) from history_events').fetchone()[0] == 2
-        assert write_cursor.execute('SELECT COUNT(*) from evm_events_info').fetchone()[0] == 2
+        assert write_cursor.execute('SELECT COUNT(*) from chain_events_info').fetchone()[0] == 2
         assert write_cursor.execute('SELECT COUNT(*) from evm_tx_mappings').fetchone()[0] == 1
 
         dbevents.reset_events_for_redecode(write_cursor, Location.ETHEREUM)
         # after deletion we only keep the customized event
-        assert write_cursor.execute('SELECT event_identifier from history_events').fetchall() == [(events[1].event_identifier,)]  # noqa: E501
-        assert write_cursor.execute('SELECT identifier from evm_events_info').fetchall() == [(events[1].identifier,)]  # noqa: E501
+        assert write_cursor.execute('SELECT group_identifier from history_events').fetchall() == [(events[1].group_identifier,)]  # noqa: E501
+        assert write_cursor.execute('SELECT identifier from chain_events_info').fetchall() == [(events[1].identifier,)]  # noqa: E501
         assert write_cursor.execute('SELECT COUNT(*) from evm_tx_mappings').fetchone()[0] == 0
 
 
@@ -210,41 +215,51 @@ def test_query_and_decode_transactions_works_with_different_chains(
     and the decoding of transactions using an instance of the EVMTransactionDecoder
     only decodes transactions from the correct chain.
     """
-    _, evmhash_eth_yabir, evmhash_opt = _add_transactions_to_db(database, ethereum_accounts)
+    _, tx_hash_eth_yabir, tx_hash_opt = _add_transactions_to_db(database, ethereum_accounts)
     dbevmtx = DBEvmTx(database)
     dbl2withl1feestx = DBL2WithL1FeesTx(database)
     assert len(dbevmtx.get_transaction_hashes_no_receipt(tx_filter_query=None, limit=None)) == 3
     eth_transactions.get_receipts_for_transactions_missing_them(addresses=[ethereum_accounts[0]])
-    assert dbevmtx.get_transaction_hashes_no_receipt(tx_filter_query=None, limit=None) == [evmhash_opt, evmhash_eth_yabir]  # noqa: E501
+    assert dbevmtx.get_transaction_hashes_no_receipt(tx_filter_query=None, limit=None) == [tx_hash_opt, tx_hash_eth_yabir]  # noqa: E501
     optimism_transactions.get_receipts_for_transactions_missing_them()
-    assert dbevmtx.get_transaction_hashes_no_receipt(tx_filter_query=None, limit=None) == [evmhash_eth_yabir]  # noqa: E501
+    assert dbevmtx.get_transaction_hashes_no_receipt(tx_filter_query=None, limit=None) == [tx_hash_eth_yabir]  # noqa: E501
 
-    hashes = dbl2withl1feestx.get_transaction_hashes_not_decoded(chain_id=ChainID.OPTIMISM, limit=None)  # noqa: E501
+    hashes = dbl2withl1feestx.get_transaction_hashes_not_decoded(
+        filter_query=EvmTransactionsNotDecodedFilterQuery.make(chain_id=ChainID.OPTIMISM, limit=None),  # noqa: E501
+    )
     assert len(hashes) == 1
-    hashes = dbevmtx.get_transaction_hashes_not_decoded(chain_id=ChainID.ETHEREUM, limit=None)
+    hashes = dbevmtx.get_transaction_hashes_not_decoded(
+        filter_query=EvmTransactionsNotDecodedFilterQuery.make(chain_id=ChainID.ETHEREUM, limit=None),  # noqa: E501
+    )
     assert len(hashes) == 1
 
     # get the receipts for the last address, which should mark 1 more transaction as not decoded
     eth_transactions.get_receipts_for_transactions_missing_them(addresses=[ethereum_accounts[1]])
-    hashes = dbevmtx.get_transaction_hashes_not_decoded(chain_id=ChainID.ETHEREUM, limit=None)
+    hashes = dbevmtx.get_transaction_hashes_not_decoded(
+        filter_query=EvmTransactionsNotDecodedFilterQuery.make(chain_id=ChainID.ETHEREUM, limit=None),  # noqa: E501
+    )
     assert len(hashes) == 2
 
     # see that setting the spam attribute alone does not count it as decoded
     with database.user_write() as write_cursor:
         write_cursor.execute(
             'INSERT INTO evm_tx_mappings(tx_id, value) VALUES(?, ?)',
-            (3, EVMTX_SPAM),
+            (3, TX_SPAM),
         )
-    hashes = dbevmtx.get_transaction_hashes_not_decoded(chain_id=ChainID.ETHEREUM, limit=None)
+    hashes = dbevmtx.get_transaction_hashes_not_decoded(
+        filter_query=EvmTransactionsNotDecodedFilterQuery.make(chain_id=ChainID.ETHEREUM, limit=None),  # noqa: E501
+    )
     assert len(hashes) == 2
 
     # see that setting the decoded attribute counts properly
     with database.user_write() as write_cursor:
         write_cursor.execute(
             'INSERT INTO evm_tx_mappings(tx_id, value) VALUES(?, ?)',
-            (3, EVMTX_DECODED),
+            (3, TX_DECODED),
         )
-    hashes = dbevmtx.get_transaction_hashes_not_decoded(chain_id=ChainID.ETHEREUM, limit=None)
+    hashes = dbevmtx.get_transaction_hashes_not_decoded(
+        filter_query=EvmTransactionsNotDecodedFilterQuery.make(chain_id=ChainID.ETHEREUM, limit=None),  # noqa: E501
+    )
     assert len(hashes) == 1
 
 
@@ -301,7 +316,7 @@ def test_genesis_remove_address(
     assert get_genesis_events() == [], 'There should be no events at this point'
 
     with database.conn.read_ctx() as cursor:
-        genesis_tx = dbevmtx.get_evm_transactions(
+        genesis_tx = dbevmtx.get_transactions(
             cursor=cursor,
             filter_=EvmTransactionsFilterQuery.make(tx_hash=GENESIS_HASH),
         )
@@ -331,14 +346,14 @@ def test_token_detection_after_decoding(
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0xf4ae64c5c4fb632D0e0D77097b957941c399d26e']])
 def test_eip7702_transaction(ethereum_transaction_decoder, ethereum_accounts):
-    evmhash = deserialize_evm_tx_hash('0x42402dcf6658abaf2c47593a7ebe1264fb2f331de918239d1717a7a9d2996abf')  # noqa: E501
+    tx_hash = deserialize_evm_tx_hash('0x42402dcf6658abaf2c47593a7ebe1264fb2f331de918239d1717a7a9d2996abf')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=ethereum_transaction_decoder.evm_inquirer,
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
     )
     expected_events = [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=(timestamp := TimestampMS(1746615035000)),
             location=Location.ETHEREUM,
@@ -350,8 +365,20 @@ def test_eip7702_transaction(ethereum_transaction_decoder, ethereum_accounts):
             counterparty=CPT_GAS,
             notes=f'Burn {gas_amount} ETH for gas',
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=1,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.INFORMATIONAL,
+            event_subtype=HistoryEventSubType.MESSAGE,
+            asset=A_ETH,
+            amount=ZERO,
+            location_label=user_address,
+            address=user_address,
+            notes='Message: hello!',
+        ), EvmEvent(
+            tx_ref=tx_hash,
+            sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
             event_type=HistoryEventType.INFORMATIONAL,
@@ -370,14 +397,14 @@ def test_eip7702_transaction(ethereum_transaction_decoder, ethereum_accounts):
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0x22d094Fb289DD45B02490F97b015891FD9d4C145']])
 def test_eip7702_revocation_transaction(ethereum_transaction_decoder, ethereum_accounts):
-    evmhash = deserialize_evm_tx_hash('0x8419cf2c21e755a9a3e916749b8356beca49d85fb4fc31f7e5fbb7f36d21fe62')  # noqa: E501
+    tx_hash = deserialize_evm_tx_hash('0x8419cf2c21e755a9a3e916749b8356beca49d85fb4fc31f7e5fbb7f36d21fe62')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(
         evm_inquirer=ethereum_transaction_decoder.evm_inquirer,
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
     )
     expected_events = [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=(timestamp := TimestampMS(1746793655000)),
             location=Location.ETHEREUM,
@@ -389,7 +416,7 @@ def test_eip7702_revocation_transaction(ethereum_transaction_decoder, ethereum_a
             counterparty=CPT_GAS,
             notes=f'Burn {gas_amount} ETH for gas',
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -404,3 +431,40 @@ def test_eip7702_revocation_transaction(ethereum_transaction_decoder, ethereum_a
         ),
     ]
     assert events == expected_events
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0xC5d494aa0CBabD7871af0Ef122fB410Fa25c3379']])
+def test_contract_deployment(ethereum_transaction_decoder, ethereum_accounts):
+    tx_hash = deserialize_evm_tx_hash('0x36d18e69806af47ea9469156917af9e0278fa315256d08a566023dce5df08c70')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(
+        evm_inquirer=ethereum_transaction_decoder.evm_inquirer,
+        tx_hash=tx_hash,
+    )
+    assert events == [
+        EvmEvent(
+            tx_ref=tx_hash,
+            sequence_index=0,
+            timestamp=(timestamp := TimestampMS(1756420055000)),
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.SPEND,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_ETH,
+            amount=FVal(gas_amount := '0.001220261148478126'),
+            location_label=(user_address := '0xC5d494aa0CBabD7871af0Ef122fB410Fa25c3379'),
+            counterparty=CPT_GAS,
+            notes=f'Burn {gas_amount} ETH for gas',
+        ), EvmEvent(
+            tx_ref=tx_hash,
+            sequence_index=1,
+            timestamp=timestamp,
+            location=Location.ETHEREUM,
+            event_type=HistoryEventType.DEPLOY,
+            event_subtype=HistoryEventSubType.NONE,
+            asset=A_ETH,
+            amount=ZERO,
+            location_label=user_address,
+            address=(contract_address := '0x3337286E850cf01B8A8B6094574f0dd6a2108B16'),
+            notes=f'Deploy a new contract at {contract_address}',
+        ),
+    ]

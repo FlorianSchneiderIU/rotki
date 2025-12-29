@@ -8,7 +8,8 @@ import {
   isValidBchAddress,
   isValidBtcAddress,
   isValidEthAddress,
-  isValidTxHash,
+  isValidEvmTxHash,
+  isValidSolanaAddress,
 } from '@rotki/common';
 import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useScramble } from '@/composables/scramble';
@@ -20,6 +21,7 @@ export const NoteType = {
   AMOUNT: 'amount',
   BLOCK: 'block',
   FLAG: 'flag',
+  MERCHANT_CODE: 'merchant_code',
   TX: 'transaction',
   URL: 'url',
   WORD: 'word',
@@ -37,13 +39,14 @@ export interface NoteFormat {
   chain?: Blockchain;
   showHashLink?: boolean;
   countryCode?: string;
+  merchantCode?: string;
 }
 
 interface FormatNoteParams {
   notes: MaybeRef<string>;
   amount?: MaybeRef<BigNumber | BigNumber[] | undefined>;
   assetId?: MaybeRef<string>;
-  noTxHash?: MaybeRef<boolean>;
+  noTxRef?: MaybeRef<boolean>;
   validatorIndex?: MaybeRef<number | undefined>;
   blockNumber?: MaybeRef<number | undefined>;
   counterparty?: MaybeRef<string | undefined>;
@@ -113,33 +116,19 @@ export function useHistoryEventNote(): UseHistoryEventsNoteReturn {
   }
 
   function findAndScrambleIBAN(notes: string): string {
-    // Regex pattern to match IBANs in the text
     const ibanPattern = /\b[A-Z]{2}\d{2}(?:\s?[\dA-Z]{1,4}){1,7}\b/g;
-
-    // Find all IBAN matches
     const ibanMatches = notes.match(ibanPattern);
-
     if (ibanMatches) {
       ibanMatches.filter(uniqueStrings)?.forEach((iban) => {
-        const ibanGroupingPattern = /^([A-Z]{2})(\d{2})\s?([\d\sA-Z]{1,30})$/;
-        const groups = iban.match(ibanGroupingPattern);
-
+        const groups = iban.match(/^([A-Z]{2})(\d{2})\s?([\d\sA-Z]{1,30})$/);
         if (groups) {
-          const checkDigit = groups[2];
-          const scrambledCheckDigit = scrambleIdentifier(checkDigit, 10, 99);
-
-          // Extract and split the BBAN part into individual groups by spaces
-          const bban = groups[3].trim();
-          const bbanGroups = bban.split(/\s+/);
-
+          const scrambledCheckDigit = scrambleIdentifier(groups[2], 10, 99);
+          const bbanGroups = groups[3].trim().split(/\s+/);
           const scrambledBbanNumbers = bbanGroups.map(item => scrambleIdentifier(item, 1000, 9999));
-          const formatted = `XX${scrambledCheckDigit} ${scrambledBbanNumbers.join(' ')}`;
-
-          notes = notes.replace(new RegExp(iban, 'g'), formatted);
+          notes = notes.replace(new RegExp(iban, 'g'), `XX${scrambledCheckDigit} ${scrambledBbanNumbers.join(' ')}`);
         }
       });
     }
-
     return notes;
   }
 
@@ -166,7 +155,7 @@ export function useHistoryEventNote(): UseHistoryEventsNoteReturn {
     counterparty,
     extraData,
     notes,
-    noTxHash,
+    noTxRef,
     validatorIndex,
   }: FormatNoteParams): ComputedRef<NoteFormat[]> => computed<NoteFormat[]>(() => {
     const asset = get(assetSymbol(assetId, {
@@ -235,7 +224,7 @@ export function useHistoryEventNote(): UseHistoryEventsNoteReturn {
 
       const isValidBch = isValidBchAddress(word);
 
-      if (isValidEthAddress(word) || isValidBtcAddress(word) || isValidBch) {
+      if (isValidEthAddress(word) || isValidBtcAddress(word) || isValidBch || isValidSolanaAddress(word)) {
         addLeadingPunctuation();
         formats.push({
           address: isValidBch ? word.replace(/^bitcoincash:/, '') : word,
@@ -246,7 +235,7 @@ export function useHistoryEventNote(): UseHistoryEventsNoteReturn {
       }
 
       // Check if the word is Tx Hash
-      if (isValidTxHash(word) && !get(noTxHash)) {
+      if (isValidEvmTxHash(word) && !get(noTxRef)) {
         addLeadingPunctuation();
         formats.push({
           address: word,
@@ -372,16 +361,20 @@ export function useHistoryEventNote(): UseHistoryEventsNoteReturn {
         }
       }
 
-      // Check if the word is a country flag
-      const countryFlagRegex = /:country:([A-Z]{2}):/;
-      const countryFlagMatch = word.match(countryFlagRegex);
-      if (countryFlagMatch && counterpartyVal === 'gnosis_pay') {
-        addLeadingPunctuation();
-        formats.push({
-          countryCode: countryFlagMatch[1]?.toLowerCase(),
-          type: NoteType.FLAG,
-        });
-        return addTrailingPunctuation();
+      // Check Gnosis Pay specific patterns (country flag and merchant code)
+      if (counterpartyVal === 'gnosis_pay') {
+        const countryFlagMatch = word.match(/:country:([A-Z]{2}):/);
+        if (countryFlagMatch) {
+          addLeadingPunctuation();
+          formats.push({ countryCode: countryFlagMatch[1]?.toLowerCase(), type: NoteType.FLAG });
+          return addTrailingPunctuation();
+        }
+        const merchantCodeMatch = word.match(/:merchant_code:(\d+):/);
+        if (merchantCodeMatch) {
+          addLeadingPunctuation();
+          formats.push({ merchantCode: merchantCodeMatch[1], type: NoteType.MERCHANT_CODE });
+          return addTrailingPunctuation();
+        }
       }
 
       addLeadingPunctuation();

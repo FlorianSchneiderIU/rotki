@@ -1,29 +1,19 @@
-import type { RefreshTransactionsParams, TransactionSyncParams } from './types';
-import { groupBy } from 'es-toolkit';
-import { useHistoryEventsApi } from '@/composables/api/history/events';
+import type { RefreshTransactionsParams } from './types';
+import type { Exchange } from '@/types/exchanges';
+import type { ChainAddress } from '@/types/history/events';
 import { useHistoryTransactionDecoding } from '@/composables/history/events/tx/decoding';
 import { useRefreshHandlers } from '@/composables/history/events/tx/refresh-handlers';
 import { useHistoryTransactionAccounts } from '@/composables/history/events/tx/use-history-transaction-accounts';
+import { useTransactionSync } from '@/composables/history/events/tx/use-transaction-sync';
 import { useSupportedChains } from '@/composables/info/chains';
 import { useStatusUpdater } from '@/composables/status';
 import { useHistoryStore } from '@/store/history';
+import { useEventsQueryStatusStore } from '@/store/history/query-status/events-query-status';
 import { useTxQueryStatusStore } from '@/store/history/query-status/tx-query-status';
 import { useHistoryRefreshStateStore } from '@/store/history/refresh-state';
-import { useNotificationsStore } from '@/store/notifications';
-import { useTaskStore } from '@/store/tasks';
-import {
-  type BitcoinChainAddress,
-  type BlockchainAddress,
-  type EvmChainAddress,
-  TransactionChainType,
-  type TransactionRequestPayload,
-} from '@/types/history/events';
+import { useSessionSettingsStore } from '@/store/settings/session';
 import { OnlineHistoryEventsQueryType } from '@/types/history/events/schemas';
 import { Section, Status } from '@/types/status';
-import { BackendCancelledTaskError, type TaskMeta } from '@/types/task';
-import { TaskType } from '@/types/task-type';
-import { isTaskCancelled } from '@/utils';
-import { awaitParallelExecution } from '@/utils/await-parallel-execution';
 import { LimitedParallelizationQueue } from '@/utils/limited-parallelization-queue';
 import { logger } from '@/utils/logging';
 
@@ -32,161 +22,30 @@ interface UseRefreshTransactionsReturn {
 }
 
 export function useRefreshTransactions(): UseRefreshTransactionsReturn {
-  const { t } = useI18n({ useScope: 'global' });
-  const { notify } = useNotificationsStore();
   const queue = new LimitedParallelizationQueue(1);
-  const { fetchTransactionsTask } = useHistoryEventsApi();
 
-  const { awaitTask, isTaskRunning } = useTaskStore();
-  const { initializeQueryStatus, removeQueryStatus } = useTxQueryStatusStore();
-  const { getChain, getChainName, isEvmLikeChains } = useSupportedChains();
-  const { getBitcoinAccounts, getEvmAccounts, getEvmLikeAccounts } = useHistoryTransactionAccounts();
-  const { fetchDisabled, resetStatus, setStatus } = useStatusUpdater(Section.HISTORY);
-  const {
-    decodeTransactionsTask,
-    fetchUndecodedTransactionsBreakdown,
-    fetchUndecodedTransactionsStatus,
-  } = useHistoryTransactionDecoding();
+  const { initializeQueryStatus, resetQueryStatus } = useTxQueryStatusStore();
+  const { initializeQueryStatus: initializeExchangeEventsQueryStatus, resetQueryStatus: resetExchangesQueryStatus } = useEventsQueryStatusStore();
+  const { getAllAccounts } = useHistoryTransactionAccounts();
+  const { fetchDisabled, isFirstLoad, resetStatus, setStatus } = useStatusUpdater(Section.HISTORY);
+  const { fetchUndecodedTransactionsBreakdown, fetchUndecodedTransactionsStatus } = useHistoryTransactionDecoding();
   const { resetUndecodedTransactionsStatus } = useHistoryStore();
+  const { isDecodableChains } = useSupportedChains();
 
-  const getChainInfo = (
-    account: EvmChainAddress | BitcoinChainAddress,
-    type: TransactionChainType,
-  ): { chainName: string; blockchain: string } => {
-    if (type === TransactionChainType.BITCOIN && 'chain' in account) {
-      const chainName = account.chain;
-      return { blockchain: chainName, chainName };
-    }
-    else if ('evmChain' in account) {
-      const chainName = account.evmChain;
-      return { blockchain: getChain(chainName), chainName };
-    }
-    else {
-      throw new Error('Invalid account type');
-    }
-  };
-
-  const syncTransactionTask = async (
-    account: EvmChainAddress | BitcoinChainAddress,
-    type: TransactionChainType,
-  ): Promise<void> => {
-    const taskType = TaskType.TX;
-    const address = account.address;
-    const { blockchain, chainName } = getChainInfo(account, type);
-
-    const blockchainAccount: BlockchainAddress = {
-      address,
-      blockchain,
-    };
-    const defaults: TransactionRequestPayload = {
-      accounts: [blockchainAccount],
-    };
-
-    const { taskId } = await fetchTransactionsTask(defaults);
-    const taskMeta = {
-      address,
-      chain: chainName,
-      description: t('actions.transactions.task.description', {
-        address,
-        chain: get(getChainName(blockchain)),
-      }),
-      title: t('actions.transactions.task.title'),
-      type,
-    };
-
-    try {
-      await awaitTask<boolean, TaskMeta>(taskId, taskType, taskMeta, true);
-    }
-    catch (error: any) {
-      if (error instanceof BackendCancelledTaskError) {
-        logger.debug(error);
-        removeQueryStatus(account);
-      }
-      else if (!isTaskCancelled(error)) {
-        notify({
-          display: true,
-          message: t('actions.transactions.error.description', {
-            address,
-            chain: get(getChainName(blockchain)),
-            error,
-          }),
-          title: t('actions.transactions.error.title'),
-        });
-      }
-    }
-    finally {
-      setStatus(isTaskRunning(taskType, { type }) ? Status.REFRESHING : Status.LOADED);
-    }
-  };
-
-  const syncAndReDecodeEvents = async (
-    chain: string,
-    params: TransactionSyncParams,
-  ): Promise<void> => {
-    const { accounts, type } = params;
-    logger.debug(`syncing ${chain} transactions for ${accounts.length} addresses`);
-    const isBitcoin = type === TransactionChainType.BITCOIN;
-
-    const getAccountKey = (item: any): string => isBitcoin ? item.chain + item.address : item.evmChain + item.address;
-
-    await awaitParallelExecution(
-      accounts,
-      getAccountKey,
-      async item => syncTransactionTask(item, type),
-      2,
-    );
-
-    if (!isBitcoin) {
-      logger.debug(`queued ${chain} transactions for decoding`);
-      queue.queue(chain, async () => {
-        await decodeTransactionsTask(chain, type);
-        logger.debug(`finished decoding ${chain} transactions`);
-      });
-    }
-  };
-
+  const { syncTransactionsByChains } = useTransactionSync();
   const { queryAllExchangeEvents, queryOnlineEvent } = useRefreshHandlers();
-
-  const refreshTransactionsHandler = async (
-    params: TransactionSyncParams,
-  ): Promise<void> => {
-    const { accounts, type } = params;
-    logger.debug(`refreshing ${type} transactions for ${accounts.length} addresses`);
-    const isBitcoin = type === TransactionChainType.BITCOIN;
-
-    const getChainKey = (account: any): string => isBitcoin ? account.chain : account.evmChain;
-
-    const groupedByChains = Object.entries(
-      groupBy(accounts, getChainKey),
-    ).map(([chain, data]) => ({
-      chain,
-      data,
-    }));
-
-    await awaitParallelExecution(
-      groupedByChains,
-      item => item.chain,
-      async item => syncAndReDecodeEvents(item.chain, { accounts: item.data, type }),
-      2,
-    );
-
-    if (!isBitcoin) {
-      queue.queue(type, async () => fetchUndecodedTransactionsBreakdown(type));
-    }
-
-    if (accounts.length > 0)
-      setStatus(isTaskRunning(TaskType.TX, { type }) ? Status.REFRESHING : Status.LOADED);
-    logger.debug(`finished refreshing ${type} transactions for ${accounts.length} addresses`);
-  };
 
   const {
     addPendingAccounts,
+    addPendingExchanges,
     finishRefresh,
     getNewAccounts,
+    getNewExchanges,
     getPendingAccountsForRefresh,
+    getPendingExchangesForRefresh,
     hasPendingAccounts,
+    hasPendingExchanges,
     isRefreshing,
-    shouldRefreshAll,
     startRefresh,
   } = useHistoryRefreshStateStore();
 
@@ -195,114 +54,91 @@ export function useRefreshTransactions(): UseRefreshTransactionsReturn {
     const { accounts, exchanges, queries } = payload;
     const fullRefresh = Object.keys(payload).length === 0;
 
-    // Get current accounts first to check if we have new ones
-    let currentEvmAccounts: EvmChainAddress[] = [];
-    let currentEvmLikeAccounts: EvmChainAddress[] = [];
-    let currentBitcoinAccounts: BitcoinChainAddress[] = [];
+    const { connectedExchanges } = storeToRefs(useSessionSettingsStore());
 
-    if (accounts && accounts.length > 0) {
-      // Separate accounts by type
-      accounts.forEach((account) => {
-        if ('evmChain' in account) {
-          if (isEvmLikeChains(account.evmChain)) {
-            currentEvmLikeAccounts.push(account);
-          }
-          else {
-            currentEvmAccounts.push(account);
-          }
-        }
-        else if ('chain' in account) {
-          currentBitcoinAccounts.push(account);
-        }
-      });
-    }
-    else if (fullRefresh) {
-      // Always get all accounts on full refresh to check for new ones
-      currentEvmAccounts = getEvmAccounts(chains);
-      currentEvmLikeAccounts = getEvmLikeAccounts(chains);
-      currentBitcoinAccounts = getBitcoinAccounts(chains);
-    }
+    // Determine initial accounts to check
+    const allCurrentAccounts = accounts?.length
+      ? accounts
+      : fullRefresh
+        ? getAllAccounts(chains)
+        : [];
 
-    const allCurrentAccounts = [...currentEvmAccounts, ...currentEvmLikeAccounts, ...currentBitcoinAccounts];
     const newAccountsList = getNewAccounts(allCurrentAccounts);
     const hasNewAccounts = newAccountsList.length > 0;
 
-    // Skip refresh only if fetchDisabled returns true AND there are no new accounts
-    if (fetchDisabled(userInitiated) && !hasNewAccounts) {
+    // Check for new exchanges
+    const allCurrentExchanges = exchanges || get(connectedExchanges);
+    const newExchangesList = getNewExchanges(allCurrentExchanges);
+    const hasNewExchanges = newExchangesList.length > 0;
+
+    // Skip refresh only if fetchDisabled returns true AND there are no new accounts or exchanges
+    if (fetchDisabled(userInitiated) && !hasNewAccounts && !hasNewExchanges)
       return;
-    }
 
-    // Use the already separated accounts
-    let evmAccounts = currentEvmAccounts;
-    let evmLikeAccounts = currentEvmLikeAccounts;
-    let bitcoinAccounts = currentBitcoinAccounts;
+    setStatus(isFirstLoad() ? Status.LOADING : Status.REFRESHING);
 
-    // Check if we need to refresh based on new accounts
-    const allAccounts = allCurrentAccounts;
-    // If refresh is already running, add new accounts to pending
+    // If refresh is already running, add new accounts/exchanges to pending
     if (get(isRefreshing)) {
-      const newAccounts = getNewAccounts(allAccounts);
-      if (newAccounts.length > 0) {
-        addPendingAccounts(newAccounts);
-      }
+      if (newAccountsList.length > 0)
+        addPendingAccounts(newAccountsList);
+      if (newExchangesList.length > 0)
+        addPendingExchanges(newExchangesList);
       return;
     }
 
-    // Check if we should refresh all accounts (includes new accounts check)
-    if (fullRefresh && shouldRefreshAll(allAccounts)) {
-      // Reset to refresh all accounts including new ones
-      evmAccounts = getEvmAccounts(chains);
-      evmLikeAccounts = getEvmLikeAccounts(chains);
-      bitcoinAccounts = getBitcoinAccounts(chains);
+    // Determine final accounts and exchanges to refresh
+    let accountsToRefresh: ChainAddress[] = [];
+    let exchangesToRefresh: Exchange[] = [];
+
+    if (fullRefresh) {
+      // Only refresh all accounts if there are new accounts
+      // If only exchanges are new, don't refresh accounts
+      if (hasNewAccounts || userInitiated) {
+        accountsToRefresh = getAllAccounts(chains);
+      }
+      exchangesToRefresh = get(connectedExchanges);
     }
-    else if (hasNewAccounts) {
-      // If we have new accounts (either full or partial refresh), refresh only those
-      evmAccounts = [];
-      evmLikeAccounts = [];
-      bitcoinAccounts = [];
-      newAccountsList.forEach((account) => {
-        if ('evmChain' in account) {
-          if (isEvmLikeChains(account.evmChain)) {
-            evmLikeAccounts.push(account);
-          }
-          else {
-            evmAccounts.push(account);
-          }
-        }
-        else if ('chain' in account) {
-          bitcoinAccounts.push(account);
-        }
-      });
+    else if (hasNewAccounts || hasNewExchanges) {
+      if (hasNewAccounts)
+        accountsToRefresh = newAccountsList;
+      if (hasNewExchanges)
+        exchangesToRefresh = newExchangesList;
+    }
+    else if (accounts?.length || exchanges) {
+      accountsToRefresh = accounts || [];
+      exchangesToRefresh = exchanges || [];
     }
 
-    const accountsToRefresh = [...evmAccounts, ...evmLikeAccounts, ...bitcoinAccounts];
-    if (accountsToRefresh.length > 0) {
-      startRefresh(accountsToRefresh);
-      setStatus(Status.REFRESHING);
-      initializeQueryStatus(evmAccounts);
-      resetUndecodedTransactionsStatus();
+    // Get decodable accounts for query status initialization
+    const decodableAccounts = accountsToRefresh.filter(account => isDecodableChains(account.chain));
+
+    if (accountsToRefresh.length > 0 || exchangesToRefresh.length > 0) {
+      startRefresh(accountsToRefresh, exchangesToRefresh);
+      if (accountsToRefresh.length > 0) {
+        initializeQueryStatus(decodableAccounts);
+        resetUndecodedTransactionsStatus();
+      }
+    }
+    else {
+      resetQueryStatus();
     }
 
     try {
-      if (!disableEvmEvents && (fullRefresh || evmAccounts.length > 0))
+      if (fullRefresh || decodableAccounts.length > 0)
         await fetchUndecodedTransactionsStatus();
 
       const asyncOperations: Promise<void>[] = [];
 
-      if (evmAccounts.length > 0) {
-        asyncOperations.push(refreshTransactionsHandler({ accounts: evmAccounts, type: TransactionChainType.EVM }));
-      }
+      // Sync transactions for all accounts (type is derived from chain inside syncTransactionsByChains)
+      if (accountsToRefresh.length > 0)
+        asyncOperations.push(syncTransactionsByChains(accountsToRefresh));
 
-      if (bitcoinAccounts.length > 0) {
-        asyncOperations.push(refreshTransactionsHandler({ accounts: bitcoinAccounts, type: TransactionChainType.BITCOIN }));
-      }
-
-      if (evmLikeAccounts.length > 0) {
-        asyncOperations.push(refreshTransactionsHandler({ accounts: evmLikeAccounts, type: TransactionChainType.EVMLIKE }));
-      }
-
-      if (fullRefresh || disableEvmEvents || exchanges) {
+      if (fullRefresh || exchanges) {
+        initializeExchangeEventsQueryStatus(exchanges || get(connectedExchanges));
         asyncOperations.push(queryAllExchangeEvents(exchanges));
+      }
+      else {
+        resetExchangesQueryStatus();
       }
 
       const queriesToExecute: OnlineHistoryEventsQueryType[] | undefined = fullRefresh || disableEvmEvents
@@ -320,8 +156,10 @@ export function useRefreshTransactions(): UseRefreshTransactionsReturn {
         }
       }
 
-      if (!disableEvmEvents && evmAccounts.length > 0)
-        queue.queue('undecoded-transactions-status-final', async () => fetchUndecodedTransactionsStatus());
+      queue.queue('fetch-undecoded-transactions-breakdown', fetchUndecodedTransactionsBreakdown);
+
+      if (decodableAccounts.length > 0)
+        queue.queue('undecoded-transactions-status-final', fetchUndecodedTransactionsStatus);
     }
     catch (error) {
       logger.error(error);
@@ -329,22 +167,27 @@ export function useRefreshTransactions(): UseRefreshTransactionsReturn {
     }
     finally {
       finishRefresh();
+      setStatus(Status.LOADED);
     }
 
-    // After refresh is complete, check if there are pending accounts to refresh
-    if (!get(hasPendingAccounts))
+    // After refresh is complete, check if there are pending accounts or exchanges to refresh
+    const hasPending = get(hasPendingAccounts) || get(hasPendingExchanges);
+    if (!hasPending)
       return;
 
     const pendingAccounts = getPendingAccountsForRefresh();
-    // Recursively call refreshTransactions to handle pending accounts
+    const pendingExchanges = getPendingExchangesForRefresh();
+
+    // Recursively call refreshTransactions to handle pending accounts/exchanges
     setTimeout(() => {
       refreshTransactions({
         ...params,
         payload: {
           ...params.payload,
-          accounts: pendingAccounts,
+          accounts: pendingAccounts.length > 0 ? pendingAccounts : undefined,
+          exchanges: pendingExchanges.length > 0 ? pendingExchanges : undefined,
         },
-      }).catch(error => logger.error('Failed to refresh pending accounts', error));
+      }).catch(error => logger.error('Failed to refresh pending accounts/exchanges', error));
     }, 100);
   };
 

@@ -9,6 +9,7 @@ const props = withDefaults(defineProps<{
   location: string;
   disabled?: boolean;
   timestamp: number;
+  solana?: boolean;
   type: 'receive' | 'spend' | 'fee';
 }>(), {
   disabled: false,
@@ -101,6 +102,7 @@ defineExpose({
       :type="type"
       :index="0"
       single
+      :solana="solana"
     />
 
     <template
@@ -114,7 +116,9 @@ defineExpose({
         :timestamp="timestamp"
         :location="location"
         :index="index"
+        :disabled="disabled"
         :single="modelValue.length === 1"
+        :solana="solana"
         @remove="remove($event)"
       />
 

@@ -34,9 +34,6 @@
       }
     },
     "edit_tooltip": "Editar cuenta",
-    "headers": {
-      "usd_value": "{symbol} valor"
-    },
     "refresh_tooltip": "Actualizar los saldos de {blockchain} ignorando cualquier entrada en caché"
   },
   "account_form": {
@@ -48,7 +45,7 @@
     "labels": {
       "addresses": "Direcciones",
       "addresses_entries": "sin entradas | {count} entrada única | {count} entradas únicas",
-      "addresses_hint": "Inserte múltiples direcciones separadas por comas",
+      "addresses_hint": "Inserte múltiples direcciones separadas por comas o saltos de línea",
       "blockchain": "Elija cadena de bloques | Elija cadenas de bloques",
       "btc": {
         "derivation_path": "Ruta de Derivación",
@@ -669,8 +666,7 @@
     },
     "form": {
       "labels": {
-        "address": "Address",
-        "for_all_chain": "Save this name for all chains"
+        "address": "Address"
       },
       "no_suggestions_available": "No Suggestions Available",
       "validation": {
@@ -764,8 +760,7 @@
   "asset_locations": {
     "header": {
       "percentage": "Percentage",
-      "validator": "Validator Index | Public Key",
-      "value": "{symbol} value"
+      "validator": "Validator Index | Public Key"
     },
     "title": "Asset Locations"
   },
@@ -785,7 +780,6 @@
       "delete_error": "No se ha podido eliminar la asignación: {message}",
       "edit_error": "No se ha podido editar la asignación: {message}",
       "edit_title": "Editar la asignación",
-      "exchange": "Intercambio",
       "filter_by_exchange": "Filtrar por bolsa",
       "filter_by_location_symbol": "Filtrar por símbolo de activo",
       "form": {
@@ -859,10 +853,6 @@
       "title": "Reset assets database"
     },
     "skip_notification": "Don't notify me until the next update",
-    "success": {
-      "description": "The asset database has been successfully updated to version {remoteVersion}. You will now need to re-login to apply the changes",
-      "title": "Asset database update"
-    },
     "title": "A supported asset update is available",
     "total_changes": "This update contains {changes} asset changes.",
     "up_to_version": "Only update up to version"
@@ -987,8 +977,8 @@
     "advanced": "Advanced",
     "config_file_disabled": "This parameter is already set in the rotki_config.json",
     "confirm": {
-      "message": "Are you sure you want to rest the backend settings to default?",
-      "title": "Rest backend settings"
+      "message": "Are you sure you want to reset the backend settings to default?",
+      "title": "Reset backend settings"
     },
     "data_directory": {
       "select": "Select where rotki will store the data"
@@ -1130,6 +1120,7 @@
     "details": "Detalles",
     "entry_type": "Tipo de entrada",
     "events": "Eventos",
+    "exchange": "Intercambio",
     "fee": "Fee",
     "here": "here",
     "ignored_in_accounting": "Ignored in Accounting",
@@ -1515,9 +1506,6 @@
     "subtitle": "These are the supported date formatting options",
     "title": "Date Format"
   },
-  "date_time_picker": {
-    "limit_now": "Cannot use future date"
-  },
   "ens_names": {
     "task": {
       "title": "Querying ENS names"
@@ -1597,7 +1585,6 @@
       "activate_tooltip": "Edit the api keys for the exchange.",
       "deactivate_tooltip": "Cancel the edit of the api keys for the exchange."
     },
-    "exchange": "Exchange",
     "name": {
       "non_empty": "The name field cannot be empty."
     }
@@ -1797,7 +1784,6 @@
     },
     "labels": {
       "btc_derivation_gap": "BTC derivation gap limit",
-      "chains_to_skip_detection": "Cadenas EVM para las que omitir la detección automática",
       "date_display_format": "Date display format",
       "date_input_format": "Date input format",
       "treat_eth2_as_eth": "Should treat ETH2 (Staked ETH) as ETH"
@@ -1858,7 +1844,7 @@
       },
       "decimal_separator": {
         "error": "Error setting decimal separator",
-        "success": "Decimal separator set to {decimalSeparator}"
+        "success": "Decimal separator set to \"{decimalSeparator}\""
       },
       "floating_precision": {
         "error": "Error setting floating precision to {precision}",
@@ -1867,7 +1853,7 @@
       },
       "thousand_separator": {
         "error": "Error setting thousand separator",
-        "success": "Thousand separator set to {thousandSeparator}"
+        "success": "Thousand separator set to \"{thousandSeparator}\""
       },
       "treat_eth2_as_eth": {
         "error": "Error change setting for treat ETH2 (Staked ETH) as ETH"
@@ -2301,7 +2287,6 @@
       "non_fungible_balances": "Balances en NFT"
     },
     "dashboard": "Dashboard",
-    "defi": "DeFi",
     "defi_sub": {
       "airdrops": "Airdrops"
     },
@@ -2783,9 +2768,7 @@
     "loading_hint": "Your report generation might take a while depending on the amount of trades and actions you performed during the selected period.",
     "loading_message": "Please wait while your report is generated...",
     "report_period": "Report starting from {start} to {end}",
-    "settings_tooltip": "Open the accounting settings",
-    "upgrade": "{processed} total events have been processed starting from {start}.",
-    "upgrade2": "The limit of the free version has been reached. To get the full report please upgrade to {link}"
+    "settings_tooltip": "Open the accounting settings"
   },
   "profit_loss_reports": {
     "columns": {
@@ -3225,11 +3208,6 @@
     "messages": "A new version of rotki is available. See {releaseNotes}.",
     "release_notes": "release notes",
     "restart": "rotki will restart in a moment to apply the update."
-  },
-  "upgrade_row": {
-    "events": "Processed {limit} out of {total} {label} from {from} until {to}. To view more please upgrade to {link}",
-    "rotki_premium": "rotki Premium",
-    "upgrade": "Displaying {limit} out of {total} {label}. To view more please upgrade to {link}"
   },
   "user_dropdown": {
     "change_privacy_mode": {

@@ -1,19 +1,19 @@
 from typing import Any, Final
 
+from rotkehlchen.assets.utils import token_normalized_value_decimals
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.ethereum.modules.digixdao.constants import (
     A_DGD,
     CPT_DIGIXDAO,
     DIGIX_DGD_ETH_REFUND_CONTRACT,
 )
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.types import ChecksumEvmAddress
@@ -22,12 +22,12 @@ from rotkehlchen.utils.misc import bytes_to_address
 REFUND_TOPIC: Final = b's\xf0J\xf9\xdc\xc5\x82\xa9#\xec\x15\xd3\xee\xa9\x90\xfe4\xad\xab\xff\xf2\x87\x9e(\xd4Er\xe0\x1aT\xab\xb6'  # noqa: E501
 
 
-class DigixdaoDecoder(DecoderInterface):
+class DigixdaoDecoder(EvmDecoderInterface):
 
-    def _decode_dgd_eth_refund(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_dgd_eth_refund(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode ETH refund for DGD tokens."""
         if context.tx_log.topics[0] != REFUND_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         user_address = bytes_to_address(context.tx_log.topics[1])
         dgd_amount = token_normalized_value_decimals(
@@ -67,7 +67,7 @@ class DigixdaoDecoder(DecoderInterface):
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events,
         )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         return {DIGIX_DGD_ETH_REFUND_CONTRACT: (self._decode_dgd_eth_refund,)}

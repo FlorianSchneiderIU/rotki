@@ -6,11 +6,13 @@ on:
       - master
       - develop
       - bugfixes
+      - feature/**
   push:
     branches:
       - master
       - develop
       - bugfixes
+      - feature/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -38,7 +40,7 @@ jobs:
           persist-credentials: false
 
       - name: Run check action
-        uses: rotki/action-job-checker@v3
+        uses: rotki/action-job-checker@v4
         id: checker
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -49,6 +51,7 @@ jobs:
           backend_paths: |
             rotkehlchen
             pyproject.toml
+            .github/workflows/task_backend_tests.yml
           frontend_paths: |
             frontend
 
@@ -82,15 +85,15 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: 'javascript'
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:javascript"
 
@@ -101,8 +104,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      CYPRESS_INSTALL_BINARY: 0
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -111,7 +112,7 @@ jobs:
           persist-credentials: false
 
       - name: Load env
-        uses: rotki/action-env@v2
+        uses: rotki/action-env@v3
         with:
           env_file: .github/.env.ci
 
@@ -166,7 +167,7 @@ jobs:
           persist-credentials: false
 
       - name: Load env
-        uses: rotki/action-env@v2
+        uses: rotki/action-env@v3
         with:
           env_file: .github/.env.ci
 
@@ -205,15 +206,15 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: 'python'
 
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:python"
 
@@ -262,7 +263,7 @@ jobs:
           persist-credentials: false
 
       - name: Load env
-        uses: rotki/action-env@v2
+        uses: rotki/action-env@v3
         with:
           env_file: .github/.env.ci
 
@@ -278,6 +279,29 @@ jobs:
           enable-cache: true
           version: ${{ env.UV_VERSION }}
           cache-dependency-glob: "uv.lock"
+
+      - name: Cache find-duplicate-constants binary
+        id: fdc-cache
+        uses: actions/cache@v4
+        with:
+          path: tools/find-duplicate-constants/target/release/find-duplicate-constants
+          key: ${{ runner.os }}-find-duplicate-constants-${{ hashFiles('tools/find-duplicate-constants/Cargo.lock', 'tools/find-duplicate-constants/Cargo.toml', 'tools/find-duplicate-constants/src/**') }}
+
+      - name: Setup Rust
+        if: steps.fdc-cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        if: steps.fdc-cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          workspaces: tools/find-duplicate-constants
+
+      - name: Build find-duplicate-constants
+        if: steps.fdc-cache.outputs.cache-hit != 'true'
+        working-directory: ./tools/find-duplicate-constants
+        run: cargo build --release
 
       - name: Install dependencies
         run: uv sync --group lint
@@ -304,6 +328,7 @@ jobs:
     uses: ./.github/workflows/task_e2e_tests.yml
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
     permissions:
       contents: read
       actions: write

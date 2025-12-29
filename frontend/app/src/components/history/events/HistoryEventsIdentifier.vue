@@ -18,33 +18,35 @@ const { event } = toRefs(props);
 
 const { is2xlAndUp } = useBreakpoint();
 
+const blockEvent = isEthBlockEventRef(event);
+const withdrawEvent = isWithdrawalEventRef(event);
+const assetMovementEvent = isAssetMovementEventRef(event);
+const eventWithTxRef = computed<{ location: string; txRef: string } | undefined>(() => {
+  const event = props.event;
+  if ('txRef' in event && event.txRef) {
+    return {
+      location: event.location,
+      txRef: event.txRef,
+    };
+  }
+  return undefined;
+});
+
 const translationKey = computed<string>(() => {
   // consider an evm swap event as a case of evm event
   // as they are both evm events and have the same header
   const eventVal = get(event);
   let entryType = eventVal.entryType;
-  if (entryType === HistoryEventEntryType.EVM_SWAP_EVENT)
-    entryType = HistoryEventEntryType.EVM_EVENT;
+  const specialTypesWithTxRef: HistoryEventEntryType[] = [
+    HistoryEventEntryType.ETH_DEPOSIT_EVENT,
+    HistoryEventEntryType.ASSET_MOVEMENT_EVENT,
+  ];
 
-  if (entryType === HistoryEventEntryType.HISTORY_EVENT && 'txHash' in eventVal) {
+  if (get(eventWithTxRef) && !specialTypesWithTxRef.includes(entryType)) {
     entryType = HistoryEventEntryType.EVM_EVENT;
   }
 
   return `transactions.events.headers.${toSnakeCase(entryType)}`;
-});
-
-const blockEvent = isEthBlockEventRef(event);
-const withdrawEvent = isWithdrawalEventRef(event);
-const assetMovementEvent = isAssetMovementEventRef(event);
-const transaction = computed<{ location: string; txHash: string } | undefined>(() => {
-  const event = props.event;
-  if ('txHash' in event && event.txHash) {
-    return {
-      location: event.location,
-      txHash: event.txHash,
-    };
-  }
-  return undefined;
 });
 
 const assetMovementTransactionId = computed<string | undefined>(() => get(assetMovementEvent)?.extraData?.transactionId ?? undefined);
@@ -54,7 +56,7 @@ const assetMovementTransactionId = computed<string | undefined>(() => get(assetM
  * to display a hash event identifier resulting in a numerical display instead.
  */
 const key = computed(() => {
-  if (get(transaction))
+  if (get(eventWithTxRef))
     return 'tx_hash';
   else if (get(blockEvent))
     return 'block';
@@ -84,7 +86,7 @@ const key = computed(() => {
       #blockNumber
     >
       <HashLink
-        :class="$style.wrapper"
+        class="bg-rui-grey-300 dark:bg-rui-grey-800 pr-1 pl-2 rounded-full m-0.5"
         :text="blockEvent.blockNumber.toString()"
         type="block"
       />
@@ -95,32 +97,32 @@ const key = computed(() => {
       #validatorIndex
     >
       <HashLink
-        :class="$style.wrapper"
+        class="bg-rui-grey-300 dark:bg-rui-grey-800 pr-1 pl-2 rounded-full m-0.5"
         :text="withdrawEvent.validatorIndex.toString()"
         :location="Blockchain.ETH2"
       />
     </template>
 
     <template
-      v-if="transaction || assetMovementTransactionId"
-      #txHash
+      v-if="eventWithTxRef || assetMovementTransactionId"
+      #txRef
     >
       <HashLink
-        v-if="transaction"
-        :class="$style.wrapper"
-        :text="transaction.txHash"
+        v-if="eventWithTxRef"
+        class="bg-rui-grey-300 dark:bg-rui-grey-800 pr-1 pl-2 rounded-full m-0.5"
+        :text="eventWithTxRef.txRef"
         type="transaction"
-        :location="transaction.location"
+        :location="eventWithTxRef.location"
         :truncate-length="is2xlAndUp ? 0 : 8"
       />
       <HashLink
         v-else-if="assetMovementTransactionId"
-        :class="$style.wrapper"
+        class="bg-rui-grey-300 dark:bg-rui-grey-800 pr-1 pl-2 rounded-full m-0.5"
         :text="assetMovementTransactionId"
         type="transaction"
+        :location="assetMovementEvent?.extraData?.blockchain || undefined"
         :truncate-length="is2xlAndUp ? 0 : 8"
-        display-mode="copy"
-        hide-text
+        :display-mode="assetMovementEvent?.extraData?.blockchain ? 'default' : 'copy'"
       />
     </template>
 
@@ -136,15 +138,3 @@ const key = computed(() => {
     </template>
   </i18n-t>
 </template>
-
-<style lang="scss" module>
-.wrapper {
-  @apply bg-rui-grey-300 pr-1 pl-2 rounded-full m-0.5;
-}
-
-:global(.dark) {
-  .wrapper {
-    @apply bg-rui-grey-800;
-  }
-}
-</style>

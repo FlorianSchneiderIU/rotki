@@ -1,14 +1,14 @@
 from typing import TYPE_CHECKING, Any, Final
 
 from rotkehlchen.assets.asset import AssetWithSymbol
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.constants import BASE_CPT_DETAILS
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.utils import bridge_match_transfer, bridge_prepare_data
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
@@ -17,7 +17,7 @@ from rotkehlchen.types import ChainID, ChecksumEvmAddress
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -26,12 +26,12 @@ TRANSACTION_DEPOSITED: Final = b'\xb3\x815h\xd9\x99\x1f\xc9Q\x96\x1f\xcbLxH\x93W
 WITHDRAWAL_FINALIZED: Final = b"\xdb\\vR\x85z\xa1c\xda\xad\xd6p\xe1\x16b\x8f\xb4.\x86\x9d\x8a\xc4%\x1e\xf8\x97\x1d\x9eW'\xdf\x1b"  # noqa: E501
 
 
-class BaseBridgeDecoder(DecoderInterface):
+class BaseBridgeDecoder(EvmDecoderInterface):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -83,11 +83,11 @@ class BaseBridgeDecoder(DecoderInterface):
                     counterparty=BASE_CPT_DETAILS,
                 )
 
-    def _decode_bridge_eth(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_bridge_eth(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes a bridging event for ETH. Either a deposit or a withdrawal."""
         if context.tx_log.topics[0] not in {TRANSACTION_DEPOSITED, WITHDRAWAL_FINALIZED}:
             # Make sure that we are decoding a supported event.
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         # Read information from event's topics & data
         if context.tx_log.topics[0] == TRANSACTION_DEPOSITED:
@@ -105,7 +105,7 @@ class BaseBridgeDecoder(DecoderInterface):
             from_address=from_address,
             to_address=to_address,
         )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

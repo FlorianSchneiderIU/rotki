@@ -12,11 +12,11 @@
   "include": [
     "vite.config.*",
     "vitest.config.*",
-    "cypress.config.*",
-    "nightwatch.conf.*",
     "playwright.config.*",
+    "tailwind.config.*",
     "scripts/**/*",
     "shared/external-links.ts",
-    ".electron-builder.config.*"
+    ".electron-builder.config.*",
+    "backend-icons.generated.ts"
   ]
 }

@@ -2,17 +2,18 @@ import logging
 from typing import TYPE_CHECKING
 
 from rotkehlchen.accounting.structures.balance import Balance
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.ethereum.interfaces.balances import (
     PROTOCOLS_WITH_BALANCES,
     BalancesSheetType,
     ProtocolWithGauges,
 )
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.chain.evm.decoding.velodrome.constants import VOTING_ESCROW_ABI
 from rotkehlchen.chain.evm.tokens import get_chunk_size_call_order
 from rotkehlchen.constants.prices import ZERO_PRICE
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -56,26 +57,31 @@ class VelodromeLikeBalances(ProtocolWithGauges):
         self.voting_escrow_address = voting_escrow_address
 
     def get_gauge_address(self, event: 'EvmEvent') -> ChecksumEvmAddress | None:
-        return event.address
+        return event.address if event.asset != self.protocol_token else None
 
     def query_balances(self) -> BalancesSheetType:
         balances = super().query_balances()
-        if len(addresses_with_deposits := self.addresses_with_deposits(products=None)) == 0:
+        if (
+            len(addresses_with_deposits := self.addresses_with_deposits()) == 0 or
+            len(addresses_to_token_ids := {
+                address: list(token_ids_set) for address, events in addresses_with_deposits.items()
+                if len(token_ids_set := {event.extra_data['token_id'] for event in events if event.extra_data is not None}) != 0  # noqa: E501
+            }) == 0
+        ):  # Skip voting escrow balances if there are no deposits with token ids in the extra data
             return balances
 
-        addresses_to_token_ids = {
-            address: [event.extra_data['token_id'] for event in events if event.extra_data is not None]  # noqa: E501
-            for address, events in addresses_with_deposits.items()
-        }
         voting_escrow_contract = EvmContract(
             address=self.voting_escrow_address,
             abi=VOTING_ESCROW_ABI,
             deployed_block=0,
         )
         chunk_size, call_order = get_chunk_size_call_order(self.evm_inquirer)
-        if (price := Inquirer().find_usd_price(self.protocol_token)) == ZERO_PRICE:
+        if (price := Inquirer.find_price(
+                from_asset=self.protocol_token,
+                to_asset=CachedSettings().main_currency,
+        )) == ZERO_PRICE:
             log.error(
-                f'Failed to request the USD price of {self.protocol_token.evm_address}. '
+                f'Failed to request the price of {self.protocol_token.evm_address}. '
                 f"{self.counterparty} locked balances value won't be accurate.",
             )
 
@@ -108,7 +114,7 @@ class VelodromeLikeBalances(ProtocolWithGauges):
                         token_amount=balance,
                         token_decimals=DEFAULT_TOKEN_DECIMALS,  # both AERO and VELO have 18 decimals  # noqa: E501
                     )),
-                    usd_value=amount * price,
+                    value=amount * price,
                 )
 
         return balances

@@ -30,6 +30,9 @@ from rotkehlchen.constants.assets import (
 )
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
+from rotkehlchen.globaldb.handler import GlobalDBHandler
+from rotkehlchen.history.types import HistoricalPriceOracle
+from rotkehlchen.tests.api.test_liquity import make_liquity_proxy_patch
 from rotkehlchen.tests.utils.api import (
     ASYNC_TASK_WAIT_TIMEOUT,
     api_url_for,
@@ -57,11 +60,11 @@ from rotkehlchen.tests.utils.factories import UNIT_BTC_ADDRESS1, UNIT_BTC_ADDRES
 from rotkehlchen.tests.utils.rotkehlchen import BalancesTestSetup, setup_balances
 from rotkehlchen.tests.utils.substrate import KUSAMA_TEST_NODES, SUBSTRATE_ACC1_KSM_ADDR
 from rotkehlchen.types import (
-    CHAIN_IDS_WITH_BALANCE_PROTOCOLS,
     SUPPORTED_EVM_CHAINS,
     ChainID,
     Location,
     Price,
+    SolanaAddress,
     SupportedBlockchain,
     Timestamp,
     deserialize_evm_tx_hash,
@@ -92,32 +95,32 @@ def assert_all_balances(
     assert result['liabilities'] == {}
     assets = result['assets']
     assert FVal(assets['ETH']['amount']) == total_eth
-    assert assets['ETH']['usd_value'] is not None
+    assert assets['ETH']['value'] is not None
     assert assets['ETH']['percentage_of_net_value'] is not None
     assert FVal(assets[A_RDN.identifier]['amount']) == total_rdn
-    assert assets[A_RDN.identifier]['usd_value'] is not None
+    assert assets[A_RDN.identifier]['value'] is not None
     assert assets[A_RDN.identifier]['percentage_of_net_value'] is not None
     assert FVal(assets['BTC']['amount']) == total_btc
-    assert assets['BTC']['usd_value'] is not None
+    assert assets['BTC']['value'] is not None
     assert assets['BTC']['percentage_of_net_value'] is not None
     if total_eur != ZERO:
         assert FVal(assets['EUR']['amount']) == total_eur
         assert assets['EUR']['percentage_of_net_value'] is not None
 
-    assert result['net_usd'] is not None
+    assert result['net_value'] is not None
     # Check that the 4 locations are there
     assert len(result['location']) == 5 if got_external else 4
-    assert result['location']['binance']['usd_value'] is not None
+    assert result['location']['binance']['value'] is not None
     assert result['location']['binance']['percentage_of_net_value'] is not None
-    assert result['location']['poloniex']['usd_value'] is not None
+    assert result['location']['poloniex']['value'] is not None
     assert result['location']['poloniex']['percentage_of_net_value'] is not None
-    assert result['location']['blockchain']['usd_value'] is not None
+    assert result['location']['blockchain']['value'] is not None
     assert result['location']['blockchain']['percentage_of_net_value'] is not None
     if total_eur != ZERO:
-        assert result['location']['banks']['usd_value'] is not None
+        assert result['location']['banks']['value'] is not None
         assert result['location']['banks']['percentage_of_net_value'] is not None
     if got_external:
-        assert result['location']['external']['usd_value'] is not None
+        assert result['location']['external']['value'] is not None
         assert result['location']['external']['percentage_of_net_value'] is not None
 
     with db.conn.read_ctx() as cursor:
@@ -280,14 +283,14 @@ def test_query_all_balances_ignore_cache(
         wraps=rotki.chains_aggregator.query_eth_balances,
     )
     btc_query_patch = patch.object(
-        rotki.chains_aggregator,
-        'query_btc_balances',
-        wraps=rotki.chains_aggregator.query_btc_balances,
+        rotki.chains_aggregator.bitcoin,
+        'query_balances',
+        wraps=rotki.chains_aggregator.bitcoin.query_balances,
     )
     tokens_query_patch = patch.object(
-        rotki.chains_aggregator,
+        rotki.chains_aggregator.ethereum,
         'query_evm_tokens',
-        wraps=rotki.chains_aggregator.query_evm_tokens,
+        wraps=rotki.chains_aggregator.ethereum.query_evm_tokens,
     )
     original_binance_query_dict = binance.api_query_dict
     binance_query_patch = patch.object(binance, 'api_query_dict', wraps=binance.api_query_dict)
@@ -498,7 +501,7 @@ def test_query_all_balances_with_manually_tracked_balances(
 
 def test_query_all_balances_errors(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that errors are handled correctly by the all balances endpoint"""
-    # invoke the endpoint with non boolean save_data
+    # invoke the endpoint with non-boolean save_data
     response = requests.get(
         api_url_for(
             rotkehlchen_api_server,
@@ -510,7 +513,7 @@ def test_query_all_balances_errors(rotkehlchen_api_server: 'APIServer') -> None:
         contained_in_msg='Not a valid boolean',
         status_code=HTTPStatus.BAD_REQUEST,
     )
-    # invoke the endpoint with non boolean async_query
+    # invoke the endpoint with non-boolean async_query
     response = requests.get(
         api_url_for(
             rotkehlchen_api_server,
@@ -535,24 +538,16 @@ def test_protocol_balances_all_chains(rotkehlchen_api_server: 'APIServer') -> No
             address=string_to_evm_address('0x706A70067BE19BdadBea3600Db0626859Ff25D74'),
         )
 
-    queried_chains = []
-
-    def mock_query_protocols_with_balance(chain_id: CHAIN_IDS_WITH_BALANCE_PROTOCOLS) -> None:
-        queried_chains.append(chain_id)
-
-    # patch _query_protocols_with_balance to record chains queried,
-    # and also patch a couple other functions since we don't need them taking time here.
-    with (patch.object(
-            rotki.chains_aggregator,
-            '_query_protocols_with_balance',
-            side_effect=mock_query_protocols_with_balance,
-        ),
-        patch.object(rotki.chains_aggregator, 'query_evm_chain_balances'),
+    # patch _query_protocols_with_balance to record how many chains are queried,
+    # and also patch query_evm_chain_balances since we don't need it taking time here.
+    with (patch(
+            'rotkehlchen.chain.evm.manager.EvmManager.query_protocols_with_balance',
+        ) as mock_query_protocols_with_balance,
+        patch('rotkehlchen.chain.evm.manager.EvmManager.query_evm_chain_balances'),
     ):
         rotki.chains_aggregator.query_balances()
 
-    for key in CHAIN_TO_BALANCE_PROTOCOLS:
-        assert key in queried_chains
+    assert len(CHAIN_TO_BALANCE_PROTOCOLS) == mock_query_protocols_with_balance.call_count
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -632,7 +627,7 @@ def test_balance_snapshot_error_message(
         )
 
     result = assert_proper_sync_response_with_result(response)
-    assert result == {'assets': {}, 'liabilities': {}, 'location': {}, 'net_usd': '0'}
+    assert result == {'assets': {}, 'liabilities': {}, 'location': {}, 'net_value': '0'}
     websocket_connection.wait_until_messages_num(num=2, timeout=10)
     assert websocket_connection.messages_num() == 2
     msg = websocket_connection.pop_message()
@@ -681,8 +676,8 @@ def test_multiple_balance_queries_not_concurrent(
         wraps=rotki.chains_aggregator.ethereum.node_inquirer.get_multi_balance,
     )
     btc_balances_patch = patch(
-        'rotkehlchen.chain.bitcoin.btc.manager.BitcoinManager.get_balances',
-        wraps=rotki.chains_aggregator.bitcoin.get_balances,
+        'rotkehlchen.chain.bitcoin.btc.manager.BitcoinManager.query_balances',
+        wraps=rotki.chains_aggregator.bitcoin.query_balances,
     )
     binance = try_get_first_exchange(rotki.exchange_manager, Location.BINANCE)
     assert binance is not None
@@ -864,19 +859,19 @@ def test_query_ksm_balances(rotkehlchen_api_server: 'APIServer', ksm_accounts: l
     assert 'liabilities' in account_1_balances
     asset_ksm = account_1_balances['assets'][A_KSM.identifier][DEFAULT_BALANCE_LABEL]
     assert FVal(asset_ksm['amount']) >= ZERO
-    assert FVal(asset_ksm['usd_value']) >= ZERO
+    assert FVal(asset_ksm['value']) >= ZERO
 
     account_2_balances = result['per_account'][ksm_chain_key][ksm_accounts[1]]
     assert 'liabilities' in account_2_balances
     asset_ksm = account_2_balances['assets'][A_KSM.identifier][DEFAULT_BALANCE_LABEL]
     assert FVal(asset_ksm['amount']) >= ZERO
-    assert FVal(asset_ksm['usd_value']) >= ZERO
+    assert FVal(asset_ksm['value']) >= ZERO
 
     # Check totals
     assert 'liabilities' in result['totals']
     total_ksm = result['totals']['assets'][A_KSM.identifier][DEFAULT_BALANCE_LABEL]
     assert FVal(total_ksm['amount']) >= ZERO
-    assert FVal(total_ksm['usd_value']) >= ZERO
+    assert FVal(total_ksm['value']) >= ZERO
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -916,19 +911,19 @@ def test_query_avax_balances(rotkehlchen_api_server: 'APIServer') -> None:
     assert 'liabilities' in account_1_balances
     asset_avax = account_1_balances['assets'][A_AVAX.identifier][DEFAULT_BALANCE_LABEL]
     assert FVal(asset_avax['amount']) >= ZERO
-    assert FVal(asset_avax['usd_value']) >= ZERO
+    assert FVal(asset_avax['value']) >= ZERO
 
     account_2_balances = result['per_account'][avax_chain_key][AVALANCHE_ACC2_AVAX_ADDR]
     assert 'liabilities' in account_2_balances
     asset_avax = account_2_balances['assets'][A_AVAX.identifier][DEFAULT_BALANCE_LABEL]
     assert FVal(asset_avax['amount']) >= ZERO
-    assert FVal(asset_avax['usd_value']) >= ZERO
+    assert FVal(asset_avax['value']) >= ZERO
 
     # Check totals
     assert 'liabilities' in result['totals']
     total_avax = result['totals']['assets'][A_AVAX.identifier][DEFAULT_BALANCE_LABEL]
     assert FVal(total_avax['amount']) >= ZERO
-    assert FVal(total_avax['usd_value']) >= ZERO
+    assert FVal(total_avax['value']) >= ZERO
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -1004,7 +999,7 @@ def test_balances_behaviour_with_manual_current_prices(
         # (3 ETH) * (10 BTC per ETH) * (1,5 USD per BTC) = 45 USD of ETH
         eth_result = result['assets'][A_ETH.identifier]
         assert eth_result['amount'] == '3'
-        assert eth_result['usd_value'] == '45.0'
+        assert eth_result['value'] == '45.0'
         # (5 RDN) * (2 ETH per RDN) * (10 BTC per RDN) * (1,5 USD per BTC) = 150 USD of RDN
         rdn_result = result['assets']['eip155:1/erc20:0x255Aa6DF07540Cb5d3d297f0D0D4D84cb52bc8e6']
         assert rdn_result['amount'] == '5'
@@ -1023,8 +1018,8 @@ def test_blockchain_balances_refresh(
         collateral_type='ctype',
         owner=ethereum_accounts[0],
         collateral_asset=A_USDT.resolve_to_crypto_asset(),
-        collateral=Balance(FVal(3), FVal(54)),
-        debt=Balance(ZERO),
+        collateral=Balance(amount=FVal(3), value=FVal(54)),
+        debt=Balance(amount=ZERO),
         collateralization_ratio=None,
         liquidation_ratio=ZERO,
         liquidation_price=None,
@@ -1037,8 +1032,8 @@ def test_blockchain_balances_refresh(
     a_dai = A_DAI.resolve_to_evm_token()
     account_balance = {ethereum_accounts[0]: BalanceSheet(
         assets=defaultdict(lambda: defaultdict(Balance), {
-            a_usdc: defaultdict(Balance, {DEFAULT_BALANCE_LABEL: Balance(ONE, FVal(24))}),
-            a_dai: defaultdict(Balance, {DEFAULT_BALANCE_LABEL: Balance(FVal(2), FVal(42))}),
+            a_usdc: defaultdict(Balance, {DEFAULT_BALANCE_LABEL: Balance(amount=ONE, value=FVal(24))}),  # noqa: E501
+            a_dai: defaultdict(Balance, {DEFAULT_BALANCE_LABEL: Balance(amount=FVal(2), value=FVal(42))}),  # noqa: E501
         }),
     )}
     account_balance_patch = patch.object(chains_aggregator.balances, 'eth', account_balance)
@@ -1049,7 +1044,7 @@ def test_blockchain_balances_refresh(
         return (mock_balances, mock_prices) if len(addresses) != 0 else ({}, {})
 
     query_tokens_patch = patch('rotkehlchen.chain.evm.tokens.EvmTokens.query_tokens_for_addresses', side_effect=mock_query_tokens)  # noqa: E501
-    price_inquirer_patch = patch('rotkehlchen.inquirer.Inquirer.find_usd_price', side_effect=lambda _: Price(ZERO))  # noqa: E501
+    price_inquirer_patch = patch('rotkehlchen.inquirer.Inquirer.find_price', side_effect=lambda *args, **kwargs: Price(ZERO))  # noqa: E501
     proxies_inquirer_patch = patch('rotkehlchen.chain.evm.proxies_inquirer.EvmProxiesInquirer.get_accounts_having_proxy', side_effect=dict)  # noqa: E501
     multieth_balance_patch = patch.object(chains_aggregator.ethereum.node_inquirer, 'get_multi_balance', lambda accounts: {ethereum_accounts[0]: ZERO})  # noqa: E501
     protocols_patch = patch('rotkehlchen.chain.aggregator.CHAIN_TO_BALANCE_PROTOCOLS', side_effect={ChainID.ETHEREUM: ()})  # noqa: E501
@@ -1070,9 +1065,9 @@ def test_blockchain_balances_refresh(
 
         one_time_query_result = query_blockchain_balance(1)
         assert one_time_query_result['per_account']['eth'][ethereum_accounts[0]]['assets'] == {
-            A_USDC.identifier: {DEFAULT_BALANCE_LABEL: {'amount': '23', 'usd_value': '230'}},
-            A_DAI.identifier: {DEFAULT_BALANCE_LABEL: {'amount': '3', 'usd_value': '33'}},
-            A_USDT.identifier: {'makerdao vault': {'amount': '3', 'usd_value': '54'}},
+            A_USDC.identifier: {DEFAULT_BALANCE_LABEL: {'amount': '23', 'value': '230'}},
+            A_DAI.identifier: {DEFAULT_BALANCE_LABEL: {'amount': '3', 'value': '33'}},
+            A_USDT.identifier: {'makerdao vault': {'amount': '3', 'value': '54'}},
         }
         assert one_time_query_result == query_blockchain_balance(4)
 
@@ -1149,7 +1144,7 @@ def test_query_balances_with_threshold(
                     rotkehlchen_api_server_with_exchanges,
                     endpoint,
                 ),
-               params={'usd_value_threshold': threshold.to_int(exact=True)},
+               params={'value_threshold': threshold.to_int(exact=True)},
             )
             results.append(assert_proper_sync_response_with_result(response))
 
@@ -1160,11 +1155,11 @@ def test_query_balances_with_threshold(
             for address, balances in chain_balances.items():
                 if chain == 'btc':
                     for balance in balances.values():
-                        assert FVal(balance['usd_value']) > threshold
+                        assert FVal(balance['value']) > threshold
                 else:
                     assets = balances['assets']
                     for balance in assets.values():
-                        assert FVal(balance['usd_value']) > threshold
+                        assert FVal(balance['value']) > threshold
 
                     if address == ethereum_accounts[0]:
                         assert balances['liabilies'] == {A_DAI: FVal(15)}
@@ -1176,35 +1171,168 @@ def test_query_balances_with_threshold(
         for exchange in exchange_result:
             assert len(exchange_result[exchange]) != 0
             for balance in exchange_result[exchange].values():
-                assert FVal(balance['usd_value']) > threshold
+                assert FVal(balance['value']) > threshold
 
         # Assert manual balances
         assert len(manual_result['balances']) != 0
         for balance in manual_result['balances']:
-            assert FVal(balance['usd_value']) > threshold
+            assert FVal(balance['value']) > threshold
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [['0x136f6A2b398eaeED4a33a58B26E52FA7056FD4e7']])
 @pytest.mark.parametrize('ethereum_modules', [['liquity']])
-def test_query_liquity_balances(rotkehlchen_api_server: 'APIServer', ethereum_accounts: list[str]) -> None:  # noqa: E501
+def test_query_liquity_balances(
+        rotkehlchen_api_server: 'APIServer',
+        ethereum_accounts: list['ChecksumEvmAddress'],
+) -> None:
     """Test querying Liquity balances works correctly.
     Regression test to ensure Liquity liabilities are shown in dashboard balances.
     """
-    response = requests.get(
-        api_url_for(
-            rotkehlchen_api_server,
-            'named_blockchain_balances_resource',
-            blockchain=(eth_chain_key := SupportedBlockchain.ETHEREUM.serialize()),
-        ),
-        json={'async_query': True},
-    )
+    with make_liquity_proxy_patch(
+        user_address=ethereum_accounts[0],
+        proxy_address=string_to_evm_address('0x7F7A44b2cA9db79D4b295687A596ee88961007e9'),
+    ):
+        response = requests.get(
+            api_url_for(
+                rotkehlchen_api_server,
+                'named_blockchain_balances_resource',
+                blockchain=(eth_chain_key := SupportedBlockchain.ETHEREUM.serialize()),
+            ),
+            json={'async_query': True},
+        )
+
     task_id = assert_ok_async_response(response)
     result = wait_for_async_task_with_result(rotkehlchen_api_server, task_id)
 
     account_balances = result['per_account'][eth_chain_key][ethereum_accounts[0]]
     assert account_balances['assets'] == {A_ETH: {
-        DEFAULT_BALANCE_LABEL: {'amount': '0.068955497233628915', 'usd_value': '0.1034332458504433725'},  # noqa: E501
-        CPT_LIQUITY: {'amount': '4.08915844880891399', 'usd_value': '6.133737673213370985'},
+        DEFAULT_BALANCE_LABEL: {'amount': '0.068955497233628915', 'value': '0.1034332458504433725'},  # noqa: E501
+        CPT_LIQUITY: {'amount': '4.08915844880891399', 'value': '6.133737673213370985'},
     }}
-    assert account_balances['liabilities'] == {A_LUSD: {CPT_LIQUITY: {'amount': '2188.673572189031978055', 'usd_value': '3283.0103582835479670825'}}}  # noqa: E501
+    assert account_balances['liabilities'] == {A_LUSD: {CPT_LIQUITY: {'amount': '2188.673572189031978055', 'value': '3283.0103582835479670825'}}}  # noqa: E501
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+@pytest.mark.parametrize('number_of_eth_accounts', [1])
+def test_balance_snapshot_saves_manual_prices_as_historical(
+        rotkehlchen_api_server: 'APIServer',
+        ethereum_accounts: list['ChecksumEvmAddress'],
+) -> None:
+    """Test that saving balance snapshots saves manual prices as historical data."""
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    # add a manual current price for ETH to EUR
+    GlobalDBHandler.add_manual_latest_price(
+        from_asset=A_ETH,
+        to_asset=A_EUR,
+        price=Price(ONE),
+    )
+
+    # Get initial count of historical prices for ETH -> EUR
+    with GlobalDBHandler().conn.read_ctx() as cursor:
+        initial_prices = cursor.execute(
+            'SELECT from_asset, to_asset, source_type, timestamp, price FROM price_history '
+            'WHERE from_asset=? AND to_asset=?',
+            (A_ETH.identifier, A_EUR.identifier),
+        ).fetchall()
+        assert len(initial_prices) == 1
+
+    # Setup balances with some ETH
+    setup = setup_balances(
+        rotki=rotki,
+        btc_accounts=None,
+        ethereum_accounts=ethereum_accounts,
+    )
+    with ExitStack() as stack:
+        setup.enter_blockchain_patches(stack)
+
+        # Query balances which should trigger the price saving
+        result = assert_proper_sync_response_with_result(requests.get(
+            api_url_for(
+                rotkehlchen_api_server,
+                'allbalancesresource',
+            ),
+            json={'save_data': True},  # Ensure data is saved
+        ))
+        assert A_ETH in result['assets']
+
+        # Check that a new historical price was saved
+        with GlobalDBHandler().conn.read_ctx() as cursor:
+            new_prices = cursor.execute(
+                'SELECT from_asset, to_asset, source_type, timestamp, price FROM price_history '
+                'WHERE from_asset=? AND to_asset=?',
+                (A_ETH.identifier, A_EUR.identifier),
+            ).fetchall()
+
+        # Should have one more price than before
+        assert len(new_prices) == len(initial_prices) + 1
+        # Find the newly added price
+        from_asset, to_asset, source_type, _, price_str = new_prices[-1]
+        assert from_asset == A_ETH.identifier
+        assert to_asset == A_EUR.identifier
+        assert source_type == HistoricalPriceOracle.MANUAL.serialize_for_db()
+        assert FVal(price_str) == ONE
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+@pytest.mark.parametrize('number_of_eth_accounts', [0])
+@pytest.mark.parametrize('solana_accounts', [[
+    '8comvKwUxq6x2KV6bqZeU695a1d4R2UFuVJZxH2raTYf',
+    '9oAgKbKmrQ6t1MSn5mNgYwhogeXkAqtzAuFdtBtwf7xr',
+    'Bt26YqVLJJ233frMxvvo9uL1mPu7YdBFgFPe6Rwh3AqB',
+]])
+def test_solana_balances_multiple_accounts(
+        rotkehlchen_api_server: 'APIServer',
+        solana_accounts: list['SolanaAddress'],
+) -> None:
+    """Test that querying balances for multiple solana accounts works and check the
+    balances for several common tokens (one token from each account).
+    """
+    result = assert_proper_sync_response_with_result(requests.get(
+        api_url_for(rotkehlchen_api_server, 'allbalancesresource'),
+    ))
+    assert result['assets']['solana/token:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v']['amount'] == '160556.002808'  # USDC  # noqa: E501
+    assert result['assets']['solana/token:2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv']['amount'] == '370905.247021'  # PENGU  # noqa: E501
+    assert result['assets']['solana/token:WLFinEv6ypjkczcS83FZqFpgFZYwQXutRbxGe7oC16g']['amount'] == '100122.11'  # WLFI  # noqa: E501
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12', '0x9531C059098e3d194fF87FebB587aB07B30B1306']])  # noqa: E501
+def test_blockchain_balances_specific_addresses(
+        rotkehlchen_api_server: 'APIServer',
+        ethereum_accounts: list['ChecksumEvmAddress'],
+) -> None:
+    """Test that querying blockchain balances for specific addresses works correctly"""
+
+    # Query only the first address
+    partial_result = assert_proper_sync_response_with_result(requests.get(
+        api_url_for(rotkehlchen_api_server, 'blockchainbalancesresource'),
+        json={
+            'blockchain': 'ETH',
+            'async_query': False,
+            'addresses': [ethereum_accounts[0]],
+        },
+    ))
+
+    # Verify that only the specified address is in the result
+    eth_balances = partial_result['per_account']['eth']
+    assert len(eth_balances) == 1
+    assert ethereum_accounts[0] in eth_balances
+
+    # Test with another address - this returns the existing balances dict with
+    # the new balances of the recently added address merged in
+    result = assert_proper_sync_response_with_result(requests.get(
+        api_url_for(rotkehlchen_api_server, 'blockchainbalancesresource'),
+        json={
+            'blockchain': 'ETH',
+            'async_query': False,
+            'addresses': [ethereum_accounts[1]],
+        },
+    ))
+
+    # Verify that both addresses are in the result
+    eth_balances = result['per_account']['eth']
+    for address in ethereum_accounts:
+        assert address in eth_balances

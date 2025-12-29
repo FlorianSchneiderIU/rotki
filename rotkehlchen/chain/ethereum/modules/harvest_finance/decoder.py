@@ -1,8 +1,8 @@
 import logging
 from typing import Any
 
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.interfaces import MerkleClaimDecoderInterface
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
 
@@ -33,5 +33,5 @@ class HarvestFinanceDecoder(MerkleClaimDecoderInterface):
         return (CounterpartyDetails(
             identifier=CPT_HARVEST_FINANCE,
             label='Harvest Finance',
-            image='harvest.gif',
+            image='harvest.svg',
         ),)

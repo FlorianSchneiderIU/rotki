@@ -5,6 +5,7 @@ import type { BlockchainBalances } from '@/types/blockchain/balances';
 import type { ExchangeData } from '@/types/exchanges';
 import type { ManualBalanceWithValue } from '@/types/manual-balances';
 import { bigNumberify, type Blockchain } from '@rotki/common';
+import { libraryDefaults } from '@test/utils/provide-defaults';
 import { type ComponentMountingOptions, mount, type VueWrapper } from '@vue/test-utils';
 import { type Pinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +13,6 @@ import EvmNativeTokenBreakdown from '@/components/EvmNativeTokenBreakdown.vue';
 import { useBlockchainAccountsStore } from '@/modules/accounts/use-blockchain-accounts-store';
 import { useBalancesStore } from '@/modules/balances/use-balances-store';
 import { BalanceType } from '@/types/balances';
-import { libraryDefaults } from '../../utils/provide-defaults';
 
 vi.mock('vue-router', () => ({
   useRoute: vi.fn(),
@@ -94,7 +94,7 @@ const testManualBalances: ManualBalanceWithValue[] = [{
   label: 'test 1',
   location: 'external',
   tags: [],
-  usdValue: bigNumberify(500),
+  value: bigNumberify(500),
 }, {
   amount: bigNumberify(500),
   asset: 'ETH',
@@ -103,14 +103,14 @@ const testManualBalances: ManualBalanceWithValue[] = [{
   label: 'test 2',
   location: 'kraken',
   tags: [],
-  usdValue: bigNumberify(500),
+  value: bigNumberify(500),
 }];
 
 const testExchangeBalances: ExchangeData = {
   kraken: {
     ETH: {
       amount: bigNumberify(1000),
-      usdValue: bigNumberify(1000),
+      value: bigNumberify(1000),
     },
   },
 };
@@ -139,7 +139,7 @@ const testEthereumBalances: BlockchainBalances = {
           ETH: {
             address: {
               amount: bigNumberify(400),
-              usdValue: bigNumberify(400),
+              value: bigNumberify(400),
             },
           },
         },
@@ -150,7 +150,7 @@ const testEthereumBalances: BlockchainBalances = {
           ETH: {
             address: {
               amount: bigNumberify(800),
-              usdValue: bigNumberify(800),
+              value: bigNumberify(800),
             },
 
           },
@@ -182,7 +182,7 @@ const testOptimismBalances: BlockchainBalances = {
           ETH: {
             address: {
               amount: bigNumberify(123),
-              usdValue: bigNumberify(123),
+              value: bigNumberify(123),
             },
           },
         },
@@ -234,26 +234,26 @@ describe('evmNativeTokenBreakdown.vue', () => {
     const expectedResult = [{
       location: 'kraken',
       amount: bigNumberify(1500),
-      usdValue: bigNumberify(1500),
+      value: bigNumberify(1500),
     }, {
       location: 'ethereum',
       amount: bigNumberify(1200),
-      usdValue: bigNumberify(1200),
+      value: bigNumberify(1200),
     }, {
       location: 'external',
       amount: bigNumberify(500),
-      usdValue: bigNumberify(500),
+      value: bigNumberify(500),
     }, {
       location: 'optimism',
       amount: bigNumberify(123),
-      usdValue: bigNumberify(123),
+      value: bigNumberify(123),
     }];
 
     expectedResult.forEach((result, index) => {
       const tr = wrapper.find(`tbody tr:nth-child(${index + 1})`);
       expect(tr.find('td:first-child').text()).toBe(result.location);
       expect(tr.find('td:nth-child(3)').text()).toBe(result.amount.toFormat(2));
-      expect(tr.find('td:nth-child(4)').text()).toContain(result.usdValue.toFormat(2));
+      expect(tr.find('td:nth-child(4)').text()).toContain(result.value.toFormat(2));
     });
   });
 
@@ -265,18 +265,18 @@ describe('evmNativeTokenBreakdown.vue', () => {
     const expectedResult = [{
       location: 'ethereum',
       amount: bigNumberify(1200),
-      usdValue: bigNumberify(1200),
+      value: bigNumberify(1200),
     }, {
       location: 'optimism',
       amount: bigNumberify(123),
-      usdValue: bigNumberify(123),
+      value: bigNumberify(123),
     }];
 
     expectedResult.forEach((result, index) => {
       const tr = wrapper.find(`tbody tr:nth-child(${index + 1})`);
       expect(tr.find('td:first-child').text()).toBe(result.location);
       expect(tr.find('td:nth-child(3)').text()).toBe(result.amount.toFormat(2));
-      expect(tr.find('td:nth-child(4)').text()).toContain(result.usdValue.toFormat(2));
+      expect(tr.find('td:nth-child(4)').text()).toContain(result.value.toFormat(2));
     });
   });
 });

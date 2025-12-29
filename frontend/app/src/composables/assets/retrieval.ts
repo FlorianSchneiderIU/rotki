@@ -1,28 +1,43 @@
 import type { MaybeRef } from '@vueuse/core';
 import type { ComputedRef } from 'vue';
-import type { AssetsWithId } from '@/types/asset';
 import type { ERC20Token } from '@/types/blockchain/accounts';
 import type { EvmChainAddress } from '@/types/history/events';
 import type { TaskMeta } from '@/types/task';
-import { type AssetInfo, getAddressFromEvmIdentifier, NotificationGroup, Severity } from '@rotki/common';
-import { isCancel } from 'axios';
+import {
+  type AssetInfoWithId,
+  getAddressFromEvmIdentifier,
+  getAddressFromSolanaIdentifier,
+  getNftAssetIdDetail,
+  isEvmIdentifier,
+  isEvmIdentifierWithNftId,
+  isSolanaTokenIdentifier,
+  NotificationGroup,
+  Severity,
+} from '@rotki/common';
 import { type AssetSearchParams, useAssetInfoApi } from '@/composables/api/assets/info';
 import { getAssociatedAssetIdentifier, processAssetInfo, useAssetAssociationMap } from '@/composables/assets/common';
 import { useSupportedChains } from '@/composables/info/chains';
 import { useAssetCacheStore } from '@/store/assets/asset-cache';
 import { useNotificationsStore } from '@/store/notifications';
 import { useTaskStore } from '@/store/tasks';
+import { type AssetsWithId, EVM_TOKEN, SOLANA_CHAIN, SOLANA_TOKEN } from '@/types/asset';
 import { TaskType } from '@/types/task-type';
-import { isTaskCancelled } from '@/utils';
+import { isAbortError, isTaskCancelled } from '@/utils';
 
 export interface AssetResolutionOptions {
   associate?: boolean;
   collectionParent?: boolean;
 }
 
-interface AssetWithResolutionStatus extends AssetInfo {
+interface AssetWithResolutionStatus extends AssetInfoWithId {
   resolved: boolean;
-};
+}
+
+interface AssetContractInfo {
+  location: string;
+  address: string;
+  nftId?: string;
+}
 
 export type AssetInfoReturn = (identifier: MaybeRef<string | undefined>, options?: MaybeRef<AssetResolutionOptions>) => ComputedRef<AssetWithResolutionStatus | null>;
 
@@ -30,17 +45,20 @@ export type AssetSymbolReturn = (identifier: MaybeRef<string | undefined>, optio
 
 export type AssetNameReturn = (identifier: MaybeRef<string | undefined>, options?: MaybeRef<AssetResolutionOptions>) => ComputedRef<string>;
 
+type AssetContractInfoReturn = (identifier: MaybeRef<string | undefined>, options?: MaybeRef<AssetResolutionOptions>) => ComputedRef<AssetContractInfo | undefined>;
+
 interface UseAssetInfoRetrievalReturn {
   assetAssociationMap: ComputedRef<Record<string, string>>;
-  fetchTokenDetails: (payload: EvmChainAddress) => Promise<ERC20Token>;
-  getAssociatedAssetIdentifier: (identifier: string) => ComputedRef<string>;
+  assetContractInfo: AssetContractInfoReturn;
   assetInfo: AssetInfoReturn;
-  refetchAssetInfo: (key: string) => void;
-  assetSymbol: AssetSymbolReturn;
   assetName: AssetNameReturn;
-  getAssetSymbol: (identifier: string | undefined, options?: AssetResolutionOptions) => string;
-  tokenAddress: (identifier: MaybeRef<string>, enableAssociation?: MaybeRef<boolean>) => ComputedRef<string>;
   assetSearch: (params: AssetSearchParams) => Promise<AssetsWithId>;
+  assetSymbol: AssetSymbolReturn;
+  fetchTokenDetails: (payload: EvmChainAddress) => Promise<ERC20Token>;
+  getAssetSymbol: (identifier: string | undefined, options?: AssetResolutionOptions) => string;
+  getAssociatedAssetIdentifier: (identifier: string) => ComputedRef<string>;
+  refetchAssetInfo: (key: string) => void;
+  tokenAddress: (identifier: MaybeRef<string>, options?: AssetResolutionOptions) => ComputedRef<string>;
 }
 
 export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
@@ -60,7 +78,7 @@ export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
   const assetInfo = (
     identifier: MaybeRef<string | undefined>,
     options: MaybeRef<AssetResolutionOptions> = {},
-  ): ComputedRef<(AssetInfo & { resolved: boolean }) | null> => computed(() => {
+  ): ComputedRef<(AssetInfoWithId & { resolved: boolean }) | null> => computed(() => {
     const id = get(identifier);
     if (!id)
       return null;
@@ -86,6 +104,7 @@ export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
 
     return {
       ...processedInfo,
+      identifier: key,
       resolved: !!data,
     };
   });
@@ -120,18 +139,58 @@ export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
     return name || '';
   });
 
+  const assetContractInfo = (
+    identifier: MaybeRef<string | undefined>,
+    options?: MaybeRef<AssetResolutionOptions>,
+  ): ComputedRef<AssetContractInfo | undefined> => computed(() => {
+    const id = get(identifier);
+    if (!id)
+      return undefined;
+
+    const asset = get(assetInfo(id, options));
+
+    if (!asset)
+      return undefined;
+
+    const { assetType, identifier: usedId } = asset;
+
+    if (assetType === EVM_TOKEN) {
+      const location = asset.evmChain ?? undefined;
+      if (isEvmIdentifier(usedId)) {
+        return {
+          address: getAddressFromEvmIdentifier(usedId),
+          location,
+        };
+      }
+
+      if (isEvmIdentifierWithNftId(usedId)) {
+        const nftDetail = getNftAssetIdDetail(usedId);
+        if (!nftDetail) {
+          return undefined;
+        }
+        return {
+          address: nftDetail.contractAddress,
+          location,
+          nftId: nftDetail.nftId,
+        };
+      }
+    }
+
+    if (isSolanaTokenIdentifier(usedId) && assetType === SOLANA_TOKEN) {
+      return {
+        address: getAddressFromSolanaIdentifier(usedId),
+        location: SOLANA_CHAIN,
+      };
+    }
+
+    return undefined;
+  });
+
   const tokenAddress = (
     identifier: MaybeRef<string>,
-    enableAssociation: MaybeRef<boolean> = true,
+    options?: MaybeRef<AssetResolutionOptions>,
   ): ComputedRef<string> =>
-    computed(() => {
-      const id = get(identifier);
-      if (!id)
-        return '';
-
-      const key = get(enableAssociation) ? get(getAssociatedAssetIdentifierComputed(id)) : id;
-      return getAddressFromEvmIdentifier(key);
-    });
+    computed(() => get(assetContractInfo(identifier, options))?.address || '');
 
   const fetchTokenDetails = async (payload: EvmChainAddress): Promise<ERC20Token> => {
     try {
@@ -162,7 +221,7 @@ export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
       return await assetSearchCaller({ ...params, evmChain });
     }
     catch (error: any) {
-      if (isCancel(error))
+      if (isAbortError(error))
         return [];
 
       notify({
@@ -180,6 +239,7 @@ export function useAssetInfoRetrieval(): UseAssetInfoRetrievalReturn {
 
   return {
     assetAssociationMap,
+    assetContractInfo,
     assetInfo,
     assetName,
     assetSearch,

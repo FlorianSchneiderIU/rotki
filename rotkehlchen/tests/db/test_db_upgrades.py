@@ -27,7 +27,11 @@ from rotkehlchen.data_handler import DataHandler
 from rotkehlchen.data_import.importers.constants import ROTKI_EVENT_PREFIX
 from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.checks import sanity_check_impl
-from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
+from rotkehlchen.db.constants import (
+    HISTORY_MAPPING_KEY_STATE,
+    HISTORY_MAPPING_STATE_CUSTOMIZED,
+    NO_ACCOUNTING_COUNTERPARTY,
+)
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.drivers.gevent import DBConnection, DBConnectionType
 from rotkehlchen.db.schema import DB_SCRIPT_CREATE_TABLES
@@ -57,7 +61,6 @@ from rotkehlchen.tests.utils.database import (
 )
 from rotkehlchen.tests.utils.factories import make_evm_address, make_evm_tx_hash
 from rotkehlchen.types import (
-    ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE,
     ChainID,
     Location,
     SupportedBlockchain,
@@ -73,12 +76,12 @@ if TYPE_CHECKING:
     from rotkehlchen.db.drivers.gevent import DBCursor
 
 
-def make_serialized_event_identifier(location: Location, raw_event_identifier: bytes) -> str:
-    """Creates a serialized event identifier using the logic at the moment of v32_v33 upgrade"""
-    if location == Location.KRAKEN or raw_event_identifier.startswith(b'rotki_events'):
-        return raw_event_identifier.decode()
+def make_serialized_group_identifier(location: Location, raw_group_identifier: bytes) -> str:
+    """Creates a serialized group identifier using the logic at the moment of v32_v33 upgrade"""
+    if location == Location.KRAKEN or raw_group_identifier.startswith(b'rotki_events'):
+        return raw_group_identifier.decode()
 
-    hex_representation = raw_event_identifier.hex()
+    hex_representation = raw_group_identifier.hex()
     if hex_representation.startswith('0x') is True:
         return hex_representation
     return '0x' + hex_representation
@@ -101,12 +104,12 @@ def assert_tx_hash_is_bytes(
         assert isinstance(z_old[tx_hash_index], str)
         l_new = list(z_new)
         if is_history_event is True:
-            l_new[tx_hash_index] = make_serialized_event_identifier(
+            l_new[tx_hash_index] = make_serialized_group_identifier(
                 location=Location.deserialize_from_db(l_new[4]),
-                raw_event_identifier=l_new[1],
+                raw_group_identifier=l_new[1],
             )
         else:
-            l_new[tx_hash_index] = deserialize_evm_tx_hash(l_new[tx_hash_index]).hex()  # pylint: disable=no-member
+            l_new[tx_hash_index] = str(deserialize_evm_tx_hash(l_new[tx_hash_index]))
         assert list(z_old) == l_new
 
 
@@ -149,7 +152,7 @@ def _init_db_with_target_version(
         stack.enter_context(target_patch(target_version=target_version))
         stack.enter_context(mock_db_schema_sanity_check())
         stack.enter_context(no_tables_created_after_init)
-        if target_version <= 48:
+        if target_version <= 50:
             stack.enter_context(mock_dbhandler_update_owned_assets())
             stack.enter_context(mock_dbhandler_sync_globaldb_assets())
         return DBHandler(
@@ -801,7 +804,7 @@ def test_upgrade_db_33_to_34(user_data_dir):  # pylint: disable=unused-argument
         cursor.execute('SELECT * FROM combined_trades_view ORDER BY time ASC')
         result = cursor.fetchall()
         assert isinstance(result[-1][10], bytes)
-        assert HexBytes(result[-1][10]).hex() == '0xb1fcf4aef6af87a061ca03e92c4eb8039efe600d501ba288a8bae90f78c91db5'  # noqa: E501
+        assert str(HexBytes(result[-1][10])) == '0xb1fcf4aef6af87a061ca03e92c4eb8039efe600d501ba288a8bae90f78c91db5'  # noqa: E501
 
     # Execute upgrade
     db = _init_db_with_target_version(
@@ -2568,8 +2571,8 @@ def test_upgrade_db_43_to_44(user_data_dir, messages_aggregator):
             'SELECT * FROM address_book WHERE address IN (?, ?)',
             (bad_address, tether_address),
         ).fetchall()) == {
-            (tether_address, ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE, 'Black Tether'),
-            (bad_address, ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE, 'yabirgb.eth'),
+            (tether_address, 'NONE', 'Black Tether'),
+            (bad_address, 'NONE', 'yabirgb.eth'),
         }
         assert cursor.execute(
             "SELECT value FROM settings WHERE name='historical_price_oracles'",
@@ -2816,7 +2819,7 @@ def test_upgrade_db_46_to_47(user_data_dir, messages_aggregator):
             value=address,
             chain_id=10,
             receiver=address,
-            tx_hash=tx_hash.hex(),  # pylint: disable=no-member
+            tx_hash=str(tx_hash),
         )
         # Add entries with an old erc721 asset to ensure they are handled correctly during upgrade.
         write_cursor.execute(
@@ -2963,7 +2966,7 @@ def test_upgrade_db_46_to_47(user_data_dir, messages_aggregator):
             name=DBCacheDynamic.EXTRA_INTERNAL_TX,
             chain_id=10,
             receiver=address,
-            tx_hash=tx_hash.hex(),  # pylint: disable=no-member
+            tx_hash=str(tx_hash),
         ) == address
         cursor.execute("SELECT COUNT(*) FROM location WHERE location='v'")
         assert cursor.fetchone()[0] == 0
@@ -2983,7 +2986,7 @@ def test_upgrade_db_46_to_47(user_data_dir, messages_aggregator):
             name=DBCacheDynamic.EXTRA_INTERNAL_TX,
             chain_id=10,
             receiver=address,
-            tx_hash=tx_hash.hex(),  # pylint: disable=no-member
+            tx_hash=str(tx_hash),
         ) is None
         cursor.execute("SELECT seq FROM location WHERE location='v'")
         assert cursor.fetchone() == (54,)
@@ -3354,7 +3357,11 @@ def test_latest_upgrade_correctness(user_data_dir):
     assert tables_after_creation - tables_after_upgrade == set()
     assert views_after_creation - views_after_upgrade == set()
     new_tables = tables_after_upgrade - tables_before
-    assert new_tables == set()
+    assert new_tables == {
+        'lido_csm_node_operators',
+        'lido_csm_node_operator_metrics',
+        'event_metrics',
+    }
     new_views = views_after_upgrade - views_before
     assert new_views == set()
     db.logout()
@@ -3654,6 +3661,12 @@ def test_upgrade_db_49_to_50(user_data_dir, messages_aggregator):
         resume_from_backup=False,
     )
     with db_v49.conn.read_ctx() as cursor:
+        assert table_exists(cursor=cursor, name='evm_events_info')
+        assert not table_exists(cursor=cursor, name='chain_events_info')
+        assert cursor.execute('SELECT identifier, counterparty, address, product FROM evm_events_info').fetchall() == [  # noqa: E501
+            (5, 'uniswap-v2', '0x5A0b54D5dc17e0AadC383d2db43B0a0D3E029c4c', 'staking'),
+            (6, 'makerdao_dsr', '0xAaE2F0F2d7C77cF2A7261a75568128F0C6996319', 'loan'),
+        ]
         assert cursor.execute(
             "SELECT identifier, event_identifier, location_label FROM history_events WHERE location = 'P'",  # noqa: E501
         ).fetchall() == [
@@ -3665,6 +3678,31 @@ def test_upgrade_db_49_to_50(user_data_dir, messages_aggregator):
             'SELECT COUNT(*) FROM history_events_mappings WHERE parent_identifier=? AND name=? AND value=?',  # noqa: E501
             (2, HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED),
         ).fetchone()[0] == 1  # TEST_EVENT_2 is customized.
+        assert not table_exists(cursor=cursor, name='accounting_rule_events')
+        assert cursor.execute('SELECT type, subtype, counterparty FROM accounting_rules ORDER BY identifier').fetchall() == (rules := [  # noqa: E501
+            ('spend', 'return wrapped', 'aave-v1'),
+            ('receive', 'reward', 'aave-v1'),
+            ('deposit', 'deposit asset', NO_ACCOUNTING_COUNTERPARTY),
+        ])
+
+        # Check that SOL-2 exists in the respective tables
+        assert cursor.execute('SELECT COUNT(*) FROM assets WHERE identifier = ?', ((old_solana_id := 'SOL-2'),)).fetchone()[0] == 1  # noqa: E501
+        assert cursor.execute('SELECT currency, amount FROM timed_balances WHERE currency = ?', (old_solana_id,)).fetchall() == [  # noqa: E501
+            (old_solana_id, '25.5'),
+        ]
+        assert cursor.execute('SELECT asset, label FROM manually_tracked_balances WHERE asset = ?', (old_solana_id,)).fetchall() == [  # noqa: E501
+            (old_solana_id, 'Test SOL-2 Manual Balance'),
+        ]
+        assert cursor.execute('SELECT location, pl_currency FROM margin_positions WHERE pl_currency = ?', (old_solana_id,)).fetchall() == [  # noqa: E501
+            ('A', old_solana_id),
+        ]
+        assert cursor.execute('SELECT event_identifier, asset FROM history_events WHERE asset = ?', (old_solana_id,)).fetchall() == [  # noqa: E501
+            ('test_sol_event', old_solana_id),
+        ]
+        assert cursor.execute('SELECT COUNT(*) FROM assets WHERE identifier = ?', ((new_solana_id := 'SOL'),)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT * FROM external_service_credentials WHERE name IN (?, ?)', ('monerium', 'gnosis_pay')).fetchall() == [('gnosis_pay', 'session_token_123', None), ('monerium', 'lefty@berlin.com', 'securepassword')]  # noqa: E501
+        gnosispay_data = (1, b'\x01\x89\x0b\\\r\\\tm\\\xa0\xe9i\xc6\xb1\x02\xba\xec%\xc5\x00\x17\xf6l[@N\xf8wV\x13\x99\x88', 1761405955, 'sex shop', 'Berlin', 'DE', 6969, 'EUR', '42.69', 'EUR', '42.69', None, None, None)  # noqa: E501
+        assert cursor.execute('SELECT * FROM gnosispay_data').fetchall() == [gnosispay_data]
 
     db_v49.logout()
     db = _init_db_with_target_version(
@@ -3674,6 +3712,12 @@ def test_upgrade_db_49_to_50(user_data_dir, messages_aggregator):
         resume_from_backup=False,
     )
     with db.conn.read_ctx() as cursor:
+        assert table_exists(cursor=cursor, name='chain_events_info')
+        assert not table_exists(cursor=cursor, name='evm_events_info')
+        assert cursor.execute('SELECT identifier, counterparty, address FROM chain_events_info').fetchall() == [  # noqa: E501
+            (5, 'uniswap-v2', '0x5A0b54D5dc17e0AadC383d2db43B0a0D3E029c4c'),
+            (6, 'makerdao_dsr', '0xAaE2F0F2d7C77cF2A7261a75568128F0C6996319'),
+        ]
         assert cursor.execute(
             "SELECT identifier, event_identifier, location_label FROM history_events WHERE location = 'P'",  # noqa: E501
         ).fetchall() == [
@@ -3681,5 +3725,80 @@ def test_upgrade_db_49_to_50(user_data_dir, messages_aggregator):
             (2, 'TEST_EVENT_2', None),  # Customized events are not updated since they may not be for the app account.  # noqa: E501
             (3, 'TEST_EVENT_3', 'Cryptocom 1'),
         ]
+        assert table_exists(cursor=cursor, name='accounting_rule_events')
+        assert cursor.execute('SELECT type, subtype, counterparty FROM accounting_rules ORDER BY identifier').fetchall() == rules  # noqa: E501
+
+        # Check that SOL-2 no longer exists in assets table
+        assert cursor.execute('SELECT COUNT(*) FROM assets WHERE identifier = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        # Check that SOL now exists in assets table
+        assert cursor.execute('SELECT COUNT(*) FROM assets WHERE identifier = ?', (new_solana_id,)).fetchone()[0] == 1  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) FROM timed_balances WHERE currency = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT currency, amount FROM timed_balances WHERE currency = ?', (new_solana_id,)).fetchall() == [  # noqa: E501
+            (new_solana_id, '25.5'),
+        ]
+        assert cursor.execute('SELECT COUNT(*) FROM manually_tracked_balances WHERE asset = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT asset, label FROM manually_tracked_balances WHERE asset = ?', (new_solana_id,)).fetchall() == [  # noqa: E501
+            (new_solana_id, 'Test SOL-2 Manual Balance'),
+        ]
+        assert cursor.execute('SELECT COUNT(*) FROM margin_positions WHERE pl_currency = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT location, pl_currency FROM margin_positions WHERE pl_currency = ?', (new_solana_id,)).fetchall() == [  # noqa: E501
+            ('A', new_solana_id),
+        ]
+        assert cursor.execute('SELECT event_identifier, asset FROM history_events WHERE asset = ?', (new_solana_id,)).fetchall() == [  # noqa: E501
+            ('test_sol_event', new_solana_id),
+        ]
+        assert cursor.execute('SELECT * FROM external_service_credentials WHERE name IN (?, ?)', ('monerium', 'gnosis_pay')).fetchall() == []  # noqa: E501
+        assert cursor.execute('SELECT * FROM gnosispay_data').fetchall() == [gnosispay_data[:-1]]
+
+    db.logout()
+
+
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+def test_upgrade_db_50_to_51(user_data_dir, messages_aggregator):
+    """Test upgrading the DB from version 50 to version 51"""
+    _use_prepared_db(user_data_dir, 'v50_rotkehlchen.db')
+    db_v50 = _init_db_with_target_version(
+        target_version=50,
+        user_data_dir=user_data_dir,
+        msg_aggregator=messages_aggregator,
+        resume_from_backup=False,
+    )
+    with db_v50.conn.read_ctx() as cursor:
+        assert column_exists(cursor=cursor, table_name='history_events', column_name='event_identifier')  # noqa: E501
+        assert not column_exists(cursor=cursor, table_name='history_events', column_name='group_identifier')  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 1
+        assert cursor.execute('SELECT identifier, event_identifier, sequence_index, asset FROM history_events ORDER BY identifier').fetchall() == (result := [  # noqa: E501
+            (1, 'TEST_EVENT_1', 0, 'ETH'),
+            (2, 'TEST_EVENT_2', 0, 'BTC'),
+            (3, 'TEST_EVENT_3', 1, 'USD'),
+        ])
+        assert not table_exists(cursor=cursor, name='lido_csm_node_operators')
+        assert not table_exists(cursor=cursor, name='lido_csm_node_operator_metrics')
+        assert not table_exists(cursor=cursor, name='event_metrics')
+        assert cursor.execute(
+            "SELECT COUNT(*) FROM location WHERE location = 'x'",
+        ).fetchone()[0] == 0
+
+    db_v50.logout()
+    db = _init_db_with_target_version(
+        target_version=51,
+        user_data_dir=user_data_dir,
+        msg_aggregator=messages_aggregator,
+        resume_from_backup=False,
+    )
+    with db.conn.read_ctx() as cursor:
+        assert not column_exists(cursor=cursor, table_name='history_events', column_name='event_identifier')  # noqa: E501
+        assert column_exists(cursor=cursor, table_name='history_events', column_name='group_identifier')  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) FROM chain_events_info').fetchone()[0] == 1  # ensure that fk relations are kept  # noqa: E501
+        assert cursor.execute('SELECT identifier, group_identifier, sequence_index, asset FROM history_events ORDER BY identifier').fetchall() == result  # noqa: E501
+        assert cursor.execute(  # Verify the unique constraint was updated
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='history_events'",
+        ).fetchone()[0].find('UNIQUE(group_identifier, sequence_index)') != -1
+        assert table_exists(cursor=cursor, name='lido_csm_node_operators')
+        assert table_exists(cursor=cursor, name='lido_csm_node_operator_metrics')
+        assert table_exists(cursor=cursor, name='event_metrics')
+        assert cursor.execute(
+            "SELECT COUNT(*) FROM location WHERE location = 'x' AND seq = 56",
+        ).fetchone()[0] == 1
 
     db.logout()

@@ -1,5 +1,5 @@
 use crate::blockchain::{
-    parse_asset_identifier, EvmInquirerManager, EvmNodeInquirer, SupportedBlockchain,
+    parse_asset_identifier, AssetAddress, EvmInquirerManager, EvmNodeInquirer, SupportedBlockchain,
 };
 use crate::coingecko;
 use crate::globaldb;
@@ -25,8 +25,8 @@ pub enum FileTypeError {
 
 sol! {
     #[sol(rpc)]
-    UniswapV3NFTManager,
-    "src/blockchain/abis/UniswapV3NFTManager.json"
+    UniswapNFTManager,
+    "src/blockchain/abis/UniswapNFTManager.json"
 }
 
 // Create the response headers from a path
@@ -87,19 +87,19 @@ async fn query_image_from_cdn(url: &str) -> Option<Bytes> {
 
 async fn query_token_icon_and_extension(
     chain_id: u64,
-    address: Address,
+    address: AssetAddress,
     base_url: &str,
 ) -> Option<(Bytes, &'static str)> {
     let client = Client::new();
-    let lower_address = address.to_string().to_ascii_lowercase();
+    let address_str = address.as_str();
 
     let urls = vec![
         (
-            format!("{}/{}/{}/logo.svg", base_url, chain_id, lower_address),
+            format!("{}/{}/{}/logo.svg", base_url, chain_id, address_str),
             "svg",
         ),
         (
-            format!("{}/{}/{}/logo-32.png", base_url, chain_id, lower_address),
+            format!("{}/{}/{}/logo-32.png", base_url, chain_id, address_str),
             "png",
         ),
     ];
@@ -113,8 +113,8 @@ async fn query_token_icon_and_extension(
     None
 }
 
-/// Queries a Uniswap V3 NFT position for its SVG icon.
-async fn query_uniswap_v3_position_icon(
+/// Queries a Uniswap V3 or V4 NFT position for its SVG icon.
+async fn query_uniswap_position_icon(
     chain_id: u64,
     token_id: &str,
     contract_address: Address,
@@ -141,11 +141,11 @@ async fn query_uniswap_v3_position_icon(
                 continue;
             }
         };
-        let contract = UniswapV3NFTManager::new(contract_address, provider);
+        let contract = UniswapNFTManager::new(contract_address, provider);
 
         // try to get the token URI
         let token_uri = match contract.tokenURI(token_id).call().await {
-            Ok(result) => result._0,
+            Ok(result) => result,
             Err(e) => {
                 // Check if this is a contract-related error
                 let error_message = e.to_string();
@@ -159,7 +159,7 @@ async fn query_uniswap_v3_position_icon(
                     .any(|&pattern| error_message.contains(pattern))
                 {
                     error!(
-                        "Contract appears to be malformed or not a valid UniswapV3NFTManager: {} - token ID {} on contract {}",
+                        "Contract appears to be malformed or not a valid Uniswap V3/V4 NFT Manager: {} - token ID {} on contract {}",
                         e, token_id, contract_address
                     );
                     break;
@@ -384,7 +384,7 @@ pub async fn query_icon_remotely(
         "SUI" => Some(("https://raw.githubusercontent.com/rotki/data/develop/assets/icons/sui.png", "png")),
         "TIA" => Some(("https://raw.githubusercontent.com/rotki/data/develop/assets/icons/tia.png", "png")),
         "DOT" => Some(("https://raw.githubusercontent.com/rotki/data/develop/assets/icons/dot.png", "png")),
-        "SOL-2" => Some(("https://raw.githubusercontent.com/SmolDapp/tokenAssets/main/tokens/1151111081099710/So11111111111111111111111111111111111111112/logo.svg", "svg")),
+        "SOL" => Some(("https://raw.githubusercontent.com/SmolDapp/tokenAssets/main/tokens/1151111081099710/So11111111111111111111111111111111111111112/logo.svg", "svg")),
         "eip155:1/erc20:0x455e53CBB86018Ac2B8092FdCd39d8444aFFC3F6" => Some(("https://raw.githubusercontent.com/SmolDapp/tokenAssets/refs/heads/main/chains/1101/logo.svg", "svg")),  // polygon
         _ => None
     } {
@@ -399,21 +399,27 @@ pub async fn query_icon_remotely(
         if let Some(token_id) = &asset_info.token_id {
             if let Ok(true) = evm_inquirer_manager
                 .globaldb
-                .is_uniswap_v3_position(&asset_id)
+                .is_uniswap_position(&asset_id)
                 .await
             {
-                debug!("Detected potential Uniswap V3 position NFT: {}", asset_id);
+                debug!(
+                    "Detected potential Uniswap V3/V4 position NFT: {}",
+                    asset_id
+                );
                 if let Some(blockchain) = SupportedBlockchain::from_chain_id(asset_info.chain_id) {
                     let inquirer = evm_inquirer_manager.get_or_init_inquirer(blockchain).await;
-                    if let Some((icon_bytes, extension)) = query_uniswap_v3_position_icon(
-                        asset_info.chain_id,
-                        token_id,
-                        asset_info.contract_address,
-                        inquirer,
-                    )
-                    .await
-                    {
-                        return write_icon_to_file(&path, extension, &icon_bytes).await;
+                    // Uniswap positions are only on EVM chains
+                    if let AssetAddress::Evm(evm_address) = asset_info.contract_address {
+                        if let Some((icon_bytes, extension)) = query_uniswap_position_icon(
+                            asset_info.chain_id,
+                            token_id,
+                            evm_address,
+                            inquirer,
+                        )
+                        .await
+                        {
+                            return write_icon_to_file(&path, extension, &icon_bytes).await;
+                        }
                     }
                 } else {
                     debug!(
@@ -451,10 +457,10 @@ pub async fn query_icon_remotely(
 
 #[cfg(test)]
 mod tests {
-    use crate::blockchain::{EvmNodeInquirer, SupportedBlockchain};
+    use crate::blockchain::{AssetAddress, EvmNodeInquirer, SupportedBlockchain};
     use crate::create_globaldb;
     use crate::icons::{
-        get_asset_path, query_token_icon_and_extension, query_uniswap_v3_position_icon,
+        get_asset_path, query_token_icon_and_extension, query_uniswap_position_icon,
     };
     use alloy::primitives::address;
     use axum::body::Bytes;
@@ -483,7 +489,12 @@ mod tests {
             .with_body(data)
             .create();
 
-        let r = query_token_icon_and_extension(chain, address, server.url().as_str()).await;
+        let r = query_token_icon_and_extension(
+            chain,
+            AssetAddress::Evm(address),
+            server.url().as_str(),
+        )
+        .await;
         assert_eq!(r, Some((Bytes::from_static(data), "svg")));
 
         // mock bad query
@@ -491,7 +502,9 @@ mod tests {
             .mock("GET", format!("/{}/{}/logo.svg", 10, address).as_str())
             .with_status(404)
             .create();
-        let r = query_token_icon_and_extension(10, address, server.url().as_str()).await;
+        let r =
+            query_token_icon_and_extension(10, AssetAddress::Evm(address), server.url().as_str())
+                .await;
         assert_eq!(r, None);
     }
 
@@ -514,7 +527,7 @@ mod tests {
         let evm_inquirer = EvmNodeInquirer::new(SupportedBlockchain::Base, Arc::new(globaldb));
         evm_inquirer.update_rpc_nodes().await.unwrap();
 
-        let result = query_uniswap_v3_position_icon(
+        let result = query_uniswap_position_icon(
             8453,
             "150",
             address!("0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1"),
@@ -532,7 +545,38 @@ mod tests {
             }
             None => {
                 panic!(
-                    "query_uniswap_v3_position_icon returned None; expected Some(bytes, 'svg'). \
+                    "query_uniswap_position_icon returned None; expected Some(bytes, 'svg'). \
+                Possible issues: RPC call failed, tokenURI parsing failed, or provider not reached."
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_uniswap_v4_position_icon() {
+        let globaldb = create_globaldb!().await.unwrap();
+        let evm_inquirer =
+            EvmNodeInquirer::new(SupportedBlockchain::ArbitrumOne, Arc::new(globaldb));
+        evm_inquirer.update_rpc_nodes().await.unwrap();
+
+        let result = query_uniswap_position_icon(
+            42161, // Arbitrum chain ID
+            "61908",
+            address!("0xd88F38F930b7952f2DB2432Cb002E7abbF3dD869"), // Arbitrum v4 position manager
+            Arc::new(evm_inquirer),
+        )
+        .await;
+
+        match result {
+            Some((bytes, extension)) => {
+                let text = std::str::from_utf8(&bytes).unwrap();
+                assert!(text.contains("USDC/ETH"));  // trade pair
+                assert!(text.contains("0.05"));  // fee range
+                assert_eq!(extension, "svg", "Expected SVG extension for v4 position");
+            }
+            None => {
+                panic!(
+                    "query_uniswap_position_icon returned None for v4 position; expected Some(bytes, 'svg'). \
                 Possible issues: RPC call failed, tokenURI parsing failed, or provider not reached."
                 );
             }

@@ -1,13 +1,13 @@
 import logging
 from collections.abc import Callable, Iterable, Sequence
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal
 
 from eth_typing import ABI
 
 from rotkehlchen.assets.asset import AssetWithSymbol
-from rotkehlchen.assets.utils import get_token
-from rotkehlchen.chain.ethereum.utils import token_normalized_value
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
+from rotkehlchen.assets.utils import get_evm_token, token_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.evm.utils import maybe_notify_cache_query_status
 from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.errors.misc import (
@@ -38,39 +38,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
-
-
-def maybe_reshuffle_events(
-        ordered_events: Sequence[Optional['EvmEvent']],
-        events_list: list['EvmEvent'],
-) -> None:
-    """Takes a list of events to order and makes sure that the sequence index of each
-    of them is in ascending order and that the events are consecutive in the
-    decoded events list.
-
-    This is for two reasons.
-    1. So that it appears uniformly in the UI
-    2. So that during accounting we know which type of event comes first in a swap-like event.
-
-    For example for swaps we expect two consecutive events with the first
-    being the out event and the second the in event,
-
-    The events are optional since it's also possible they may not be found.
-    """
-    actual_events = [x for x in ordered_events if x is not None]
-    if len(actual_events) <= 1:
-        return  # nothing to do
-
-    all_other_events = []
-    max_seq_index = -1
-    for event in events_list:
-        if event not in actual_events:
-            all_other_events.append(event)
-            max_seq_index = max(event.sequence_index, max_seq_index)
-
-    for idx, event in enumerate(actual_events):
-        event.sequence_index = max_seq_index + idx + 1
-    events_list = all_other_events + actual_events
 
 
 def bridge_prepare_data(
@@ -246,7 +213,7 @@ def get_vault_price(
     if (
         vault_token.underlying_tokens is None or
         len(vault_token.underlying_tokens) == 0 or
-        (underlying_token := get_token(
+        (underlying_token := get_evm_token(
             evm_address=vault_token.underlying_tokens[0].address,
             chain_id=evm_inquirer.chain_id,
         )) is None
@@ -307,3 +274,24 @@ def get_donation_event_params(
 
     notes = f'{verb} a {counterparty} donation of {amount} {asset.symbol} {preposition} {other_address}'  # noqa: E501
     return new_type, expected_type, expected_address, expected_location_label, notes
+
+
+def get_protocol_token_addresses(
+        protocol: str,
+        chain_id: ChainID,
+        existing_tokens: set[ChecksumEvmAddress],
+) -> set[ChecksumEvmAddress]:
+    """Load all tokens for a given protocol and chain from the global db if the count in the db
+    differs from the count of existing tokens. Otherwise return the existing tokens.
+    """
+    with GlobalDBHandler().conn.read_ctx() as cursor:
+        query_body = 'FROM evm_tokens WHERE protocol=? AND chain=?'
+        bindings = (protocol, chain_id.serialize_for_db())
+
+        cursor.execute(f'SELECT COUNT(*) {query_body}', bindings)
+        if cursor.fetchone()[0] == len(existing_tokens):
+            return existing_tokens
+
+        # else we are missing new tokens. Load all from db.
+        cursor.execute(f'SELECT protocol, address {query_body}', bindings)
+        return {string_to_evm_address(row[1]) for row in cursor}

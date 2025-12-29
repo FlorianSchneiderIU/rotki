@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING, Any
 
 from eth_abi import decode as decode_abi
 
-from rotkehlchen.assets.utils import CHAIN_TO_WRAPPED_TOKEN
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.balancer.balancer_cache import (
     read_balancer_pools_and_gauges_from_cache,
@@ -14,13 +15,11 @@ from rotkehlchen.chain.evm.decoding.balancer.balancer_cache import (
 from rotkehlchen.chain.evm.decoding.balancer.constants import BALANCER_LABEL, CPT_BALANCER_V3
 from rotkehlchen.chain.evm.decoding.balancer.decoder import BalancerCommonDecoder
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.resolver import evm_address_to_identifier
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -40,7 +39,7 @@ from .constants import (
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import Asset
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
     from rotkehlchen.fval import FVal
@@ -56,7 +55,7 @@ class Balancerv3CommonDecoder(BalancerCommonDecoder):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -70,17 +69,16 @@ class Balancerv3CommonDecoder(BalancerCommonDecoder):
                 cache_type=CacheType.BALANCER_V3_POOLS,
             ),
         )
-        self.wrapped_native_token = CHAIN_TO_WRAPPED_TOKEN[evm_inquirer.blockchain]
 
-    def _decode_pool_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_pool_events(self, context: DecoderContext) -> EvmDecodingOutput:
         # no-op implementation of abstract method from ReloadablePoolsAndGaugesDecoderMixin.
         # balancer v3 pool deposits and withdrawals are handled by _decode_liquidity_event.
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_liquidity_event(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_liquidity_event(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode liquidity events (inflow & outflow) for Balancer V3 pools."""
         if context.tx_log.topics[0] not in (LIQUIDITY_ADDED_TOPIC, LIQUIDITY_REMOVED_TOPIC):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if context.tx_log.topics[0] == LIQUIDITY_ADDED_TOPIC:
             pool_token_event_type = HistoryEventType.RECEIVE
@@ -99,14 +97,14 @@ class Balancerv3CommonDecoder(BalancerCommonDecoder):
             to_event_subtype = HistoryEventSubType.REDEEM_WRAPPED
             to_notes_template = 'Withdraw {amount} {symbol} from a Balancer v3 pool'
 
-        pool_tokens = self.evm_inquirer.call_contract(
+        pool_tokens = self.node_inquirer.call_contract(
             contract_address=(lp_token_address := bytes_to_address(context.tx_log.topics[1])),
             method_name='getTokens',
             abi=BALANCER_V3_POOL_ABI,
         )
         lp_token_identifier = evm_address_to_identifier(
             address=lp_token_address,
-            chain_id=self.evm_inquirer.chain_id,
+            chain_id=self.node_inquirer.chain_id,
         )
         pool_token_event = None
         for event in context.decoded_events:
@@ -126,7 +124,7 @@ class Balancerv3CommonDecoder(BalancerCommonDecoder):
 
         if pool_token_event is None:
             log.error(f'Failed to find balancer v3 pool token event in transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         action_items = []
         amounts = decode_abi(  # totalSupply, amounts, swapFeeAmountsRaw
@@ -143,12 +141,12 @@ class Balancerv3CommonDecoder(BalancerCommonDecoder):
                 amount=amount_raw,
                 asset=(token := self.base.get_or_create_evm_asset(deserialize_evm_address(token_address))),  # noqa: E501
             )
-            if token == self.wrapped_native_token:
+            if token == self.node_inquirer.wrapped_native_token:
                 for event in context.decoded_events:
                     if (
                             event.event_type == from_event_type and
                             event.event_subtype == HistoryEventSubType.NONE and
-                            event.asset == self.evm_inquirer.native_token and
+                            event.asset == self.node_inquirer.native_token and
                             event.amount == amount
                     ):
                         event.event_type = to_event_type
@@ -156,7 +154,7 @@ class Balancerv3CommonDecoder(BalancerCommonDecoder):
                         event.event_subtype = to_event_subtype
                         event.notes = to_notes_template.format(
                             amount=event.amount,
-                            symbol=self.evm_inquirer.native_token.symbol,
+                            symbol=self.node_inquirer.native_token.symbol,
                         )
                         break
 
@@ -172,12 +170,12 @@ class Balancerv3CommonDecoder(BalancerCommonDecoder):
                 to_counterparty=CPT_BALANCER_V3,
             ))
 
-        return DecodingOutput(action_items=action_items, matched_counterparty=CPT_BALANCER_V3)
+        return EvmDecodingOutput(action_items=action_items, matched_counterparty=CPT_BALANCER_V3)
 
     @staticmethod
-    def _decode_swap_event(context: DecoderContext) -> DecodingOutput:
+    def _decode_swap_event(context: DecoderContext) -> EvmDecodingOutput:
         """Identifies swap events and marks them for later processing."""
-        return DecodingOutput(matched_counterparty=CPT_BALANCER_SWAP_V3)
+        return EvmDecodingOutput(matched_counterparty=CPT_BALANCER_SWAP_V3)
 
     @staticmethod
     def _order_lp_events(
@@ -228,10 +226,10 @@ class Balancerv3CommonDecoder(BalancerCommonDecoder):
             # wrapping/unwrapping operations can happen before swaps, so using individual
             # swap log amounts would miss wrapped token portions and only capture direct
             # swap amounts, leading to incomplete event matching across the full transaction flow
-            if (token_out := self.base.get_or_create_evm_asset(bytes_to_address(tx_log.topics[2]))) == self.wrapped_native_token:  # noqa: E501
-                out_assets.add(self.evm_inquirer.native_token)
-            if (token_in := self.base.get_or_create_evm_asset(bytes_to_address(tx_log.topics[3]))) == self.wrapped_native_token:  # noqa: E501
-                in_assets.add(self.evm_inquirer.native_token)
+            if (token_out := self.base.get_or_create_evm_asset(bytes_to_address(tx_log.topics[2]))) == self.node_inquirer.wrapped_native_token:  # noqa: E501
+                out_assets.add(self.node_inquirer.native_token)
+            if (token_in := self.base.get_or_create_evm_asset(bytes_to_address(tx_log.topics[3]))) == self.node_inquirer.wrapped_native_token:  # noqa: E501
+                in_assets.add(self.node_inquirer.native_token)
 
             in_assets.add(token_in)
             out_assets.add(token_out)
@@ -290,13 +288,13 @@ class Balancerv3CommonDecoder(BalancerCommonDecoder):
         )
         return decoded_events
 
-    def _decode_vault_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_vault_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] in (LIQUIDITY_ADDED_TOPIC, LIQUIDITY_REMOVED_TOPIC):
             return self._decode_liquidity_event(context)
         elif context.tx_log.topics[0] == SWAP_TOPIC:
             return self._decode_swap_event(context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         return super().addresses_to_decoders() | {

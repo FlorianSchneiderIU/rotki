@@ -2,8 +2,9 @@ import type { ComputedRef } from 'vue';
 import type { ActionStatus } from '@/types/action';
 import type { Eth2Validator } from '@/types/balances';
 import type { BlockchainAccount, ValidatorData } from '@/types/blockchain/accounts';
+import type { BlockchainAssetBalances } from '@/types/blockchain/balances';
 import type { TaskMeta } from '@/types/task';
-import { type BigNumber, bigNumberify, Blockchain } from '@rotki/common';
+import { type BigNumber, bigNumberify, Blockchain, type EthValidatorFilter } from '@rotki/common';
 import { useBlockchainAccountsApi } from '@/composables/api/blockchain/accounts';
 import { usePremium } from '@/composables/premium';
 import { useStatusUpdater } from '@/composables/status';
@@ -22,7 +23,7 @@ import { logger } from '@/utils/logging';
 
 interface UseEthStakingReturn {
   validatorsLimitInfo: ComputedRef<{ showWarning: boolean; limit: number; total: number }>;
-  fetchEthStakingValidators: () => Promise<void>;
+  fetchEthStakingValidators: (payload?: EthValidatorFilter) => Promise<void>;
   addEth2Validator: (payload: Eth2Validator) => Promise<ActionStatus<ValidationErrors | string>>;
   editEth2Validator: (payload: Eth2Validator) => Promise<ActionStatus<ValidationErrors | string>>;
   deleteEth2Validators: (validators: string[]) => Promise<boolean>;
@@ -174,25 +175,27 @@ export function useEthStaking(): UseEthStakingReturn {
 
     const ETH2_ASSET = Blockchain.ETH2.toUpperCase();
 
-    const { amount, usdValue } = eth2[publicKey].assets.address[ETH2_ASSET];
+    const { amount, value } = eth2[publicKey].assets[ETH2_ASSET].address;
 
     // we should not need to update anything if amount and value are zero
-    if (amount.isZero() && usdValue.isZero())
+    if (amount.isZero() && value.isZero())
       return;
 
-    const calc = (value: BigNumber, oldPercentage: BigNumber, newPercentage: BigNumber): BigNumber =>
-      value.dividedBy(oldPercentage).multipliedBy(newPercentage);
+    const calc = (val: BigNumber, oldPercentage: BigNumber, newPercentage: BigNumber): BigNumber =>
+      val.dividedBy(oldPercentage).multipliedBy(newPercentage);
 
     const newAmount = calc(amount, oldOwnershipPercentage, newOwnershipPercentage);
 
-    const newValue = calc(usdValue, oldOwnershipPercentage, newOwnershipPercentage);
+    const newValue = calc(value, oldOwnershipPercentage, newOwnershipPercentage);
 
-    const updatedBalance = {
+    const updatedBalance: BlockchainAssetBalances = {
       [publicKey]: {
         assets: {
           [ETH2_ASSET]: {
-            amount: newAmount,
-            usdValue: newValue,
+            address: {
+              amount: newAmount,
+              value: newValue,
+            },
           },
         },
         liabilities: {},

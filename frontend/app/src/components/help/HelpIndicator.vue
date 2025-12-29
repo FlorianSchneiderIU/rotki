@@ -1,15 +1,12 @@
 <script setup lang="ts">
 import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
 
-const props = defineProps<{ visible: boolean }>();
+const visible = defineModel<boolean>('visible', { required: true });
 
-const emit = defineEmits<{ (e: 'update:visible', visible: boolean): void }>();
-
-const { visible } = toRefs(props);
 const { t } = useI18n({ useScope: 'global' });
 
-function toggleVisibility() {
-  emit('update:visible', !get(visible));
+function toggleVisibility(): void {
+  set(visible, !get(visible));
 }
 </script>
 
@@ -19,14 +16,8 @@ function toggleVisibility() {
     @click="toggleVisibility()"
   >
     <RuiIcon
-      :class="{ [$style.visible]: visible }"
-      name="lu-circle-help"
+      :class="{ '-rotate-[25deg]': visible }"
+      name="lu-circle-question-mark"
     />
   </MenuTooltipButton>
 </template>
-
-<style module lang="scss">
-.visible {
-  transform: rotate(-25deg);
-}
-</style>

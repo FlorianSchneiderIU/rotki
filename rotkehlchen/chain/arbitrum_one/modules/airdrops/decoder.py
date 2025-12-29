@@ -1,14 +1,14 @@
 from typing import TYPE_CHECKING, Any
 
+from rotkehlchen.assets.utils import asset_normalized_value
 from rotkehlchen.chain.arbitrum_one.constants import ARBITRUM_ONE_CPT_DETAILS, CPT_ARBITRUM_ONE
 from rotkehlchen.chain.arbitrum_one.decoding.interfaces import ArbitrumDecoderInterface
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ARB
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -17,7 +17,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.user_messages import MessagesAggregator
 
 
@@ -30,7 +30,7 @@ class AirdropsDecoder(ArbitrumDecoderInterface):
     def __init__(
             self,
             arbitrum_one_inquirer: 'ArbitrumOneInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -40,9 +40,9 @@ class AirdropsDecoder(ArbitrumDecoderInterface):
         )
         self.arb_token = A_ARB.resolve_to_evm_token()
 
-    def _decode_arbitrum_airdrop_claim(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_arbitrum_airdrop_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != ARB_CLAIMED:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         user_address = bytes_to_address(context.tx_log.topics[1])
         raw_amount = int.from_bytes(context.tx_log.data[0:32])
@@ -56,7 +56,7 @@ class AirdropsDecoder(ArbitrumDecoderInterface):
                 event.notes = f'Claimed {amount} ARB from arbitrum airdrop'
                 break
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         return {

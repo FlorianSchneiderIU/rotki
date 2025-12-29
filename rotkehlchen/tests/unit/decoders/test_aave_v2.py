@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from rotkehlchen.assets.asset import Asset, EvmToken
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.decoding.decoder import EthereumTransactionDecoder
 from rotkehlchen.chain.ethereum.modules.aave.constants import (
     STK_AAVE_ADDR,
@@ -16,7 +17,6 @@ from rotkehlchen.chain.evm.decoding.aave.constants import (
     CPT_AAVE_V2,
     CPT_AAVE_V3,
 )
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.structures import EvmTxReceipt, EvmTxReceiptLog
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
@@ -25,13 +25,13 @@ from rotkehlchen.constants.assets import (
     A_AETH_V1,
     A_DAI,
     A_ETH,
-    A_POLYGON_POS_MATIC,
+    A_POL,
     A_REN,
     A_WETH,
 )
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
+from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.decoders import patch_decoder_reload_data
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
@@ -67,7 +67,7 @@ def test_aave_deposit_v1(ethereum_inquirer):
     amount = '2507.675873220870275072'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -79,7 +79,7 @@ def test_aave_deposit_v1(ethereum_inquirer):
             notes='Burn 0.00825148723006 ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=93,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -92,7 +92,7 @@ def test_aave_deposit_v1(ethereum_inquirer):
             counterparty=CPT_AAVE_V1,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=94,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -105,7 +105,7 @@ def test_aave_deposit_v1(ethereum_inquirer):
             counterparty=CPT_AAVE_V1,
             address=string_to_evm_address('0x3dfd23A6c5E8BbcFc9581d2E864a68feb6a076d3'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=95,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -135,7 +135,7 @@ def test_aave_withdraw_v1(ethereum_inquirer):
     interest = '88.663672238882760399'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -147,7 +147,7 @@ def test_aave_withdraw_v1(ethereum_inquirer):
             notes='Burn 0.028562839354 ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -160,7 +160,7 @@ def test_aave_withdraw_v1(ethereum_inquirer):
             counterparty=CPT_AAVE_V1,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -173,7 +173,7 @@ def test_aave_withdraw_v1(ethereum_inquirer):
             counterparty=CPT_AAVE_V1,
             address=string_to_evm_address('0x3dfd23A6c5E8BbcFc9581d2E864a68feb6a076d3'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=3,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -202,7 +202,7 @@ def test_aave_eth_withdraw_v1(ethereum_inquirer):
     interest = '0.000240847792940067'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=1605789951000,
             location=Location.ETHEREUM,
@@ -214,7 +214,7 @@ def test_aave_eth_withdraw_v1(ethereum_inquirer):
             notes='Burn 0.021740928 ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=1605789951000,
             location=Location.ETHEREUM,
@@ -227,7 +227,7 @@ def test_aave_eth_withdraw_v1(ethereum_inquirer):
             counterparty=CPT_AAVE_V1,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=1605789951000,
             location=Location.ETHEREUM,
@@ -240,7 +240,7 @@ def test_aave_eth_withdraw_v1(ethereum_inquirer):
             counterparty=CPT_AAVE_V1,
             address=string_to_evm_address('0x3dfd23A6c5E8BbcFc9581d2E864a68feb6a076d3'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=3,
             timestamp=1605789951000,
             location=Location.ETHEREUM,
@@ -263,11 +263,10 @@ def test_aave_v2_enable_collateral(database, ethereum_inquirer, eth_transactions
     Data taken from
     https://etherscan.io/tx/0xc97b35f42c64a69c01d0e0e4106a655e385c8fa21c812c59a6172199e99cdb7e
     """
-    tx_hex = '0xc97b35f42c64a69c01d0e0e4106a655e385c8fa21c812c59a6172199e99cdb7e'
-    evmhash = deserialize_evm_tx_hash(tx_hex)
+    tx_hash = deserialize_evm_tx_hash('0xc97b35f42c64a69c01d0e0e4106a655e385c8fa21c812c59a6172199e99cdb7e')  # noqa: E501
     user_address = string_to_evm_address('0x2715273613632226985186221669179813245119')
     transaction = EvmTransaction(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         timestamp=0,
         block_number=0,
@@ -281,7 +280,7 @@ def test_aave_v2_enable_collateral(database, ethereum_inquirer, eth_transactions
         nonce=0,
     )
     receipt = EvmTxReceipt(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         contract_address=None,
         status=True,
@@ -301,7 +300,7 @@ def test_aave_v2_enable_collateral(database, ethereum_inquirer, eth_transactions
     )
     dbevmtx = DBEvmTx(database)
     with dbevmtx.db.user_write() as cursor:
-        dbevmtx.add_evm_transactions(cursor, [transaction], relevant_address=None)
+        dbevmtx.add_transactions(cursor, [transaction], relevant_address=None)
     decoder = EthereumTransactionDecoder(
         database=database,
         ethereum_inquirer=ethereum_inquirer,
@@ -310,7 +309,7 @@ def test_aave_v2_enable_collateral(database, ethereum_inquirer, eth_transactions
     events, _, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
     expected_events = [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=0,
             location=Location.ETHEREUM,
@@ -324,7 +323,7 @@ def test_aave_v2_enable_collateral(database, ethereum_inquirer, eth_transactions
             identifier=None,
             extra_data=None,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=252,
             timestamp=0,
             location=Location.ETHEREUM,
@@ -349,11 +348,10 @@ def test_aave_v2_disable_collateral(database, ethereum_inquirer, eth_transaction
     Data taken from
     https://etherscan.io/tx/0x8fe440f37fd0fa1467067a195ea862db1f96c40634ea7bb3782cc3c3431e9b5c
     """
-    tx_hex = '0x8fe440f37fd0fa1467067a195ea862db1f96c40634ea7bb3782cc3c3431e9b5c'
-    evmhash = deserialize_evm_tx_hash(tx_hex)
+    tx_hash = deserialize_evm_tx_hash('0x8fe440f37fd0fa1467067a195ea862db1f96c40634ea7bb3782cc3c3431e9b5c')  # noqa: E501
     user_address = string_to_evm_address('0x2715273613632226985186221669179813245119')
     transaction = EvmTransaction(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         timestamp=0,
         block_number=0,
@@ -367,7 +365,7 @@ def test_aave_v2_disable_collateral(database, ethereum_inquirer, eth_transaction
         nonce=0,
     )
     receipt = EvmTxReceipt(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         contract_address=None,
         status=True,
@@ -387,7 +385,7 @@ def test_aave_v2_disable_collateral(database, ethereum_inquirer, eth_transaction
     )
     dbevmtx = DBEvmTx(database)
     with dbevmtx.db.user_write() as cursor:
-        dbevmtx.add_evm_transactions(cursor, [transaction], relevant_address=None)
+        dbevmtx.add_transactions(cursor, [transaction], relevant_address=None)
     decoder = EthereumTransactionDecoder(
         database=database,
         ethereum_inquirer=ethereum_inquirer,
@@ -396,7 +394,7 @@ def test_aave_v2_disable_collateral(database, ethereum_inquirer, eth_transaction
     events, _, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
     expected_events = [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=0,
             location=Location.ETHEREUM,
@@ -410,7 +408,7 @@ def test_aave_v2_disable_collateral(database, ethereum_inquirer, eth_transaction
             identifier=None,
             extra_data=None,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=25,
             timestamp=0,
             location=Location.ETHEREUM,
@@ -435,11 +433,10 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
     Data taken from
     https://etherscan.io/tx/0xf79939503543d76942e076a117ee8467565925f8c6efef973a8e2a6baed4616a
     """
-    tx_hex = '0xf79939503543d76942e076a117ee8467565925f8c6efef973a8e2a6baed4616a'
-    evmhash = deserialize_evm_tx_hash(tx_hex)
+    tx_hash = deserialize_evm_tx_hash('0xf79939503543d76942e076a117ee8467565925f8c6efef973a8e2a6baed4616a')  # noqa: E501
     user_address = string_to_evm_address('0x2715273613632226985186221669179813245119')
     transaction = EvmTransaction(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         timestamp=0,
         block_number=0,
@@ -453,7 +450,7 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
         nonce=0,
     )
     receipt = EvmTxReceipt(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         contract_address=None,
         status=True,
@@ -497,12 +494,12 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
         transactions=eth_transactions,
     )
     with dbevmtx.db.user_write() as cursor, patch_decoder_reload_data():
-        dbevmtx.add_evm_transactions(cursor, [transaction], relevant_address=None)
+        dbevmtx.add_transactions(cursor, [transaction], relevant_address=None)
         decoder.reload_data(cursor)
     events, _, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
     expected_events = [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=0,
             location=Location.ETHEREUM,
@@ -516,7 +513,7 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
             identifier=None,
             extra_data=None,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=0,
             location=Location.ETHEREUM,
@@ -531,7 +528,7 @@ def test_aave_v2_deposit(database, ethereum_inquirer, eth_transactions):
             extra_data=None,
             address=string_to_evm_address('0x030bA81f1c18d280636F32af80b9AAd02Cf0854e'),
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=0,
             location=Location.ETHEREUM,
@@ -561,7 +558,7 @@ def test_aave_v2_withdraw(ethereum_inquirer, ethereum_accounts):
     timestamp, gas_amount, user_address = TimestampMS(1660809759000), '0.0217873', ethereum_accounts[0]  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -575,7 +572,7 @@ def test_aave_v2_withdraw(ethereum_inquirer, ethereum_accounts):
             identifier=None,
             extra_data=None,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=25,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -588,7 +585,7 @@ def test_aave_v2_withdraw(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_AAVE_V2,
             address=string_to_evm_address('0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=26,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -603,7 +600,7 @@ def test_aave_v2_withdraw(ethereum_inquirer, ethereum_accounts):
             extra_data=None,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=27,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -632,7 +629,7 @@ def test_aave_v2_borrow(ethereum_inquirer, ethereum_accounts):
     user_address = ethereum_accounts[0]
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -646,7 +643,7 @@ def test_aave_v2_borrow(ethereum_inquirer, ethereum_accounts):
             identifier=None,
             extra_data=None,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -660,7 +657,7 @@ def test_aave_v2_borrow(ethereum_inquirer, ethereum_accounts):
             extra_data=None,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -685,11 +682,10 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
     Data taken from
     https://etherscan.io/tx/0x2d43c327482127821603555b00e9feb67e8de1c412a57f55e0fc8ae6bbb32d11
     """
-    tx_hex = '0x2d43c327482127821603555b00e9feb67e8de1c412a57f55e0fc8ae6bbb32d11'
-    evmhash = deserialize_evm_tx_hash(tx_hex)
+    tx_hash = deserialize_evm_tx_hash('0x2d43c327482127821603555b00e9feb67e8de1c412a57f55e0fc8ae6bbb32d11')  # noqa: E501
     user_address = string_to_evm_address('0x00000000000Cd56832cE5dfBcBFf02e7eC639BC9')
     transaction = EvmTransaction(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         timestamp=0,
         block_number=0,
@@ -703,7 +699,7 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
         nonce=0,
     )
     receipt = EvmTxReceipt(
-        tx_hash=evmhash,
+        tx_hash=tx_hash,
         chain_id=ChainID.ETHEREUM,
         contract_address=None,
         status=True,
@@ -742,7 +738,7 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
     )
     dbevmtx = DBEvmTx(database)
     with dbevmtx.db.user_write() as cursor:
-        dbevmtx.add_evm_transactions(cursor, [transaction], relevant_address=None)
+        dbevmtx.add_transactions(cursor, [transaction], relevant_address=None)
     decoder = EthereumTransactionDecoder(
         database=database,
         ethereum_inquirer=ethereum_inquirer,
@@ -751,7 +747,7 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
     events, _, _ = decoder._decode_transaction(transaction=transaction, tx_receipt=receipt)
     expected_events = [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=0,
             location=Location.ETHEREUM,
@@ -765,7 +761,7 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
             identifier=None,
             extra_data=None,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=0,
             location=Location.ETHEREUM,
@@ -780,7 +776,7 @@ def test_aave_v2_repay(database, ethereum_inquirer, eth_transactions):
             extra_data=None,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=0,
             location=Location.ETHEREUM,
@@ -814,7 +810,7 @@ def test_aave_v2_liquidation(
     user_address = ethereum_accounts[0]
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=6,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -828,7 +824,7 @@ def test_aave_v2_liquidation(
             address=string_to_evm_address('0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9'),
             extra_data={'is_liquidation': True},
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=11,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -860,7 +856,7 @@ def test_aave_v1_liquidation(
     user_address = ethereum_accounts[0]
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=187,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -874,7 +870,7 @@ def test_aave_v1_liquidation(
             address=string_to_evm_address('0x398eC7346DcD622eDc5ae82352F02bE94C62d119'),
         ),
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=188,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -903,7 +899,7 @@ def test_aave_v2_supply_ether(ethereum_inquirer, ethereum_accounts):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=TimestampMS(1646516157000),
             location=Location.ETHEREUM,
@@ -917,7 +913,7 @@ def test_aave_v2_supply_ether(ethereum_inquirer, ethereum_accounts):
             identifier=None,
             extra_data=None,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=182,
             timestamp=TimestampMS(1646516157000),
             location=Location.ETHEREUM,
@@ -932,7 +928,7 @@ def test_aave_v2_supply_ether(ethereum_inquirer, ethereum_accounts):
             extra_data=None,
             address=string_to_evm_address('0xcc9a0B7c43DC2a5F023Bb9b738E45B0Ef6B06E04'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=183,
             timestamp=TimestampMS(1646516157000),
             location=Location.ETHEREUM,
@@ -941,13 +937,13 @@ def test_aave_v2_supply_ether(ethereum_inquirer, ethereum_accounts):
             asset=A_ETH,
             amount=FVal(0.1),
             location_label=ethereum_accounts[0],
-            notes='Deposit 0.1 WETH into AAVE v2',
+            notes='Deposit 0.1 ETH into AAVE v2',
             counterparty=CPT_AAVE_V2,
             identifier=None,
             extra_data=None,
             address=string_to_evm_address('0xcc9a0B7c43DC2a5F023Bb9b738E45B0Ef6B06E04'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=184,
             timestamp=TimestampMS(1646516157000),
             location=Location.ETHEREUM,
@@ -978,19 +974,19 @@ def test_aave_v2_borrow_polygon(polygon_pos_inquirer, polygon_pos_accounts) -> N
     borrowed_amount, gas_fees = '5060', '0.033400048613703322'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.POLYGON_POS,
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
-            asset=A_POLYGON_POS_MATIC,
+            asset=A_POL,
             amount=FVal(gas_fees),
             location_label=polygon_pos_accounts[0],
             notes=f'Burn {gas_fees} POL for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.POLYGON_POS,
@@ -1003,7 +999,7 @@ def test_aave_v2_borrow_polygon(polygon_pos_inquirer, polygon_pos_accounts) -> N
             counterparty=CPT_AAVE_V2,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.POLYGON_POS,
@@ -1038,7 +1034,7 @@ def test_aave_stake(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: li
             amount=FVal(gas_fees),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas_fees} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=64,
@@ -1050,7 +1046,7 @@ def test_aave_stake(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: li
             amount=FVal(approval_amount),
             location_label=ethereum_accounts[0],
             notes=f'Set AAVE spending approval of {ethereum_accounts[0]} by {STK_AAVE_ADDR} to {approval_amount}',  # noqa: E501
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=STK_AAVE_ADDR,
         ), EvmEvent(
             sequence_index=65,
@@ -1062,9 +1058,8 @@ def test_aave_stake(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: li
             amount=FVal(staked),
             location_label=ethereum_accounts[0],
             notes=f'Stake {staked} AAVE',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_AAVE,
-            product=EvmProduct.STAKING,
             address=STK_AAVE_ADDR,
         ), EvmEvent(
             sequence_index=66,
@@ -1077,7 +1072,7 @@ def test_aave_stake(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: li
             location_label=ethereum_accounts[0],
             notes=f'Receive {staked} stkAAVE from staking in Aave',
             counterparty=CPT_AAVE,
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=ZERO_ADDRESS,
         ),
     ]
@@ -1103,7 +1098,7 @@ def test_aave_stake_behalfof(ethereum_inquirer: 'EthereumInquirer', ethereum_acc
             amount=FVal(gas_fees),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas_fees} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=123,
@@ -1115,7 +1110,7 @@ def test_aave_stake_behalfof(ethereum_inquirer: 'EthereumInquirer', ethereum_acc
             amount=FVal(approval_amount),
             location_label=ethereum_accounts[0],
             notes=f'Set AAVE spending approval of {ethereum_accounts[0]} by {STK_AAVE_ADDR} to {approval_amount}',  # noqa: E501
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=STK_AAVE_ADDR,
         ), EvmEvent(
             sequence_index=124,
@@ -1127,9 +1122,8 @@ def test_aave_stake_behalfof(ethereum_inquirer: 'EthereumInquirer', ethereum_acc
             amount=FVal(staked),
             location_label=ethereum_accounts[0],
             notes=f'Stake {staked} AAVE',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_AAVE,
-            product=EvmProduct.STAKING,
             address=STK_AAVE_ADDR,
         ), EvmEvent(
             sequence_index=125,
@@ -1142,7 +1136,7 @@ def test_aave_stake_behalfof(ethereum_inquirer: 'EthereumInquirer', ethereum_acc
             location_label=ethereum_accounts[0],
             notes=f'Receive {staked} stkAAVE from staking in Aave',
             counterparty=CPT_AAVE,
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=ZERO_ADDRESS,
         ),
     ]
@@ -1167,7 +1161,7 @@ def test_aave_unstake(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: 
             amount=FVal(gas_fees),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas_fees} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=449,
@@ -1179,10 +1173,9 @@ def test_aave_unstake(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: 
             amount=FVal(unstaked),
             location_label=ethereum_accounts[0],
             notes=f'Unstake {unstaked} stkAAVE',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=ZERO_ADDRESS,
             counterparty=CPT_AAVE,
-            product=EvmProduct.STAKING,
         ), EvmEvent(
             sequence_index=450,
             timestamp=timestamp,
@@ -1193,7 +1186,7 @@ def test_aave_unstake(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: 
             amount=FVal(unstaked),
             location_label=ethereum_accounts[0],
             notes=f'Receive {unstaked} AAVE after unstaking from Aave',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=STK_AAVE_ADDR,
             counterparty=CPT_AAVE,
         ),
@@ -1219,7 +1212,7 @@ def test_aave_unstake_old(ethereum_inquirer: 'EthereumInquirer', ethereum_accoun
             amount=FVal(gas_fees),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas_fees} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=363,
@@ -1231,10 +1224,9 @@ def test_aave_unstake_old(ethereum_inquirer: 'EthereumInquirer', ethereum_accoun
             amount=FVal(unstaked),
             location_label=ethereum_accounts[0],
             notes=f'Unstake {unstaked} stkAAVE',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=ZERO_ADDRESS,
             counterparty=CPT_AAVE,
-            product=EvmProduct.STAKING,
         ), EvmEvent(
             sequence_index=368,
             timestamp=timestamp,
@@ -1245,7 +1237,7 @@ def test_aave_unstake_old(ethereum_inquirer: 'EthereumInquirer', ethereum_accoun
             amount=FVal(unstaked),
             location_label=ethereum_accounts[0],
             notes=f'Receive {unstaked} AAVE after unstaking from Aave',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=STK_AAVE_ADDR,
             counterparty=CPT_AAVE,
         ),
@@ -1271,7 +1263,7 @@ def test_stake_reward(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: 
             amount=FVal(gas_fees),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas_fees} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=330,
@@ -1283,10 +1275,9 @@ def test_stake_reward(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: 
             amount=FVal(amount),
             location_label=ethereum_accounts[0],
             notes=f'Claim {amount} AAVE from staking',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=STK_AAVE_ADDR,
             counterparty=CPT_AAVE,
-            product=EvmProduct.STAKING,
         ),
     ]
     assert events == expected_events
@@ -1311,7 +1302,7 @@ def test_stake_reward_from_incentives(ethereum_inquirer: 'EthereumInquirer', eth
             amount=FVal(gas_fees),
             location_label=ethereum_accounts[0],
             notes=f'Burn {gas_fees} ETH for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=67,
@@ -1323,7 +1314,7 @@ def test_stake_reward_from_incentives(ethereum_inquirer: 'EthereumInquirer', eth
             amount=FVal(amount),
             location_label=ethereum_accounts[0],
             notes=f'Claim {amount} stkAAVE from AAVE v2 incentives',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=string_to_evm_address('0xd784927Ff2f95ba542BfC824c8a8a98F3495f6b5'),
             counterparty=CPT_AAVE_V2,
         ),
@@ -1347,11 +1338,11 @@ def test_polygon_incentives(polygon_pos_inquirer: 'PolygonPOSInquirer', polygon_
             location=Location.POLYGON_POS,
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
-            asset=A_POLYGON_POS_MATIC,
+            asset=A_POL,
             amount=FVal(gas_fees),
             location_label=user,
             notes=f'Burn {gas_fees} POL for gas',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GAS,
         ), EvmEvent(
             sequence_index=199,
@@ -1363,7 +1354,7 @@ def test_polygon_incentives(polygon_pos_inquirer: 'PolygonPOSInquirer', polygon_
             amount=FVal(amount),
             location_label=user,
             notes=f'Claim {amount} WMATIC from AAVE v2 incentives',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=string_to_evm_address('0x357D51124f59836DeD84c8a1730D72B749d8BC23'),
             counterparty=CPT_AAVE_V2,
         ),
@@ -1380,7 +1371,7 @@ def test_mainnet_aave_v2_migrate_to_v3_(ethereum_inquirer, ethereum_accounts) ->
     amount_out, amount_in, approval_amount, gas_fees, timestamp, user = '84.521918902842181053', '76.326951198340166536', '115792089237316195423570985008687907853269984665640564039373.062089010287458882', '0.010769376235131354', TimestampMS(1675004267000), ethereum_accounts[0]  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -1392,7 +1383,7 @@ def test_mainnet_aave_v2_migrate_to_v3_(ethereum_inquirer, ethereum_accounts) ->
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=137,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -1414,10 +1405,10 @@ def test_mainnet_aave_v2_migrate_to_v3_(ethereum_inquirer, ethereum_accounts) ->
             amount=FVal(approval_amount),
             location_label=user,
             notes=f'Set aSTETH spending approval of {user} by {V3_MIGRATION_HELPER} to {approval_amount}',  # noqa: E501
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             address=V3_MIGRATION_HELPER,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=157,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -1430,7 +1421,7 @@ def test_mainnet_aave_v2_migrate_to_v3_(ethereum_inquirer, ethereum_accounts) ->
             counterparty=CPT_AAVE_V3,
             address=V3_MIGRATION_HELPER,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=158,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -1443,7 +1434,7 @@ def test_mainnet_aave_v2_migrate_to_v3_(ethereum_inquirer, ethereum_accounts) ->
             counterparty=CPT_AAVE_V2,
             address=V3_MIGRATION_HELPER,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=159,
             timestamp=timestamp,
             location=Location.ETHEREUM,

@@ -4,21 +4,21 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from eth_typing import ABI
 
+from rotkehlchen.assets.utils import token_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.ethereum.modules.curve.crvusd.constants import CURVE_CRVUSD_CONTROLLER_ABI
-from rotkehlchen.chain.ethereum.utils import token_normalized_value
 from rotkehlchen.chain.evm.decoding.curve.constants import (
     CPT_CURVE,
     CURVE_COUNTERPARTY_DETAILS,
 )
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.errors.misc import NotERC20Conformant, NotERC721Conformant, RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
@@ -27,7 +27,6 @@ from rotkehlchen.globaldb.cache import (
     globaldb_set_unique_cache_value,
 )
 from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
@@ -37,7 +36,7 @@ from .constants import BORROW_TOPIC, CURVE_VAULT_ABI, REMOVE_COLLATERAL_TOPIC, R
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import EvmToken
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.fval import FVal
     from rotkehlchen.user_messages import MessagesAggregator
@@ -46,15 +45,14 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
+class CurveBorrowRepayCommonDecoder(EvmDecoderInterface, ABC):
     """Common borrow/repay event decoder for both crvUSD markets and llamalend vaults."""
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',  # pylint: disable=unused-argument
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
-            evm_product: Literal[EvmProduct.LENDING, EvmProduct.MINTING],
             leverage_zap: 'ChecksumEvmAddress | None' = None,
     ) -> None:
         """Decoder for Curve borrow/repay events.
@@ -68,7 +66,6 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
         )
         self.controllers: set[ChecksumEvmAddress] = set()  # populated via reload_data in subclasses  # noqa: E501
         self.leverage_zap = leverage_zap
-        self.evm_product = evm_product
 
     def _maybe_get_cached_address_from_contract(
             self,
@@ -92,7 +89,7 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
                 return string_to_evm_address(value)
 
         try:
-            value = deserialize_evm_address(self.evm_inquirer.call_contract(
+            value = deserialize_evm_address(self.node_inquirer.call_contract(
                 contract_address=contract_address,
                 abi=contract_abi,
                 method_name=contract_method,
@@ -100,7 +97,7 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
         except (RemoteError, DeserializationError) as e:
             log.error(
                 f'Failed to retrieve an evm address from the {contract_method} method on the '
-                f'{self.evm_inquirer.chain_name} Curve contract {contract_address} due to {e!s}',
+                f'{self.node_inquirer.chain_name} Curve contract {contract_address} due to {e!s}',
             )
             return None
 
@@ -145,7 +142,7 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
         except (NotERC20Conformant, NotERC721Conformant) as e:
             log.error(
                 f'Failed to get or create token {token_address} associated with Curve contract '
-                f'{contract_address} on {self.evm_inquirer.chain_name} due to {e}',
+                f'{contract_address} on {self.node_inquirer.chain_name} due to {e}',
             )
             return None
 
@@ -162,10 +159,10 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
     def maybe_decode_leveraged_borrow(
             self,
             context: DecoderContext,
-    ) -> DecodingOutput | None:
+    ) -> EvmDecodingOutput | None:
         """Decode events associated with creating a leveraged Curve position."""
 
-    def _decode_borrow(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_borrow(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode events associated with getting a loan."""
         if (decoding_output := self.maybe_decode_leveraged_borrow(context=context)) is not None:
             return decoding_output
@@ -175,7 +172,7 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
             context=context,
         )) is None:
             log.error(f'Failed to find tokens and amounts for Curve borrow transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         collateral_token, borrowed_token, collateral_amount, borrowed_amount = tokens_and_amounts
         out_event, in_event = None, None
@@ -201,7 +198,6 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
                 event.event_subtype = HistoryEventSubType.GENERATE_DEBT
                 event.notes = f'Borrow {borrowed_amount} {borrowed_token.symbol} from Curve'
                 event.counterparty = CPT_CURVE
-                event.product = self.evm_product
                 event.extra_data = {'controller_address': context.tx_log.address}
                 in_event = event
 
@@ -210,10 +206,10 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
                         ordered_events=[out_event, in_event],
                         events_list=context.decoded_events,
                     )
-                    return DEFAULT_DECODING_OUTPUT
+                    return DEFAULT_EVM_DECODING_OUTPUT
 
         # In Borrow_more transactions these events will not yet be present in decoded_events
-        return DecodingOutput(action_items=[
+        return EvmDecodingOutput(action_items=[
             ActionItem(
                 action='transform',
                 from_event_type=HistoryEventType.SPEND,
@@ -234,12 +230,11 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
                 to_event_subtype=HistoryEventSubType.GENERATE_DEBT,
                 to_notes=f'Borrow {borrowed_amount} {borrowed_token.symbol} from Curve',
                 to_counterparty=CPT_CURVE,
-                to_product=self.evm_product,
                 extra_data={'controller_address': context.tx_log.address},
             ),
         ])
 
-    def _decode_repay(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_repay(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode events associated with repaying a loan."""
         if (amm_address := self._maybe_get_cached_address_from_contract(
             cache_type=CacheType.CURVE_CRVUSD_AMM,
@@ -248,14 +243,14 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
             contract_method='amm',
         )) is None:
             log.error(f'Failed to find AMM address for Curve crvUSD controller {controller_address} in transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if (tokens_and_amounts := self._get_controller_event_tokens_and_amounts(
             controller_address=controller_address,
             context=context,
         )) is None:
             log.error(f'Failed to find tokens and amounts for Curve repay transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         collateral_token, borrowed_token, collateral_amount, borrowed_amount = tokens_and_amounts
         in_event = None
@@ -276,7 +271,7 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
                 in_event = event
 
         paired_events_data = ([in_event], False) if in_event is not None else None
-        return DecodingOutput(action_items=[
+        return EvmDecodingOutput(action_items=[
             ActionItem(
                 action='transform',
                 from_event_type=HistoryEventType.SPEND,
@@ -293,20 +288,20 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
             ]
         ])
 
-    def _decode_remove_collateral(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_remove_collateral(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode events associated with removing collateral from a loan.
         Note that adding collateral is handled by _decode_borrow."""
         if (collateral_token := self._maybe_get_cached_token(
             cache_type=CacheType.CURVE_CRVUSD_COLLATERAL_TOKEN,
             contract_address=context.tx_log.address,
         )) is None:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         collateral_amount = token_normalized_value(
             token_amount=int.from_bytes(context.tx_log.data[0:32]),
             token=collateral_token,
         )
-        return DecodingOutput(action_items=[ActionItem(
+        return EvmDecodingOutput(action_items=[ActionItem(
             action='transform',
             from_event_type=HistoryEventType.RECEIVE,
             from_event_subtype=HistoryEventSubType.NONE,
@@ -318,7 +313,7 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
             to_counterparty=CPT_CURVE,
         )])
 
-    def _decode_vault_controller_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_vault_controller_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode events from the vault controller contract."""
         if context.tx_log.topics[0] == BORROW_TOPIC:
             return self._decode_borrow(context=context)
@@ -327,7 +322,7 @@ class CurveBorrowRepayCommonDecoder(DecoderInterface, ABC):
         elif context.tx_log.topics[0] == REMOVE_COLLATERAL_TOPIC:
             return self._decode_remove_collateral(context=context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

@@ -2,13 +2,14 @@ import logging
 from typing import TYPE_CHECKING, Any, Final
 
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.chain.ethereum.utils import (
-    token_normalized_value_decimals,
-)
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS, STAKING_DEPOSIT
 from rotkehlchen.chain.evm.decoding.airdrops import match_airdrop_claim
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
-from rotkehlchen.chain.evm.decoding.structures import DEFAULT_DECODING_OUTPUT, DecodingOutput
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
+from rotkehlchen.chain.evm.decoding.structures import (
+    DEFAULT_EVM_DECODING_OUTPUT,
+    EvmDecodingOutput,
+)
 from rotkehlchen.chain.optimism.modules.walletconnect.constants import WALLETCONECT_STAKE_WEIGHT
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -25,9 +26,9 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.decoding.types import CounterpartyDetails
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.decoding.structures import DecoderContext
-    from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.types import ChecksumEvmAddress
     from rotkehlchen.user_messages import MessagesAggregator
@@ -39,12 +40,12 @@ TOKENS_CLAIMED: Final = b'\x89n\x03If\xea\xaf\x1a\xdcT\xac\xc0\xf2W\x05o\xeb\xbd
 STAKING_WITHDRAW: Final = b"\x02\xf2Rp\xa4\xd8{\xeau\xdbT\x1c\xdf\xe5Y3J'[J#5 \xedl\n$)f|\xca\x94"
 
 
-class WalletconnectDecoder(DecoderInterface, CustomizableDateMixin):
+class WalletconnectDecoder(EvmDecoderInterface, CustomizableDateMixin):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -54,10 +55,10 @@ class WalletconnectDecoder(DecoderInterface, CustomizableDateMixin):
         )
         CustomizableDateMixin.__init__(self, base_tools.database)
 
-    def _decode_airdop_claim(self, context: 'DecoderContext') -> DecodingOutput:
+    def _decode_airdop_claim(self, context: 'DecoderContext') -> EvmDecodingOutput:
         """Decodes wallet connect airdrop claim event."""
         if context.tx_log.topics[0] != TOKENS_CLAIMED:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         user_address = bytes_to_address(context.tx_log.topics[1])
         amount = token_normalized_value_decimals(
@@ -77,9 +78,9 @@ class WalletconnectDecoder(DecoderInterface, CustomizableDateMixin):
         else:
             log.error(f'Failed to find walletconnect airdrop claim event for {context.transaction}')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_staking_deposit(self, context: 'DecoderContext') -> DecodingOutput:
+    def _decode_staking_deposit(self, context: 'DecoderContext') -> EvmDecodingOutput:
         user_address = bytes_to_address(context.tx_log.topics[1])
         locktime = Timestamp(int.from_bytes(context.tx_log.data[32:64]))
         transferred_amount = token_normalized_value_decimals(
@@ -89,7 +90,7 @@ class WalletconnectDecoder(DecoderInterface, CustomizableDateMixin):
         # according to the contract `transferred_amount` is either equal to amount
         # or zero. If zero then no transfer has occurred, but just lock time has changed
         if transferred_amount == ZERO:
-            return DecodingOutput(events=[self.base.make_event_from_transaction(
+            return EvmDecodingOutput(events=[self.base.make_event_from_transaction(
                 transaction=context.transaction,
                 tx_log=context.tx_log,
                 event_type=HistoryEventType.INFORMATIONAL,
@@ -122,9 +123,9 @@ class WalletconnectDecoder(DecoderInterface, CustomizableDateMixin):
         else:  # not found
             log.error(f'WCT staking deposit transfer was not found for {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_staking_withdraw(self, context: 'DecoderContext') -> DecodingOutput:
+    def _decode_staking_withdraw(self, context: 'DecoderContext') -> EvmDecodingOutput:
         user_address = bytes_to_address(context.tx_log.topics[1])
         transferred_amount = token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[32:64]),
@@ -148,16 +149,16 @@ class WalletconnectDecoder(DecoderInterface, CustomizableDateMixin):
         else:  # not found
             log.error(f'WCT staking withdrawal transfer was not found for {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_staking(self, context: 'DecoderContext') -> DecodingOutput:
+    def _decode_staking(self, context: 'DecoderContext') -> EvmDecodingOutput:
         """Decodes WalletConnect staking related activity"""
         if context.tx_log.topics[0] == STAKING_DEPOSIT:
             return self._decode_staking_deposit(context)
         elif context.tx_log.topics[0] == STAKING_WITHDRAW:
             return self._decode_staking_withdraw(context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

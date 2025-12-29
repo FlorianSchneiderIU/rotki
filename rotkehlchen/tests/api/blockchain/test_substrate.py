@@ -53,7 +53,7 @@ def test_add_ksm_blockchain_account_invalid(rotkehlchen_api_server: 'APIServer')
     )
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
 @pytest.mark.parametrize('kusama_manager_connect_at_start', [(KusamaNodeName.OWN,)])
 @pytest.mark.parametrize('ksm_rpc_endpoint', [KUSAMA_TEST_RPC_ENDPOINT], ids=['KUSAMA_TEST_RPC_ENDPOINT'])  # setting ids to rename the argument to be processed by vcr since its value can contain characters that are illegal in windows. Affects all other similar fixtures in this file # noqa: E501
@@ -98,16 +98,16 @@ def test_add_ksm_blockchain_account(
     assert 'liabilities' in account_balances
     asset_ksm = account_balances['assets'][A_KSM.identifier][DEFAULT_BALANCE_LABEL]
     assert FVal(asset_ksm['amount']) >= ZERO
-    assert FVal(asset_ksm['usd_value']) >= ZERO
+    assert FVal(asset_ksm['value']) >= ZERO
 
     # Check totals
     assert 'liabilities' in result['totals']
     total_ksm = result['totals']['assets'][A_KSM.identifier][DEFAULT_BALANCE_LABEL]
     assert FVal(total_ksm['amount']) >= ZERO
-    assert FVal(total_ksm['usd_value']) >= ZERO
+    assert FVal(total_ksm['value']) >= ZERO
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
 @pytest.mark.parametrize('ksm_accounts', [[SUBSTRATE_ACC1_KSM_ADDR, SUBSTRATE_ACC2_KSM_ADDR]])
 @pytest.mark.parametrize('kusama_manager_connect_at_start', [(KusamaNodeName.OWN,)])
@@ -142,13 +142,13 @@ def test_remove_ksm_blockchain_account(rotkehlchen_api_server: 'APIServer') -> N
     assert 'liabilities' in account_balances
     asset_ksm = account_balances['assets'][A_KSM.identifier][DEFAULT_BALANCE_LABEL]
     assert FVal(asset_ksm['amount']) >= ZERO
-    assert FVal(asset_ksm['usd_value']) >= ZERO
+    assert FVal(asset_ksm['value']) >= ZERO
 
     # Check totals
     assert 'liabilities' in result['totals']
     total_ksm = result['totals']['assets'][A_KSM.identifier][DEFAULT_BALANCE_LABEL]
     assert FVal(total_ksm['amount']) >= ZERO
-    assert FVal(total_ksm['usd_value']) >= ZERO
+    assert FVal(total_ksm['value']) >= ZERO
 
     # Also make sure it's removed from the DB
     with rotki.data.db.conn.read_ctx() as cursor:

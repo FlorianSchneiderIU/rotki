@@ -8,25 +8,25 @@ from web3 import Web3
 from rotkehlchen.assets.asset import Asset, CryptoAsset, EvmToken, UnderlyingToken
 from rotkehlchen.assets.utils import (
     TokenEncounterInfo,
+    asset_normalized_value,
     edit_token_and_clean_cache,
     get_or_create_evm_token,
 )
+from rotkehlchen.chain.decoding.types import get_versioned_counterparty_label
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.ethereum.modules.constants import (
     AMM_ASSETS_SYMBOLS,
     SUSHISWAP_LP_SYMBOL,
     UNISWAP_V2_LP_SYMBOL,
 )
-from rotkehlchen.chain.ethereum.modules.sushiswap.constants import CPT_SUSHISWAP_V2
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value, generate_address_via_create2
+from rotkehlchen.chain.ethereum.utils import generate_address_via_create2
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.uniswap.constants import CPT_UNISWAP_V2
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_ETH, A_WETH
@@ -63,7 +63,7 @@ def decode_uniswap_v2_like_swap(
         database: 'DBHandler',
         evm_inquirer: 'EvmNodeInquirer',
         notify_user: Callable[['EvmEvent', str], None],
-) -> DecodingOutput:
+) -> EvmDecodingOutput:
     """Common logic for decoding uniswap v2 like protocols (uniswap and sushiswap atm)
 
     Decode trade for uniswap v2 like amm. The approach is to read the events and detect the ones
@@ -85,13 +85,13 @@ def decode_uniswap_v2_like_swap(
         chain_id=evm_inquirer.chain_id,
         token_kind=TokenKind.ERC20,
         evm_inquirer=evm_inquirer,
-        encounter=TokenEncounterInfo(tx_hash=transaction.tx_hash),
+        encounter=TokenEncounterInfo(tx_ref=transaction.tx_hash),
     )
 
     if pool_token.symbol in exclude_amms.values():
         # If the symbol for the current counterparty matches the expected symbol for another
         # counterparty skip the decoding using this rule.
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # When the router chains multiple swaps in one transaction only the last swap has
     # the buyer in the topic. In that case we know it is the last swap and the receiver is
@@ -114,6 +114,7 @@ def decode_uniswap_v2_like_swap(
         if event.asset == A_ETH and event.event_type == HistoryEventType.RECEIVE:
             received_eth += event.amount
 
+    display_name = get_versioned_counterparty_label(counterparty)
     for event in decoded_events:
         # When we look for the spend event we have to take into consideration the case
         # where not all the ETH is converted. The ETH that is not converted is returned
@@ -122,7 +123,7 @@ def decode_uniswap_v2_like_swap(
             crypto_asset = event.asset.resolve_to_crypto_asset()
         except (UnknownAsset, WrongAssetType):
             notify_user(event, counterparty)
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if (
             event.event_type == HistoryEventType.SPEND and
@@ -137,7 +138,7 @@ def decode_uniswap_v2_like_swap(
             event.event_type = HistoryEventType.TRADE
             event.event_subtype = HistoryEventSubType.SPEND
             event.counterparty = counterparty
-            event.notes = f'Swap {event.amount} {crypto_asset.symbol} in {counterparty} from {event.location_label}'  # noqa: E501
+            event.notes = f'Swap {event.amount} {crypto_asset.symbol} in {display_name} from {event.location_label}'  # noqa: E501
             out_event = event
         elif (  # out_event is already decoded
             event.event_type == HistoryEventType.TRADE and
@@ -156,7 +157,7 @@ def decode_uniswap_v2_like_swap(
             event.event_type = HistoryEventType.TRADE
             event.event_subtype = HistoryEventSubType.RECEIVE
             event.counterparty = counterparty
-            event.notes = f'Receive {event.amount} {crypto_asset.symbol} in {counterparty} from {event.location_label}'  # noqa: E501
+            event.notes = f'Receive {event.amount} {crypto_asset.symbol} in {display_name} from {event.location_label}'  # noqa: E501
             in_event = event
         elif (
             event.event_type == HistoryEventType.RECEIVE and
@@ -173,10 +174,10 @@ def decode_uniswap_v2_like_swap(
             event.event_type = HistoryEventType.WITHDRAWAL
             event.event_subtype = HistoryEventSubType.REFUND
             event.counterparty = counterparty
-            event.notes = f'Refund of {event.amount} {crypto_asset.symbol} in {counterparty} due to price change'  # noqa: E501
+            event.notes = f'Refund of {event.amount} {crypto_asset.symbol} in {display_name} due to price change'  # noqa: E501
 
     maybe_reshuffle_events(ordered_events=[out_event, in_event], events_list=decoded_events)
-    return DecodingOutput(process_swaps=True)
+    return EvmDecodingOutput(process_swaps=True)
 
 
 def decode_uniswap_like_deposit_and_withdrawals(
@@ -190,7 +191,7 @@ def decode_uniswap_like_deposit_and_withdrawals(
         factory_address: ChecksumEvmAddress,
         init_code_hash: str,
         tx_hash: EVMTxHash,
-) -> DecodingOutput:
+) -> EvmDecodingOutput:
     """
     This is a common logic for Uniswap V2 like AMMs e.g Sushiswap.
     This method decodes a liquidity addition or removal to Uniswap V2 pool.
@@ -230,7 +231,7 @@ def decode_uniswap_like_deposit_and_withdrawals(
                 chain_id=evm_inquirer.chain_id,
                 token_kind=TokenKind.ERC20,
                 evm_inquirer=evm_inquirer,
-                encounter=TokenEncounterInfo(tx_hash=tx_hash),
+                encounter=TokenEncounterInfo(tx_ref=tx_hash),
             )
             # we make a distinction between token and asset since for eth uniswap moves around
             # WETH but we could receive ETH
@@ -242,23 +243,23 @@ def decode_uniswap_like_deposit_and_withdrawals(
                 chain_id=evm_inquirer.chain_id,
                 token_kind=TokenKind.ERC20,
                 evm_inquirer=evm_inquirer,
-                encounter=TokenEncounterInfo(tx_hash=tx_hash),
+                encounter=TokenEncounterInfo(tx_ref=tx_hash),
             )
             asset_1 = resolved_eth if token1 == A_WETH else token1
 
     if token0 is None or token1 is None or asset_0 is None or asset_1 is None:
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # determine the pool address from the pair of token addresses, if it matches
     # the one found earlier, mutate the decoded event or create an action item where necessary.
-    pool_address = _compute_uniswap_v2_like_pool_address(
+    pool_address = compute_uniswap_v2_like_pool_address(
         token0=token0,
         token1=token1,
         factory_address=factory_address,
         init_code_hash=init_code_hash,
     )
     if pool_address != target_pool_address:  # we didn't find the correct pool
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     amount0 = asset_normalized_value(amount0_raw, token0)
     amount1 = asset_normalized_value(amount1_raw, token1)
@@ -274,9 +275,9 @@ def decode_uniswap_like_deposit_and_withdrawals(
             chain_id=evm_inquirer.chain_id,
             token_kind=TokenKind.ERC20,
             evm_inquirer=evm_inquirer,
-            encounter=TokenEncounterInfo(tx_hash=tx_hash),
+            encounter=TokenEncounterInfo(tx_ref=tx_hash),
             underlying_tokens=underlying_tokens,
-            protocol=CPT_UNISWAP_V2 if counterparty == CPT_UNISWAP_V2 else None,
+            protocol=counterparty,
         )
 
         if (symbol := pool_token.symbol) in (UNISWAP_V2_LP_SYMBOL, SUSHISWAP_LP_SYMBOL):
@@ -286,8 +287,8 @@ def decode_uniswap_like_deposit_and_withdrawals(
             symbol = f'{symbol} {token0.symbol}-{token1.symbol}'
 
         edit_token_and_clean_cache(
-            evm_inquirer=None,  # we don't need to query again information from chain
-            evm_token=pool_token,
+            chain_inquirer=None,  # we don't need to query again information from chain
+            token=pool_token,
             name=pool_token.name,
             symbol=symbol,
             decimals=pool_token.decimals,
@@ -299,10 +300,11 @@ def decode_uniswap_like_deposit_and_withdrawals(
             f'Failed to create the pool token since it does not conform to ERC20. '
             f'expected: {pool_address} for {token0.evm_address}-{token1.evm_address}',
         )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # find already decoded events of the transfers and store the id to mutate after
     # confirmation that it is indeed Uniswap V2 like Pool.
+    display_name = get_versioned_counterparty_label(counterparty)
     deposit_withdraw_events, receive_return_events = [], []
     for idx, event in enumerate(decoded_events):
         resolved_asset = event.asset.resolve_to_crypto_asset()
@@ -332,11 +334,11 @@ def decode_uniswap_like_deposit_and_withdrawals(
         ):
             event.counterparty = counterparty
             event.event_subtype = HistoryEventSubType.RECEIVE_WRAPPED
-            event.notes = f'Receive {event.amount} {resolved_asset.symbol} from {counterparty} pool'  # noqa: E501
+            event.notes = f'Receive {event.amount} {resolved_asset.symbol} from {display_name} pool'  # noqa: E501
             event.address = pool_address
             GlobalDBHandler.set_tokens_protocol_if_missing(
                 tokens=[event.asset.resolve_to_evm_token()],
-                new_protocol=CPT_UNISWAP_V2 if resolved_asset.symbol.startswith('UNI-V2') else CPT_SUSHISWAP_V2,  # noqa: E501
+                new_protocol=counterparty,
             )
             receive_return_events.append(event)
         elif (
@@ -347,7 +349,7 @@ def decode_uniswap_like_deposit_and_withdrawals(
         ):
             event.counterparty = counterparty
             event.event_subtype = HistoryEventSubType.RETURN_WRAPPED
-            event.notes = f'Send {event.amount} {resolved_asset.symbol} to {counterparty} pool'
+            event.notes = f'Send {event.amount} {resolved_asset.symbol} to {display_name} pool'
             receive_return_events.append(event)
 
     new_action_items = []
@@ -366,7 +368,7 @@ def decode_uniswap_like_deposit_and_withdrawals(
                 to_notes=notes.format(
                     amount=amount,
                     asset=asset_symbol,
-                    counterparty=counterparty,
+                    counterparty=display_name,
                     pool_address=pool_address,
                 ),
                 to_counterparty=counterparty,
@@ -381,7 +383,7 @@ def decode_uniswap_like_deposit_and_withdrawals(
         decoded_events[decoded_event_idx].notes = notes.format(
             amount=amount,
             asset=asset_symbol,
-            counterparty=counterparty,
+            counterparty=display_name,
             pool_address=pool_address,
         )
         decoded_events[decoded_event_idx].extra_data = extra_data
@@ -394,10 +396,10 @@ def decode_uniswap_like_deposit_and_withdrawals(
         ),
         events_list=decoded_events,
     )
-    return DecodingOutput(action_items=new_action_items)
+    return EvmDecodingOutput(action_items=new_action_items)
 
 
-def _compute_uniswap_v2_like_pool_address(
+def compute_uniswap_v2_like_pool_address(
         token0: CryptoAsset,
         token1: CryptoAsset,
         factory_address: ChecksumEvmAddress,

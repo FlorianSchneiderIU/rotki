@@ -519,6 +519,46 @@ Deleting premium devices
    :statuscode 403: Logged in user does not have premium.
    :statuscode 409: The external premium service could not be reached or returned unexpected response.
 
+Querying premium capabilities
+==============================
+
+.. http:get:: /api/(version)/premium/capabilities
+
+   By doing a ``GET`` at this endpoint you can query the capabilities available for your premium account. The currently returned attributes are:
+
+   - `graphs_view`: Boolean. Enables the graphs displayed for each asset containing historical balances and values.
+   - `eth_staking_view`: Boolean. Enables the Ethereum staking view.
+   - `event_analysis_view`: Boolean. Enables the statistics view and the historical analytics based on events.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      GET /api/1/premium/capabilities HTTP/1.1
+      Host: localhost:5042
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": {
+            "graphs_view": true,
+            "eth_staking_view": false,
+            "event_analysis_view": true
+          },
+          "message": ""
+      }
+
+   :resjson object result: Object containing capabilities and their enabled/disabled status
+   :statuscode 200: capabilities successfully queried
+   :statuscode 401: User is not logged in
+   :statuscode 403: Logged in user does not have premium.
+   :statuscode 409: The external premium service could not be reached or returned unexpected response.
+
 Modify user password
 ========================
 
@@ -742,6 +782,11 @@ Getting or modifying settings
               "active_modules": ["makerdao_dsr", "makerdao_vaults", "aave"],
               "current_price_oracles": ["coingecko"],
               "historical_price_oracles": ["cryptocompare", "coingecko"],
+              "evm_indexers_order": {
+                  "ethereum": ["etherscan", "blockscout", "routescan"],
+                  "optimism": ["blockscout", "etherscan", "routescan"]
+              },
+              "default_evm_indexer_order": ["etherscan", "blockscout", "routescan"],
               "ssf_graph_multiplier": 2,
               "non_sync_exchanges": [{"location": "binance", "name": "binance1"}],
               "cost_basis_method": "fifo",
@@ -776,6 +821,8 @@ Getting or modifying settings
    :resjson list active_module: A list of strings denoting the active modules with which rotki is running.
    :resjson list current_price_oracles: A list of strings denoting the price oracles rotki should query in specific order for requesting current prices.
    :resjson list historical_price_oracles: A list of strings denoting the price oracles rotki should query in specific order for requesting historical prices.
+   :resjson object evm_indexers_order: Mapping of EVM chain names to the ordered list of indexers to query per chain. Example: ``{"ethereum": ["etherscan", "blockscout", "routescan"]}``.
+   :resjson list default_evm_indexer_order: Default order to use for chains where no specific indexer order has been given.
    :resjson int ssf_graph_multiplier: A multiplier to the snapshot saving frequency for zero amount graphs. Originally 0 by default. If set it denotes the multiplier of the snapshot saving frequency at which to insert 0 save balances for a graph between two saved values.
    :resjson string cost_basis_method: Defines which method to use during the cost basis calculation. Currently supported: fifo, lifo.
    :resjson string address_name_priority: Defines the priority to search for address names. From first to last location in this array, the first name found will be displayed.
@@ -826,6 +873,8 @@ Getting or modifying settings
    :reqjson list active_module: A list of strings denoting the active modules with which rotki should run.
    :reqjson list current_price_oracles: A list of strings denoting the price oracles rotki should query in specific order for requesting current prices.
    :reqjson list historical_price_oracles: A list of strings denoting the price oracles rotki should query in specific order for requesting historical prices.
+   :reqjson object[optional] evm_indexers_order: Mapping of EVM chain names to the ordered list of indexers to query per chain. Each list must contain the available indexers without duplicates.
+   :resjson list[optional] default_evm_indexer_order: Default order to use for chains where no specific indexer order has been given.
    :reqjson list non_syncing_exchanges: A list of objects with the keys ``name`` and ``location`` of the exchange. These exchanges will be ignored when querying the trades. Example: ``[{"name": "my_exchange", "location": "binance"}]``.
    :resjson int ssf_graph_multiplier: A multiplier to the snapshot saving frequency for zero amount graphs. Originally 0 by default. If set it denotes the multiplier of the snapshot saving frequency at which to insert 0 save balances for a graph between two saved values.
    :resjson bool infer_zero_timed_balances: A boolean denoting whether to infer zero timed balances for assets that have no balance at a specific time. This is useful for showing zero balance periods in graphs.
@@ -880,8 +929,8 @@ Getting or modifying settings
    :statuscode 409: Tried to set eth rpc endpoint that could not be reached.
    :statuscode 500: Internal rotki error
 
-Getting backend arguments
-================================
+Getting or modifying backend arguments
+=========================================
 
 .. http:get:: /api/(version)/settings/configuration
 
@@ -915,6 +964,10 @@ Getting backend arguments
                    "sqlite_instructions": {
                            "value": 5000,
                            "is_default": true
+                   },
+                   "loglevel": {
+                           "value": "DEBUG",
+                           "is_default": true
                    }
            },
            "message": ""
@@ -923,10 +976,62 @@ Getting backend arguments
    :resjson object max_size_in_mb_all_logs: Maximum size in megabytes that will be used for all rotki logs.
    :resjson object max_num_log_files: Maximum number of logfiles to keep.
    :resjson object sqlite_instructions: Instructions per sqlite context switch. 0 means disabled.
+   :resjson object loglevel: The current logging level of the backend.
    :resjson int value: Value used for the configuration.
    :resjson bool is_default: `true` if the setting was not modified and `false` if it was.
 
    :statuscode 200: Querying of the backend configuration was successful
+   :statuscode 500: Internal rotki error
+
+.. http:put:: /api/(version)/settings/configuration
+
+   By doing a PUT, you can modify the backend log level at runtime. Currently, only the ``loglevel`` parameter is supported for modification.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      PUT /api/1/settings/configuration HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json
+
+      {
+          "loglevel": "TRACE"
+      }
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+           "result": {
+               "max_size_in_mb_all_logs": {
+                  "value": 300,
+                  "is_default": true
+               },
+               "max_logfiles_num": {
+                  "value": 3,
+                  "is_default": true
+               },
+               "sqlite_instructions": {
+                  "value": 5000,
+                  "is_default": true
+               },
+               "loglevel": {
+                  "value": "TRACE",
+                  "is_default": false
+               }
+           },
+           "message": ""
+       }
+
+   :reqjson string loglevel: The logging level to set. Must be one of: ``TRACE``, ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR``, ``CRITICAL``.
+
+   :statuscode 200: Backend configuration was successfully updated
+   :statuscode 400: Provided loglevel is not supported
    :statuscode 500: Internal rotki error
 
 Adding information for web3 nodes
@@ -1200,7 +1305,7 @@ Query the result of an ongoing backend task
                   "per_account": {"BTC": { "standalone": {
                       "1Ec9S8KSw4UXXhqkoG3ZD31yjtModULKGg": {
                               "amount": "10",
-                              "usd_value": "70500.15"
+                              "value": "70500.15"
                           }}
                   }},
                   "totals": {"BTC": {"amount": "10", "usd_value": "70500.15"}},
@@ -1396,18 +1501,18 @@ Get current price and custom price for NFT assets
                   "manually_input": true,
                   "price_asset": "ETH",
                   "price_in_asset": "1",
-                  "usd_price": "2505.13"
+                  "price": "2505.13"
               }, {
                   "asset": "nft_uniqueid2",
                   "manually_input": false,
                   "price_asset": "USD",
                   "price_in_asset": "155.13",
-                  "usd_price": "155.13"
+                  "price": "155.13"
               }]
           "message": ""
       }
 
-   :resjson object result: A list of results of assets along with their uds prices
+   :resjson object result: A list of results of assets along with their prices in the user's preferred currency.
    :statuscode 200: Successful query
    :statuscode 400: Provided JSON is in some way malformed.
    :statuscode 409: Nft module is not activated.
@@ -1867,6 +1972,7 @@ Get a list of setup exchanges
       {
           "result": [
                {"location": "kraken", "name": "kraken1", "kraken_account_type": "starter"},
+               {"location": "okx", "name": "okx1", "okx_location": "global"},
                {"location": "poloniex", "name": "poloniex1"},
                {"location": "binance", "name": "binance1"}
            ],
@@ -1973,7 +2079,7 @@ Edit an exchange entry
       Host: localhost:5042
       Content-Type: application/json;charset=UTF-8
 
-      {"name": "my kraken key", "location": "kraken", "new_name": "my_kraken", "api_key": "my_new_api_key", "api_secret": "my_new_api_secret", "passphrase": "my_new_passphrase", "kraken_account_type": "intermediate"}
+      {"name": "my kraken key", "location": "kraken", "new_name": "my_kraken", "api_key": "my_new_api_key", "api_secret": "my_new_api_secret", "passphrase": "my_new_passphrase", "kraken_account_type": "intermediate", "okx_location": "eea"}
 
    :reqjson string name: The name of the exchange key to edit
    :reqjson string location: The location of the exchange to edit
@@ -1982,6 +2088,7 @@ Edit an exchange entry
    :reqjson string api_secret: Optional. If given this will be the new api secret for the exchange credentials.
    :reqjson string passphrase: Optional. If given this will be the new passphrase. Only for exchanges, like coinbase pro, which need a passphrase.
    :reqjson string kraken_account_type: Optional. An optional setting for kraken. The type of the user's kraken account. Valid values are "starter", "intermediate" and "pro".
+   :reqjson string okx_location: Optional. An optional setting for okx. The location of the user's account, needed to route to specific subdomain API. Valid values are "global", "eea" and "usd".
 
    **Example Response**:
 
@@ -2019,14 +2126,14 @@ Querying the balances of exchanges
 
    .. http:example:: curl wget httpie python-requests
 
-      GET /api/1/exchanges/balances/binance?usd_value_threshold=1000 HTTP/1.1
+      GET /api/1/exchanges/balances/binance?value_threshold=1000 HTTP/1.1
       Host: localhost:5042
 
    :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not
    :reqjson bool ignore_cache: Boolean denoting whether to ignore the cache for this query or not.
    :param bool async_query: Boolean denoting whether this is an asynchronous query or not
    :param bool ignore_cache: Boolean denoting whether to ignore the cache for this query or not.
-   :query decimal usd_value_threshold: Optional. If provided, only returns balances with USD value greater than this threshold.
+   :query decimal value_threshold: Optional. If provided, only returns balances with value greater than this threshold. This is in the user's preferred currency.
 
    **Example Response**:
 
@@ -2052,7 +2159,7 @@ Querying the balances of exchanges
 
 .. http:get:: /api/(version)/exchanges/balances/
 
-   Doing a GET on the exchanges balances endpoint will return the balances of all assets currently held in all exchanges. If a USD value threshold is provided, only balances with USD value greater than the threshold are returned.
+   Doing a GET on the exchanges balances endpoint will return the balances of all assets currently held in all exchanges. If a value threshold is provided, only balances with value greater than the threshold are returned.
 
    .. note::
       This endpoint can also be queried asynchronously by using ``"async_query": true``
@@ -2061,12 +2168,12 @@ Querying the balances of exchanges
 
    .. http:example:: curl wget httpie python-requests
 
-      GET /api/1/exchanges/balances?usd_value_threshold=1000 HTTP/1.1
+      GET /api/1/exchanges/balances?value_threshold=1000 HTTP/1.1
       Host: localhost:5042
 
    :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not
    :param bool async_query: Boolean denoting whether this is an asynchronous query or not
-   :query decimal usd_value_threshold: Optional. If provided, only returns balances with USD value greater than this threshold.
+   :query decimal value_threshold: Optional. If provided, only returns balances with value greater than this threshold. This is in the user's preferred currency.
 
    .. _balances_result:
 
@@ -2132,8 +2239,8 @@ Purging locally saved data for exchanges
    :statuscode 409: Exchange is not registered or some other error. Check error message for details.
    :statuscode 500: Internal rotki error
 
-Deleting locally saved blockchain transactions
-=================================================
+Managing blockchain transactions
+==================================
 
 .. http:delete:: /api/(version)/blockchains/transactions
 
@@ -2147,10 +2254,10 @@ Deleting locally saved blockchain transactions
       Host: localhost:5042
       Content-Type: application/json;charset=UTF-8
 
-      {"chain": "eth", "tx_hash": "0x6826b8646578ff457ba01bfe6a2cc77e3d6e40a849e45a97ca12dfd9150cd901"}
+      {"chain": "eth", "tx_ref": "0x6826b8646578ff457ba01bfe6a2cc77e3d6e40a849e45a97ca12dfd9150cd901"}
 
    :reqjson string chain: Optional. The name of the chain for which to delete transaction. ``"eth"``, ``"optimism"``, ``"zksync_lite"`` etc. If not given all transactions for all chains are purged. This is using the backend's SupportedBlockchain with the limitation being only chains for which we save transactions.
-   :reqjson string tx_hash: Optional. The transaction to delete. If given only the specific transaction is deleted. This should always be given in combination with the chain argument. May only be used for EVM and EVM-like chains.
+   :reqjson string tx_ref: Optional. The transaction to delete. If given only the specific transaction is deleted. This should always be given in combination with the chain argument.
 
    **Example Response**:
 
@@ -2167,33 +2274,47 @@ Deleting locally saved blockchain transactions
    :statuscode 409: Other error. Check error message for details.
    :statuscode 500: Internal rotki error
 
+.. http:put:: /api/(version)/blockchains/transactions
 
-Decode transactions that haven't been decoded yet
-=================================================
-
-.. http:post:: /api/(version)/blockchains/(chaintype)/transactions/decode
-
-   Doing a POST on the transactions decoding endpoint will start the decoding process for all the transactions that haven't been decoded yet for the given chain and addresses combination. Transactions already decoded won't be re-decoded unless ignore_cache is set to true . ``chaintype`` can be either ``evm`` or ``evmlike``
+   Doing a PUT on this endpoint will add a transaction to the database and associate it with the provided address. Supports EVM chains and Solana.
 
    .. note::
-      This endpoint can also be queried asynchronously by using ``"async_query": true``
+      This endpoint can also be queried asynchronously by using ``"async_query": true``.
 
-   **Example Request**:
+   **Example Request (EVM)**:
 
    .. http:example:: curl wget httpie python-requests
 
-      POST /api/1/blockchains/evm/transactions/decode HTTP/1.1
+      PUT /api/1/blockchains/transactions HTTP/1.1
       Host: localhost:5042
       Content-Type: application/json;charset=UTF-8
 
       {
-          "async_query": false,
-	  "ignore_cache": false,
-          "chains": ["ethereum", "optimism"]
+        "blockchain": "ethereum",
+        "tx_ref": "0x65d53653c584cde22e559cec4667a7278f75966360590b725d87055fb17552ba",
+        "associated_address": "0xb8553D9ee35dd23BB96fbd679E651B929821969B",
+        "async_query": true
       }
 
-   :reqjson bool ignore_cache: Defaults to false. If set to true then all events will be redecoded, not only those that have not yet been decoded.
-   :reqjson list chains: A list specifying the evm/evmlike chains for which to decode tx_hashes. The possible values are limited to the chains with evm transactions for evm and to zksynclite for evmlike. If the list is not provided all transactions from all the chains will be decoded.
+   **Example Request (Solana)**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      PUT /api/1/blockchains/transactions HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+        "blockchain": "solana",
+        "tx_ref": "5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW",
+        "associated_address": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        "async_query": true
+      }
+
+   :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not.
+   :reqjson str blockchain: The blockchain name for the transaction to be added (e.g. ``"ethereum"``, ``"optimism"``, ``"solana"``).
+   :reqjson str tx_ref: The transaction reference (hash for EVM chains, signature for Solana) to be added.
+   :reqjson str associated_address: The address to be associated with the transaction. The address must be one that is already tracked by rotki.
 
    **Example Response**:
 
@@ -2202,17 +2323,81 @@ Decode transactions that haven't been decoded yet
       HTTP/1.1 200 OK
       Content-Type: application/json
 
-      { "result": {"decoded_tx_number": {"ethereum": 4, "optimism": 1}}, "message": "" }
+      {
+          "result": true
+          "message": ""
+      }
 
-   :resjson object decoded_tx_number: A mapping of how many transactions were decoded per requested chain. If a chain was not requested no key will exist in the mapping.
-   :statuscode 200: Transactions successfully decoded.
-   :statuscode 401: User is not logged in.
-   :statuscode 409: Some other error. Check error message for details.
-   :statuscode 500: Internal rotki error
+   :resjson bool result: It contains a boolean representing the status of the request.
 
-.. http:get:: /api/(version)/blockchains/(chaintype)/transactions/decode
+   :statuscode 200: The transaction was saved successfully.
+   :statuscode 400: Provided JSON is in some way malformed. Transaction is already present in DB. Address provided is not tracked by rotki.
+   :statuscode 404: Transaction reference not found for the specified blockchain.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 500: Internal rotki error.
+   :statuscode 502: An external service used in the query such as etherscan could not be reached or returned unexpected response.
 
-   Doing a GET on the transactions decoding endpoint will return a breakdown of the number of transactions that are not decoded. ``chaintype`` can be either ``evm`` or ``evmlike``
+.. http:post:: /api/(version)/blockchains/transactions
+
+   Doing a POST on the blockchain transactions endpoint will refresh/query blockchain transactions for the specified accounts within the given time range.
+
+   .. note::
+      This endpoint can also be queried asynchronously by using ``"async_query": true``.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      POST /api/1/blockchains/transactions HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+        "async_query": true,
+        "from_timestamp": 1451606400,
+        "to_timestamp": 1571663098,
+        "accounts": [
+          {"address": "0x9531C059098e3d194fF87FebB587aB07B30B1306", "blockchain": "eth"},
+          {"address": "0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12", "blockchain": "optimism"},
+          {"address": "DYH6x4JoTXUUc4GJUcBYv4gPRApbfTsoZEeD318ernQY", "blockchain": "solana"}
+        ]
+      }
+
+   :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not.
+   :reqjson int from_timestamp: The timestamp from which to start querying transactions. Given in unix time.
+   :reqjson int to_timestamp: The timestamp until which to query transactions. Given in unix time.
+   :reqjson list[object] accounts: Optional. A list of blockchain account objects. If not provided, transactions for all tracked accounts will be refreshed.
+   :reqjsonarr string address: The address of the account.
+   :reqjsonarr string blockchain: The blockchain of the account (e.g., ``"eth"``, ``"optimism"``, ``"polygon_pos"``, ``"solana"``).
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": true,
+          "message": ""
+      }
+
+   :resjson bool result: Boolean indicating whether the transaction refresh was successful.
+
+   :statuscode 200: Transactions were successfully refreshed.
+   :statuscode 400: Provided JSON is in some way malformed.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 409: User is not logged in or some other error. Check error message for details.
+   :statuscode 500: Internal rotki error.
+   :statuscode 502: An external service used in the query such as etherscan could not be reached or returned unexpected response.
+
+
+Decode transactions that haven't been decoded yet
+=================================================
+
+.. http:post:: /api/(version)/blockchains/transactions/decode
+
+   Doing a POST on the transactions decoding endpoint will start the decoding process for all the transactions that haven't been decoded yet for the given chain. Transactions already decoded won't be re-decoded unless ignore_cache is set to true.
 
    .. note::
       This endpoint can also be queried asynchronously by using ``"async_query": true``
@@ -2221,7 +2406,96 @@ Decode transactions that haven't been decoded yet
 
    .. http:example:: curl wget httpie python-requests
 
-      GET /api/1/blockchains/evm/transactions/decode HTTP/1.1
+      POST /api/1/blockchains/transactions/decode HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "async_query": false,
+	      "ignore_cache": false,
+          "chain": "eth"
+      }
+
+   :reqjson bool ignore_cache: Defaults to false. If set to true then all events will be redecoded, not only those that have not yet been decoded.
+   :reqjson string chain: The name of the chain for which to decode transactions. The possible values are limited to the chains for which we support transaction decoding (solana, zksync lite, and all supported EVM chains except for avalanche).
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      { "result": {"decoded_tx_number": 4}, "message": "" }
+
+   :resjson int decoded_tx_number: Number of transactions that were decoded.
+   :statuscode 200: Transactions successfully decoded.
+   :statuscode 401: User is not logged in.
+   :statuscode 409: Some other error. Check error message for details.
+   :statuscode 500: Internal rotki error
+
+.. http:put:: /api/(version)/blockchains/transactions/decode
+
+   Doing a PUT on the transactions decoding endpoint will request deleting and re-querying of all the transaction data and decoding events for the specified transactions.
+
+   .. note::
+      This endpoint can also be queried asynchronously by using ``"async_query": true``
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      PUT /api/1/blockchains/transactions/decode HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "async_query": true,
+          "chain": "eth",
+          "tx_refs": [
+              "0xe33041d0ae336cd4c588a313b7f8649db07b79c5107424352b9e52a6ea7a9742",
+              "0xe11031d0ae336cd4c588a313b7f8649db07b79c5107424352b9e52a6ea7a9712"
+          ],
+          "delete_custom": true
+      }
+
+   :reqjson string chain: The name of the chain for which to decode transactions.
+   :reqjson list tx_refs: A list of transaction hashes/signatures from the specified chain to redecode.
+   :reqjson bool delete_custom: Boolean denoting whether to delete any customized events of the transaction or not. Default is false
+   :reqjson list[string][optional] custom_indexers_order: Optional ordered list of indexers (``etherscan``, ``blockscout`` or ``routescan``) to prioritize when redecoding EVM transactions for the given request.
+   :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not
+
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      { "result": true,
+        "message": ""
+      }
+
+
+   :statuscode 200: Transaction successfully repulled and decoded.
+   :statuscode 400: Provided JSON is in some way malformed
+   :statuscode 409: The given transaction references do not correspond to an onchain transaction according to the nodes we contacted.
+   :statuscode 500: Internal rotki error
+   :statuscode 502: Problem contacting a remote service
+
+.. http:get:: /api/(version)/blockchains/transactions/decode
+
+   Doing a GET on the transactions decoding endpoint will return a breakdown of the number of transactions that are not decoded.
+
+   .. note::
+      This endpoint can also be queried asynchronously by using ``"async_query": true``
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      GET /api/1/blockchains/transactions/decode HTTP/1.1
       Host: localhost:5042
       Content-Type: application/json;charset=UTF-8
 
@@ -2698,107 +2972,6 @@ Querying blockchain transactions
    :statuscode 502: An external service used in the query such as etherscan could not be reached or returned unexpected response.
 
 
-Request specific EVM transactions repulling and event decoding
-===================================================================
-
-.. http:put:: /api/(version)/blockchains/evm/transactions
-
-   .. note::
-      This endpoint can also be queried asynchronously by using ``"async_query": true``
-
-   Doing a PUT on the evm transactions endpoint will request a decoding of the given transactions and generation of decoded events. That basically entails deleting and re-querying all the transaction data. Transaction, internal transactions, receipts and all log for each hash and then decoding all events. Also requeries prices for assets involved in these events.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      PUT /api/1/blockchains/evm/transactions HTTP/1.1
-      Host: localhost:5042
-      Content-Type: application/json;charset=UTF-8
-
-      {
-          "async_query": true,
-          "transactions": [{
-              "evm_chain": "ethereum",
-              "tx_hash": "0xe33041d0ae336cd4c588a313b7f8649db07b79c5107424352b9e52a6ea7a9742"
-          }, {
-              "evm_chain": "gnosis",
-              "tx_hash": "0xe11031d0ae336cd4c588a313b7f8649db07b79c5107424352b9e52a6ea7a9712"
-           }],
-          "delete_custom": true
-      }
-
-   :reqjson list transactions: A list of objects of evm_chain and tx_hash keys to redecode. Each list entry represents a single transaction.
-   :reqjson bool delete_custom: Boolean denoting whether to delete any customized events of the transaction or not. Default is false
-   :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not
-
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      { "result": true,
-        "message": ""
-      }
-
-
-   :statuscode 200: Transaction successfully repulled and decoded.
-   :statuscode 400: Provided JSON is in some way malformed
-   :statuscode 409: The given hashe does not correspond to a transaction according to the nodes we contacted.
-   :statuscode 500: Internal rotki error
-   :statuscode 502: Problem contacting a remote service
-
-Request specific EVMlike transaction repulling and event decoding
-===================================================================
-
-.. http:put:: /api/(version)/blockchains/evmlike/transactions
-
-   .. note::
-      This endpoint can also be queried asynchronously by using ``"async_query": true``
-
-   Doing a PUT on the evmlike transactions endpoint will request a decoding of the given transactions and generation of decoded events. Transaction data will also be deleted and requeried and events redecoded.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      PUT /api/1/blockchains/evm/transactions HTTP/1.1
-      Host: localhost:5042
-      Content-Type: application/json;charset=UTF-8
-
-      {
-          "async_query": true,
-          "transactions": [{
-              "chain": "zksync_lite",
-              "tx_hash": "0xe33041d0ae336cd4c588a313b7f8649db07b79c5107424352b9e52a6ea7a9742"
-          }]
-      }
-
-   :reqjson list transactions: A list of data to decode. Each data entry consists of a ``"chain"`` key specifying the evmlike chain for which to decode and a ``"tx_hash"`` key which is the tx_hash to decode.
-   :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not
-
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      { "result": true,
-        "message": ""
-      }
-
-
-   :statuscode 200: Transactions successfully decoded.
-   :statuscode 400: Provided JSON is in some way malformed
-   :statuscode 409: Given hash does not correspond to a transaction according to the nodes we contacted.
-   :statuscode 500: Internal rotki error
-   :statuscode 502: Problem contacting a remote service
-
 Querying tags
 =================
 
@@ -3048,26 +3221,30 @@ Querying onchain balances
 
 .. http:get:: /api/(version)/balances/blockchains/(blockchain)/
 
-   Doing a GET on the blockchains balances endpoint will query on-chain balances for the accounts of the user. Doing a GET on a specific blockchain will query balances only for that chain. Available blockchain names are: ``BTC``, ``ETH``, ``ETH2``, ``KSM``, ``DOT`` and ``AVAX``. If a USD value threshold is provided, only balances with USD value greater than the threshold are returned.
+   Query on-chain balances for tracked accounts. Specify a blockchain to query only that chain. Available blockchains: ``BTC``, ``BCH``, ``ETH``, ``ETH2``, ``KSM``, ``DOT``, ``AVAX``, ``SOL``.
+
+   When addresses are provided and cache is ignored, those addresses are queried fresh and combined with existing balances for the blockchain. Results include balances above the ``value_threshold`` if specified.
 
    .. note::
-      This endpoint can also be queried asynchronously by using ``"async_query": true``. Passing it as a query argument here would be given as: ``?async_query=true``.
+      This endpoint can be queried asynchronously using ``"async_query": true``.
 
    .. note::
-      This endpoint uses a cache. If queried within the ``CACHE_TIME`` the cached value will be returned. If you want to skip the cache add the ``ignore_cache: true`` argument. Can also be passed as a query argument.
+      This endpoint uses caching. Results are cached for ``CACHE_TIME``. Use ``ignore_cache: true`` to force fresh queries.
 
    **Example Request**:
 
    .. http:example:: curl wget httpie python-requests
 
-      GET /api/1/balances/blockchains/?usd_value_threshold=1000 HTTP/1.1
+      GET /api/1/balances/blockchains/?value_threshold=1000 HTTP/1.1
       Host: localhost:5042
 
    :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not
    :reqjson bool ignore_cache: Boolean denoting whether to ignore the cache for this query or not.
+   :reqjson list[str] addresses: Optional. List of blockchain addresses to query balances for. If not provided, all tracked addresses are queried.
    :param bool async_query: Boolean denoting whether this is an asynchronous query or not
    :param bool ignore_cache: Boolean denoting whether to ignore the cache for this query or not.
-   :query decimal usd_value_threshold: Optional. If provided, only returns balances with USD value greater than this threshold.
+   :param list[str] addresses: Optional. List of blockchain addresses to query balances for. If not provided, all tracked addresses are queried.
+   :query decimal value_threshold: Optional. If provided, only returns balances with value (in user's preferred currency) greater than this threshold.
 
 .. _blockchain_balances_result:
 
@@ -3215,46 +3392,47 @@ Querying all balances
                   "ETH": {
                       "amount": "1",
                       "percentage_of_net_value": "9.5%",
-                      "usd_value": "180"
+                      "value": "180"
                    },
                    "BTC": {
                       "amount": "0.5",
                       "percentage_of_net_value": "90%",
-                      "usd_value": "4000"
+                      "value": "4000"
                    },
                    "EUR": {
                       "amount": "2",
                       "percentage_of_net_value": "0.5%",
-                      "usd_value": "2.8"
+                      "value": "2.8"
                    }
                },
                "liabilities": {
                    "eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F": {
                        "amount": "100",
-                       "usd_value": "102.5",
+                       "value": "102.5",
                        "percentage_of_net_value": "1%"
                    }
                },
                "location": {
                    "banks": {
                        "percentage_of_net_value": "0.5%",
-                       "usd_value": "2.8"
+                       "value": "2.8"
                    },
                    "binance": {
                        "percentage_of_net_value": "9.5%",
-                       "usd_value": "180"
+                       "value": "180"
                    },
                    "blockchain": {
                        "percentage_of_net_value": "90%",
-                       "usd_value": "4000"
+                       "value": "4000"
                    }
-               }
+               },
+               "net_value": "4080.3"
 
           },
           "message": ""
       }
 
-   :resjson object result: The result object has two main subkeys. Assets and liabilities. Both assets and liabilities value is another object with the following keys. ``"amount"`` is the amount owned in total for that asset or owed in total as a liability. ``"percentage_of_net_value"`` is the percentage the user's net worth that this asset or liability represents. And finally ``"usd_value"`` is the total $ value this asset/liability is worth as of this query. There is also a ``"location"`` key in the result. In there are the same results as the rest but divided by location as can be seen by the example response above.
+   :resjson object result: The result object has two main subkeys. Assets and liabilities. Both assets and liabilities value is another object with the following keys. ``"amount"`` is the amount owned in total for that asset or owed in total as a liability. ``"percentage_of_net_value"`` is the percentage the user's net worth that this asset or liability represents. And finally ``"value"`` is the total value this asset/liability is worth in the user's main currency as of this query. There is also a ``"location"`` key in the result. In there are the same results as the rest but divided by location as can be seen by the example response above. Finally, there is a ``"net_value"`` key which represents the total net value of all assets minus liabilities in the user's main currency.
    :statuscode 200: Balances successfully queried.
    :statuscode 400: Provided JSON is in some way malformed
    :statuscode 401: User is not logged in.
@@ -3372,6 +3550,17 @@ Querying all supported assets
                   "cryptocompare":"VET",
                   "coingecko":"vet",
                   "protocol":"None"
+              },
+              {
+                  "identifier": "eip155:1/erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D/1234",
+                  "evm_address": "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+                  "evm_chain":"ethereum",
+                  "token_kind":"erc721",
+                  "name": "Bored Ape Yacht Club #1234",
+                  "symbol": "BAYC",
+                  "asset_type": "evm token",
+                  "collectible_id": "1234",
+                  "protocol":"None"
               }
           ],
           "message": ""
@@ -3391,6 +3580,7 @@ Querying all supported assets
    :resjson string cryptocompare: The cryptocompare identifier for the asset. can be missing if not known. If missing a query by symbol is attempted.
    :resjson string coingecko: The coingecko identifier for the asset. can be missing if not known.
    :resjson string protocol: An optional string for evm tokens denoting the protocol they belong to. For example uniswap, for uniswap LP tokens.
+   :resjson string collectible_id: Only present for ERC721 tokens. The token ID of the NFT.
    :resjson object underlying_tokens: Optional. If the token is an LP token or a token set or something similar which represents a pool of multiple other tokens, then this is a list of the underlying token addresses and a percentage(value in the range of 0 to 100) that each token contributes to the pool.
    :resjson string notes: If the type is ``custom_asset`` this is a string field with notes added by the user.
    :resjson string custom_asset_type: If the type is ``custom_asset`` this field contains the custom type set by the user for the asset.
@@ -3740,14 +3930,14 @@ Get asset types
    :statuscode 400: Provided JSON is in some way malformed
    :statuscode 500: Internal rotki error
 
-Adding custom asset
-======================
+Adding user assets
+===================
 
 .. http:put:: /api/(version)/assets/all
 
-   Doing a PUT on the all assets endpoint will allow you to add a new asset in the global rotki DB. Returns the identifier of the newly added asset.
+   Doing a PUT on the all assets endpoint will allow you to add a new asset in the global rotki DB. This supports fiat assets, crypto assets, EVM tokens, and Solana tokens. Returns the identifier of the newly added asset.
 
-   **Example Request**:
+   **Example Request (EVM Token)**:
 
    .. http:example:: curl wget httpie python-requests
 
@@ -3756,26 +3946,67 @@ Adding custom asset
       Content-Type: application/json;charset=UTF-8
 
       {
-          "name": "foo",
-          "symbol": "FOO",
-          "started": 1614636432,
-          "forked": "SCT",
-          "swapped_for": "SCK",
-          "coingecko": "foo-coin",
-          "cryptocompare": "FOO"
+          "asset_type": "evm token",
+          "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+          "evm_chain": "ethereum",
+          "token_kind": "erc20",
+          "name": "Dai Stablecoin",
+          "symbol": "DAI",
+          "decimals": 18
        }
 
-   .. _custom_asset:
+   **Example Request (Solana Token)**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      PUT /api/1/assets/all HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "asset_type": "solana token",
+          "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "token_kind": "spl_token",
+          "name": "USD Coin",
+          "symbol": "USDC",
+          "decimals": 6
+       }
+
+   **Example Request (ERC721 NFT)**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      PUT /api/1/assets/all HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "asset_type": "evm token",
+          "address": "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+          "evm_chain": "ethereum",
+          "token_kind": "erc721",
+          "name": "Bored Ape Yacht Club",
+          "symbol": "BAYC",
+          "collectible_id": "1234",
+          "decimals": 0
+       }
+
+   .. _user_asset:
 
    :reqjson string name: The name of the asset. Required.
    :reqjson string symbol: The symbol of the asset. Required.
-   :reqjson integer started: The time the asset started existing. Optional
+   :reqjson string address: The contract address for EVM tokens or mint address for Solana tokens. Required when asset_type is ``"evm token"`` or ``"solana token"``.
+   :reqjson string evm_chain: The EVM chain name such as ``"ethereum"``, ``"optimism"``. Required when asset_type is ``"evm token"``.
+   :reqjson string token_kind: The token standard. For EVM tokens: ``"erc20"`` or ``"erc721"``. For Solana tokens: ``"spl_token"`` or ``"spl_nft"``. Required when asset_type is ``"evm token"`` or ``"solana token"``.
+   :reqjson integer decimals: The number of decimal places the token uses. Required when asset_type is ``"evm token"`` or ``"solana token"``.
+   :reqjson string collectible_id: The NFT token ID. Must be a positive integer. Only valid when token_kind is ``"erc721"``.
+   :reqjson integer started: The time the asset started existing. Optional.
    :reqjson string forked: The identifier of an asset from which this asset got forked. For example ETC would have ETH as forked. Optional.
    :reqjson string swapped_for: The identifier of an asset for which this asset got swapped for. For example GNT got swapped for GLM. Optional.
-   :resjsonarr string coingecko: The coingecko identifier for the asset. can be missing if not known.
-   :resjsonarr string cryptocompare: The cryptocompare identifier for the asset. can be missing if not known.
+   :reqjson string coingecko: The coingecko identifier for the asset. can be missing if not known.
+   :reqjson string cryptocompare: The cryptocompare identifier for the asset. can be missing if not known.
 
-   **Example Response**:
+   **Example Response (EVM Token)**:
 
    .. sourcecode:: http
 
@@ -3783,7 +4014,31 @@ Adding custom asset
       Content-Type: application/json
 
       {
-          "result": {"identifier": "4979582b-ee8c-4d45-b461-15c4220de666"},
+          "result": {"identifier": "eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F"},
+          "message": ""
+      }
+
+   **Example Response (Solana Token)**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": {"identifier": "sol:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"},
+          "message": ""
+      }
+
+   **Example Response (ERC721 NFT)**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": {"identifier": "eip155:1/erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D/1234"},
           "message": ""
       }
 
@@ -3794,14 +4049,14 @@ Adding custom asset
    :statuscode 409: Some conflict at addition. For example an asset with the same type, name and symbol already exists.
    :statuscode 500: Internal rotki error
 
-Editing custom assets
-======================
+Editing user assets
+====================
 
 .. http:patch:: /api/(version)/assets/all
 
-   Doing a PATCH on the custom assets endpoint will allow you to edit an existing asset in the global rotki DB.
+   Doing a PATCH on the user assets endpoint will allow you to edit an existing asset in the global rotki DB.
 
-   **Example Request**:
+   **Example Request (EVM Token)**:
 
    .. http:example:: curl wget httpie python-requests
 
@@ -3810,17 +4065,37 @@ Editing custom assets
       Content-Type: application/json;charset=UTF-8
 
       {
-          "identifier": "4979582b-ee8c-4d45-b461-15c4220de666",
-          "name": "foo",
-          "symbol": "FOO",
-          "started": 1614636432,
-          "forked": "SCT",
-          "swapped_for": "SCK",
-          "coingecko": "foo-coin",
-          "cryptocompare": "FOO"
+          "identifier": "eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F",
+          "asset_type": "evm token",
+          "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+          "evm_chain": "ethereum",
+          "token_kind": "erc20",
+          "name": "Dai Stablecoin Updated",
+          "symbol": "DAI",
+          "decimals": 18
       }
 
-   :reqjson object asset: Asset to edit. For details on the possible fields see `here <custom_asset_>`_. The only extra field has to be the identifier of the asset to edit.
+   **Example Request (ERC721 NFT)**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      PATCH /api/1/assets/all HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "identifier": "eip155:1/erc721:0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D/1234",
+          "asset_type": "evm token",
+          "address": "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+          "evm_chain": "ethereum",
+          "token_kind": "erc721",
+          "name": "Bored Ape Yacht Club Updated",
+          "symbol": "BAYC",
+          "collectible_id": "1234",
+          "decimals": 0
+      }
+
+   :reqjson object asset: Asset to edit. For details on the possible fields see `here <user_asset_>`_. The identifier field is required to specify which asset to edit.
 
    **Example Response**:
 
@@ -3840,12 +4115,12 @@ Editing custom assets
    :statuscode 409: Some conflict at editing. For example identifier does not exist in the DB.
    :statuscode 500: Internal rotki error
 
-Deleting custom assets
-========================
+Deleting user assets
+=====================
 
 .. http:delete:: /api/(version)/assets/all
 
-   Doing a DELETE on the custom assets endpoint will allow you to delete an existing asset from the global rotki DB.
+   Doing a DELETE on the user assets endpoint will allow you to delete an existing asset from the global rotki DB.
 
    **Example Request**:
 
@@ -3857,7 +4132,7 @@ Deleting custom assets
 
       {"identifier": "4979582b-ee8c-4d45-b461-15c4220de666"}
 
-   :reqjson string identifier: Address of the asset to delete.
+   :reqjson string identifier: Identifier of the asset to delete.
 
    **Example Response**:
 
@@ -4871,7 +5146,7 @@ Dealing with History Events
                       "asset": "ETH",
                       "amount": "0.00863351371344",
                       "counterparty": "gas",
-                      "event_identifier": "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "group_identifier": "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "event_subtype": "fee",
                       "event_type": "spend",
                       "location": "ethereum",
@@ -4880,7 +5155,7 @@ Dealing with History Events
                       "sequence_index": 0,
                       "timestamp": 1642802807,
                       "event_accounting_rule_status": "not processed",
-		      "tx_hash": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+		      "tx_ref": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
 		      "address": null,
 		      "product": null
                   },
@@ -4896,7 +5171,7 @@ Dealing with History Events
                       "asset": "ETH",
                       "amount": "0.00163351371344",
                       "counterparty": "gas",
-                      "event_identifier": "10x1c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "group_identifier": "10x1c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "event_subtype": "fee",
                       "event_type": "spend",
                       "location": "ethereum",
@@ -4905,7 +5180,7 @@ Dealing with History Events
                       "sequence_index": 0,
                       "timestamp": 1642802807,
                       "event_accounting_rule_status": "not processed",
-		      "tx_hash": "0x1c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+		      "tx_ref": "0x1c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
 		      "address": null,
 		      "product": null
                   },
@@ -4919,7 +5194,7 @@ Dealing with History Events
 		      "entry_type": "eth_withdrawal_event",
                       "asset": "ETH",
                       "amount": "0.00163351371344",
-                      "event_identifier": "EW_1454_20453",
+                      "group_identifier": "EW_1454_20453",
                       "event_subtype": "remove_asset",
                       "event_type": "staking",
                       "location": "ethereum",
@@ -4942,7 +5217,7 @@ Dealing with History Events
 		      "entry_type": "eth_block_event",
                       "asset": "ETH",
                       "amount": "0.00163351371344",
-                      "event_identifier": "evm_1_block_15534342",
+                      "group_identifier": "evm_1_block_15534342",
                       "event_subtype": "block_production",
                       "event_type": "staking",
                       "location": "ethereum",
@@ -4965,7 +5240,7 @@ Dealing with History Events
                       "asset": "ETH",
                       "amount": "32",
                       "counterparty": "eth2",
-                      "event_identifier": "10x2c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "group_identifier": "10x2c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "event_subtype": "deposit asset",
                       "event_type": "staking",
                       "location": "ethereum",
@@ -4974,7 +5249,7 @@ Dealing with History Events
                       "sequence_index": 15,
                       "timestamp": 1642802807,
                       "event_accounting_rule_status": "not processed",
-		      "tx_hash": "0x2c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+		      "tx_ref": "0x2c822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
 		      "address": "0x00000000219ab540356cBB839Cbe05303d7705Fa",
 		      "product": "staking",
 		      "validator_index": 4242
@@ -4994,7 +5269,7 @@ Dealing with History Events
                       "location_label": "Binance US 1",
                       "asset": "eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
                       "amount": "200",
-                      "event_identifier": "269b64de6a51caa372a3b455341a41a9da2ae743794e81011b5da1c3b6e1195b",
+                      "group_identifier": "269b64de6a51caa372a3b455341a41a9da2ae743794e81011b5da1c3b6e1195b",
                       "sequence_index": 0,
                       "extra_data": {
                           "address": "0x29aE5D9A1f28f82c358f8DF5A029bC0D5452b66E",
@@ -5015,7 +5290,7 @@ Dealing with History Events
                       "location_label": null,
                       "asset": "USD",
                       "amount": "32.2400",
-                      "event_identifier": "9e0bfb56dbe8c3d4d3a71584740826df3f901cb0c55a11ee33887afefc7a99d7",
+                      "group_identifier": "9e0bfb56dbe8c3d4d3a71584740826df3f901cb0c55a11ee33887afefc7a99d7",
                       "sequence_index": 0,
                       "extra_data": null,
                       "auto_notes": "Swap 32.2400 USD in Kraken"
@@ -5033,7 +5308,7 @@ Dealing with History Events
                       "location_label": null,
                       "asset": "XMR",
                       "amount": "0.2000496400",
-                      "event_identifier": "9e0bfb56dbe8c3d4d3a71584740826df3f901cb0c55a11ee33887afefc7a99d7",
+                      "group_identifier": "9e0bfb56dbe8c3d4d3a71584740826df3f901cb0c55a11ee33887afefc7a99d7",
                       "sequence_index": 1,
                       "extra_data": null,
                       "auto_notes": "Receive 0.2000496400 XMR after a swap in Kraken"
@@ -5051,7 +5326,7 @@ Dealing with History Events
                       "location_label": null,
                       "asset": "USD",
                       "amount": "0.1290",
-                      "event_identifier": "9e0bfb56dbe8c3d4d3a71584740826df3f901cb0c55a11ee33887afefc7a99d7",
+                      "group_identifier": "9e0bfb56dbe8c3d4d3a71584740826df3f901cb0c55a11ee33887afefc7a99d7",
                       "sequence_index": 2,
                       "extra_data": null,
                       "auto_notes": "Spend 0.1290 USD as Kraken swap fee"
@@ -5069,10 +5344,10 @@ Dealing with History Events
                       "amount": "0.123",
                       "identifier": 10,
                       "entry_type": "evm swap event",
-                      "event_identifier": "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "group_identifier": "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "sequence_index": 5,
                       "extra_data": null,
-                      "tx_hash": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "tx_ref": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "counterparty": null,
                       "product": null,
                       "address": null
@@ -5089,10 +5364,10 @@ Dealing with History Events
                       "amount": "0.0032",
                       "identifier": 7,
                       "entry_type": "evm swap event",
-                      "event_identifier": "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "group_identifier": "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "sequence_index": 6,
                       "extra_data": null,
-                      "tx_hash": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "tx_ref": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "counterparty": null,
                       "product": null,
                       "address": null
@@ -5109,10 +5384,10 @@ Dealing with History Events
                       "amount": "120",
                       "identifier": 8,
                       "entry_type": "evm swap event",
-                      "event_identifier": "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "group_identifier": "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "sequence_index": 7,
                       "extra_data": null,
-                      "tx_hash": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "tx_ref": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "counterparty": null,
                       "product": null,
                       "address": null
@@ -5129,10 +5404,10 @@ Dealing with History Events
                       "amount": "0.0002",
                       "identifier": 10,
                       "entry_type": "evm swap event",
-                      "event_identifier": "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "group_identifier": "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "sequence_index": 9,
                       "extra_data": null,
-                      "tx_hash": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                      "tx_ref": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                       "counterparty": null,
                       "product": null,
                       "address": null
@@ -5146,11 +5421,11 @@ Dealing with History Events
           "message": ""
       }
 
-   :resjson list decoded_events: A list of history events, with some events grouped into sub-lists (for instance the spend/receive/fee events making up a swap). Each event is an object comprised of the event entry and a boolean denoting if the event has been customized by the user or not. Each entry may also have a `has_details` flag if true. If `has_details` is true, then it is possible to call /history/events/details endpoint to retrieve some extra information about the event. Also each entry may have a `customized` flag set to true. If it does, it means the event has been customized/added by the user. Each entry may also have a `hidden` flag if set to true. If it does then that means it should be hidden in the UI due to consolidation of events. Also if `group_by_event_ids` exist and is true, each entry contains `grouped_events_num` which is an integer with the amount of events under the common event identifier. The consumer has to query this endpoint again with `group_by_event_ids` set to false and with the `event_identifiers` filter set to the identifier of the events having more than 1 event. Finally `ignored_in_accounting` is set to `true` when the user has marked this event as ignored. Following are all possible entries depending on entry type.
+   :resjson list decoded_events: A list of history events, with some events grouped into sub-lists (for instance the spend/receive/fee events making up a swap). Each event is an object comprised of the event entry and a boolean denoting if the event has been customized by the user or not. Each entry may also have a `has_details` flag if true. If `has_details` is true, then it is possible to call /history/events/details endpoint to retrieve some extra information about the event. Also each entry may have a `customized` flag set to true. If it does, it means the event has been customized/added by the user. Each entry may also have a `hidden` flag if set to true. If it does then that means it should be hidden in the UI due to consolidation of events. Also if `aggregate_by_group_ids` exist and is true, each entry contains `grouped_events_num` which is an integer with the amount of events under the group identifier. The consumer has to query this endpoint again with `aggregate_by_group_ids` set to false and with the `group_identifiers` filter set to the identifier of the events having more than 1 event. Finally `ignored_in_accounting` is set to `true` when the user has marked this event as ignored. Following are all possible entries depending on entry type.
    :resjson string identifier: Common key. This is the identifier of a single event.
    :resjson string entry_type: Common key. This identifies the category of the event and determines the schema. Possible values are: ``"history event"``, ``"evm event"``, ``"eth withdrawal event"``, ``"eth block event"``, ``"eth deposit event"``.
-   :resjson string event_identifier: Common key. An event identifier grouping multiple events under a common group. This is how we group transaction events under a transaction, staking related events under block production etc.
-   :resjson int sequence_index: Common key. This is an index that tries to provide the order of history entries for a single event_identifier.
+   :resjson string group_identifier: Common key. An identifier grouping multiple events under a common group. This is how we group transaction events under a transaction, staking related events under block production etc.
+   :resjson int sequence_index: Common key. This is an index that tries to provide the order of history entries for a single group_identifier.
    :resjson int timestamp: Common key. The timestamp of the entry
    :resjson string event_accounting_rule_status: Common key. It explains the status of accounting rules for the event. Possible values are: ``has rule``: Meaning the event has a rule. ``processed``: meaning the event will be processed because it is affected by another event. ``not processed`` meaning it doesn't have any rule and won't be processed by accounting.
    :resjson string location: Common key. The location of the entry. Such as "ethereum", "optimism", etc.
@@ -5161,7 +5436,7 @@ Dealing with History Events
    :resjson string location_label: Common key. The location_label of the event. This means different things depending on event category. For evm events it's the initiating address. For withdrawal events the recipient address. For block production events the fee recipient.
    :resjson string user_notes: Common key. Custom notes for the event set by the user. Can be missing.
    :resjson string auto_notes: Common key. Autogenerated string description of the event. Can be missing.
-   :resjson string tx_hash: Evm event & eth deposit key. The transaction hash of the event as a hex string.
+   :resjson string tx_ref: Evm event, Solana event & eth deposit key. The transaction hash of the event.
    :resjson string counterparty: Evm event & eth deposit key. The counterparty of the event. This is most of the times a protocol such as uniswap, but can also be an exchange name such as kraken. Possible values are requested by the backend.
    :resjson string product: Evm event & eth deposit key. This is the product type with which the event interacts. Such as pool, staking contract etc. Possible values are requested by the backend.
    :resjson string address: Evm event & eth deposit key. This is the address of the contract the event interacts with if there is one.
@@ -5197,7 +5472,7 @@ Dealing with History Events
 
             {
                "entry_type": "history event",
-               "event_identifier": "RE_xxxxxxxxxx",
+               "group_identifier": "RE_xxxxxxxxxx",
                "location": "ethereum",
                "timestamp": 1569924574,
                "amount": "1.542",
@@ -5209,11 +5484,11 @@ Dealing with History Events
                "user_notes": "Approve 1 SAI of 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12 for spending by 0xdf869FAD6dB91f437B59F1EdEFab319493D4C4cE"
             }
 
-         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single event_identifier.
+         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single group_identifier.
          :reqjson string location: The location of the entry. Such as "ethereum", "optimism", etc.
          :reqjson object amount: The amount of the event.
          :reqjson string asset: The asset identifier for this entry
-         :reqjson string event_identifier: The event identifier to be used for the event.
+         :reqjson string group_identifier: The group identifier to be used for the event.
          :reqjson string event_type: The main event type of the entry. Possible event types can be seen in the `HistoryEventType enum <https://github.com/rotki/rotki/blob/59aa288dacd1776e62682e711a916f32a14c04c2/rotkehlchen/accounting/structures/types.py#L54>`_.
          :reqjson string event_subtype: The subtype for the entry. Possible event types can be seen in the `HistoryEventSubType enum <https://github.com/rotki/rotki/blob/59aa288dacd1776e62682e711a916f32a14c04c2/rotkehlchen/accounting/structures/types.py#L72>`_.
          :reqjson string[optional] location_label: location_label is a string field that allows to provide more information about the location. For example when we use this structure in blockchains can be used to specify the source address.
@@ -5233,8 +5508,8 @@ Dealing with History Events
 
             {
                "entry_type": "evm event",
-               "tx_hash": "0x64f1982504ab714037467fdd45d3ecf5a6356361403fc97dd325101d8c038c4e",
-               "event_identifier": "10x64f1982504ab714037467fdd45d3ecf5a6356361403fc97dd325101d8c038c4e",
+               "tx_ref": "0x64f1982504ab714037467fdd45d3ecf5a6356361403fc97dd325101d8c038c4e",
+               "group_identifier": "10x64f1982504ab714037467fdd45d3ecf5a6356361403fc97dd325101d8c038c4e",
                "sequence_index": 162,
                "timestamp": 1569924574,
                "location": "ethereum",
@@ -5248,9 +5523,9 @@ Dealing with History Events
                "extra_data": {}
             }
 
-         :reqjson string tx_hash: This is the transaction hash of the evm event
-         :reqjson string[optional] event_identifier: The event identifier to be used for the event.
-         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single event_identifier.
+         :reqjson string tx_ref: This is the transaction hash of the evm event
+         :reqjson string[optional] group_identifier: The group identifier to be used for the event.
+         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single group_identifier.
          :reqjson string location: The location of the entry. Such as "ethereum", "optimism", etc.
          :reqjson object amount: The amount of the event.
          :reqjson string asset: The asset identifier for this entry
@@ -5277,7 +5552,7 @@ Dealing with History Events
 
             {
                "entry_type": "eth block event",
-               "event_identifier": "BLOCK_11",
+               "group_identifier": "BLOCK_11",
                "timestamp": 1569924574,
                "amount": "1.542",
                "block_number": 11,
@@ -5286,7 +5561,7 @@ Dealing with History Events
                "is_mev_reward": true
             }
 
-         :reqjson string[optional] event_identifier: The event identifier to be used for the event.
+         :reqjson string[optional] group_identifier: The group identifier to be used for the event.
          :reqjson object amount: The amount of the event.
          :reqjson int block_number: This is the number of the block where the event took place.
          :reqjson int validator_index: This is the index of the validator.
@@ -5309,19 +5584,19 @@ Dealing with History Events
                "entry_type": "eth deposit event",
                "timestamp": 1569924574,
                "amount": "1.542",
-               "tx_hash": "0x64f1982504ab714037467fdd45d3ecf5a6356361403fc97dd325101d8c038c4e",
-               "event_identifier": "RE_xxxxxxxxxx",
+               "tx_ref": "0x64f1982504ab714037467fdd45d3ecf5a6356361403fc97dd325101d8c038c4e",
+               "group_identifier": "RE_xxxxxxxxxx",
                "validator_index": 1,
                "sequence_index": 162,
                "depositor": "0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12",
                "extra_data": {}
             }
 
-         :reqjson string tx_hash: This is the transaction hash of the evm event
-         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single event_identifier.
+         :reqjson string tx_ref: This is the transaction hash of the evm event
+         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single group_identifier.
          :reqjson object amount: The amount of the event.
          :reqjson int validator_index: This is the index of the validator.
-         :reqjson string[optional] event_identifier: The event identifier to be used for the event.
+         :reqjson string[optional] group_identifier: The group identifier to be used for the event.
          :reqjson string depositor: an evm address field to specify the depositor in an "eth deposit event".
          :reqjson object[optional] extra_data: An object containing any other data to be stored.
 
@@ -5344,14 +5619,52 @@ Dealing with History Events
                "is_exit": true,
                "validator_index": 1,
                "withdrawal_address": "0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12",
-               "event_identifier": "EW_XX_XXXXX"
+               "group_identifier": "EW_XX_XXXXX"
             }
 
-         :reqjson string[optional] event_identifier: The event identifier to be used for the event.
+         :reqjson string[optional] group_identifier: The group identifier to be used for the event.
          :reqjson object amount: The amount of the event.
          :reqjson int validator_index: This is the index of the validator.
          :reqjson string withdrawal_address: an evm address field to specify the withdrawer in an "eth withdrawal event".
          :reqjson bool is_exit: true if the "eth withdrawal event" is an exit event.
+
+    .. tab:: Solana Event
+
+      **Example Request**:
+
+      .. http:put:: /api/(version)/history/events
+
+         .. http:example:: curl wget httpie python-requests
+
+            PUT /api/1/history/events HTTP/1.1
+            Host: localhost:5042
+            Content-Type: application/json;charset=UTF-8
+
+            {
+               "entry_type": "solana event",
+               "tx_ref": "5j7s8K3nP9mL6wR2vT4xQ1zN8bY7cD5fE9gH2jK4mL6nP8rS3tV5wX7yZ9aB1cD3eF5gH7jK9mL1nP3rS5tV7wX9yZ",
+               "timestamp": 1569924575,
+               "amount": "1.5",
+               "sequence_index": 1,
+               "event_type": "trade",
+               "event_subtype": "receive",
+               "asset": "SOL",
+               "location_label": "7Np41oeYqPefeNQEHSv1UDhYrehxin3NStESwCU85j7W",
+               "user_notes": "received sol from swap"
+            }
+
+         :reqjson string tx_ref: This is the transaction signature of the solana event
+         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single group_identifier.
+         :reqjson object amount: The amount of the event.
+         :reqjson string asset: The asset identifier for this entry
+         :reqjson string event_type: The main event type of the entry. Possible event types can be seen in the `HistoryEventType enum <https://github.com/rotki/rotki/blob/59aa288dacd1776e62682e711a916f32a14c04c2/rotkehlchen/accounting/structures/types.py#L54>`_.
+         :reqjson string event_subtype: The subtype for the entry. Possible event types can be seen in the `HistoryEventSubType enum <https://github.com/rotki/rotki/blob/59aa288dacd1776e62682e711a916f32a14c04c2/rotkehlchen/accounting/structures/types.py#L72>`_.
+         :reqjson string[optional] group_identifier: The group identifier to be used for the event.
+         :reqjson string[optional] location_label: location_label is a string field that allows to provide more information about the location. For example when we use this structure in blockchains can be used to specify the source address.
+         :reqjson string[optional] user_notes: This is the user editable part of the description of the event entry in plain text explaining what is being done.
+         :reqjson string[optional] counterparty: An identifier for a potential counterparty of the event entry. For a send it's the target. For a receive it's the sender. For bridged transfer it's the bridge's network identifier. For a protocol interaction it's the protocol.
+         :reqjson string[optional] address: Any relevant address that this event interacted with.
+         :reqjson object[optional] extra_data: An object containing any other data to be stored.
 
    .. tab:: Asset Movement Event
 
@@ -5377,7 +5690,7 @@ Dealing with History Events
                 "address": "0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12",
                 "transaction_id": "0x64f1982504ab714037467fdd45d3ecf5a6356361403fc97dd325101d8c038c4e",
                 "user_notes": ["Example note", ""],
-                "event_identifier": "AM_xxxxxxxxxx"
+                "group_identifier": "AM_xxxxxxxxxx"
             }
 
          :reqjson string event_type: The type of asset movement event ("deposit" or "withdrawal")
@@ -5388,9 +5701,9 @@ Dealing with History Events
          :reqjson string[optional] fee_asset: The identifier of the asset in which the fee was paid. If provided, fee must also be provided
          :reqjson string[optional] address: The address involved in the movement
          :reqjson string[optional] transaction_id: The transaction hash of the movement.
-         :reqjson string[optional] unique_id: A unique identifier for this asset movement used in conjunction with the location to generate the event_identifier. It's generally the uuid of the event in the exchange.
+         :reqjson string[optional] unique_id: A unique identifier for this asset movement used in conjunction with the location to generate the group_identifier. It's generally the uuid of the event in the exchange.
          :resjson list user_notes[optional]: Custom notes for each of the underlying events. Each note will be appended after the autogenerated event description.
-         :reqjson string[optional] event_identifier: Custom identifier for the event (overrides the value generated from unique_id and location)
+         :reqjson string[optional] group_identifier: Custom identifier for the event (overrides the value generated from unique_id and location)
 
    .. tab:: Swap Event
 
@@ -5412,8 +5725,10 @@ Dealing with History Events
                 "spend_asset": "ETH",
                 "receive_amount": "20",
                 "receive_asset": "USD",
-                "fee_amount": "0.000004",
-                "fee_asset": "ETH",
+                "fees": [{
+                    "amount": "0.000004",
+                    "asset": "ETH"
+                }],
                 "unique_id": "xxxxxxxxx",
                 "user_notes": ["Example note", "", ""]
             }
@@ -5423,11 +5738,10 @@ Dealing with History Events
          :reqjson string spend_asset: The identifier of the asset being spent (e.g. "USD", "BTC")
          :reqjson string receive_amount: The amount being received
          :reqjson string receive_asset: The identifier of the asset being received (e.g. "USD", "BTC")
-         :reqjson string[optional] fee_amount: The fee amount charged for the swap. If provided, fee_asset must also be provided
-         :reqjson string[optional] fee_asset: The identifier of the asset in which the fee was paid. If provided, fee must also be provided
+         :reqjson list[optional] fees: List of objects for each fee associated with the swap containing the ``amount`` and ``asset`` of each fee.
          :reqjson string[optional] unique_id: A unique identifier for this swap used in conjunction with the location to generate the event_identifier. It's generally the uuid of the event in the exchange if its an exchange event.
          :resjson list user_notes[optional]: Custom notes for each of the underlying events. Each note will be appended after the autogenerated event description.
-         :reqjson string[optional] event_identifier: Custom identifier for the event (overrides the value generated from unique_id and location)
+         :reqjson string[optional] group_identifier: Custom identifier for the event (overrides the value generated from unique_id and location)
          :reqjson string[optional] location_label: A string field that provides more information about the location. For swaps this is the name of the specific exchange where the swap occurred (for instance "Kraken 1")
 
    .. tab:: Evm Swap Event
@@ -5470,7 +5784,7 @@ Dealing with History Events
                     "location_label": "0x6e15887E2CEC81434C16D587709f64603b39b545"
                 }],
                 "sequence_index": 0,
-                "tx_hash": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
+                "tx_ref": "0x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f",
                 "counterparty": "some counterparty",
                 "address": "0xA090e606E30bD747d4E6245a1517EbE430F0057e"
             }
@@ -5485,19 +5799,78 @@ Dealing with History Events
 
          Main schema:
 
-         :reqjson string tx_hash: This is the transaction hash of the evm event
-         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single event_identifier. This value will be the index of the first event in the swap event group, and other events in the group will be given consecutive indexes after this value.
+         :reqjson string tx_ref: This is the transaction hash of the evm event
+         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single group_identifier. This value will be the index of the first event in the swap event group, and other events in the group will be given consecutive indexes after this value.
          :reqjson string location: The location/exchange where the swap occurred
          :reqjson list[object] spend: List of spend events. See above for sub-event object specification.
          :reqjson list[object] receive: List of receive events.
          :reqjson list[object][optional] fee: List of fee events.
-         :reqjson string[optional] event_identifier: Custom identifier for the event.
+         :reqjson string[optional] group_identifier: Custom identifier for the event.
          :reqjson string[optional] counterparty: An identifier for a potential counterparty of the event entry. For evm swaps this is the protocol that the swap interacted with.
          :reqjson string[optional] product: A defi product that this event is associated with (pool, gauge, etc).
          :reqjson string[optional] address: Any relevant address that this event interacted with.
          :reqjson object[optional] extra_data: An object containing any other data to be stored.
 
-   :reqjson string entry_type: The type of the event that will be processed. Different validation is used based on the value for this field. Possible values are: ``"history event"``, ``"evm event"``, ``"eth withdrawal event"``, ``"eth block event"``, ``"eth deposit event"``, ``"asset movement event"``, ``"swap event"``, ``"evm swap event"``.
+   .. tab:: Solana Swap Event
+
+      **Example Request**:
+
+      .. http:put:: /api/(version)/history/events
+
+         .. http:example:: curl wget httpie python-requests
+
+            PUT /api/1/history/events HTTP/1.1
+            Host: localhost:5042
+            Content-Type: application/json;charset=UTF-8
+
+            {
+                "entry_type": "solana swap event",
+                "timestamp": 1569924575000,
+                "spend": [{
+                    "amount": "100",
+                    "asset": "solana/token:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "user_notes": "Swap 100 USDC",
+                    "location_label": "7Np41oeYqPefeNQEHSv1UDhYrehxin3NStESwCU85j7W"
+                }, {
+                    "amount": "0.5",
+                    "asset": "SOL",
+                    "location_label": "8Qp42peZrPfgfORFITw2VEiZsfiyjQOUyDxFTxDVk8Y"
+                }],
+                "receive": [{
+                    "amount": "2.5",
+                    "asset": "solana/token:So11111111111111111111111111111111111111112",
+                    "location_label": "JUP4LHuHiLdG1qZfzN5JYKmZvSd5mE1kEWy1UQ8K8oP"
+                }],
+                "fee": [{
+                    "amount": "0.001",
+                    "asset": "SOL"
+                }],
+                "sequence_index": 0,
+                "tx_ref": "5BeydmN8zcpWknvki96jpQKeVz5Zdm3hS9zfzPY3MQGMPS66RjHHaKYbzt1YQmcUGcFvP8BZsXzSWt9kPDSo4o2t",
+                "counterparty": "jupiter",
+                "address": "7Np41oeYqPefeNQEHSv1UDhYrehxin3NStESwCU85j7W"
+            }
+
+         Sub-event schema (objects in the ``spend``, ``receive``, and ``fee`` lists):
+
+         :reqjson list[int][optional] identifier: Identifier of the existing event (only used when editing).
+         :reqjson string amount: The amounts being spent
+         :reqjson string asset: The identifiers of the assets being spent (e.g. "USD", "BTC")
+         :reqjson string[optional] user_notes: Custom notes for the event
+         :reqjson string[optional] location_label: The user address associated with the event
+
+         Main schema:
+
+         :reqjson string tx_ref: This is the transaction signature of the solana event
+         :reqjson int sequence_index: This is an index that tries to provide the order of history entries for a single group_identifier. This value will be the index of the first event in the swap event group, and other events in the group will be given consecutive indexes after this value.
+         :reqjson list[object] spend: List of spend events. See above for sub-event object specification.
+         :reqjson list[object] receive: List of receive events.
+         :reqjson list[object][optional] fee: List of fee events.
+         :reqjson string[optional] group_identifier: Custom identifier for the event.
+         :reqjson string[optional] counterparty: An identifier for a potential counterparty of the event entry. For solana swaps this is the protocol that the swap interacted with.
+         :reqjson string[optional] address: Any relevant address that this event interacted with.
+
+   :reqjson string entry_type: The type of the event that will be processed. Different validation is used based on the value for this field. Possible values are: ``"history event"``, ``"evm event"``, ``"eth withdrawal event"``, ``"eth block event"``, ``"eth deposit event"``, ``"asset movement event"``, ``"swap event"``, ``"evm swap event"``, ``"solana swap event"``.
    :reqjson int timestamp: The timestamp of the entry **in milliseconds**.
 
    **Example Response**:
@@ -5533,7 +5906,7 @@ Dealing with History Events
       {
           "entry_type": "evm event",
           "identifier": 243,
-          "event_identifier": "0x64f1982504ab714037467fdd45d3ecf5a6356361403fc97dd325101d8c038c4e",
+          "group_identifier": "0x64f1982504ab714037467fdd45d3ecf5a6356361403fc97dd325101d8c038c4e",
           "sequence_index": 162,
           "timestamp": 1569924574,
           "location": "blockchain",
@@ -5547,8 +5920,8 @@ Dealing with History Events
       }
 
    The request object uses all the same arguments for each entry type as the `add event endpoint <add_event_args_label_>`_, with the addition of the identifier which signifies which entry will be edited.
-   When dealing with event types where all the events for an event_identifier are added/edited as a group (such as swap events and asset movements), use the identifier of the primary event in the group, i.e. for asset movements, the identifier of the deposit/withdrawal event, and for swap events, the identifier of the spend event.
-   For events that are edited as a group but may have other events/groups with the same event_identifier (such as evm swap events), specify the identifiers of all the events in the group, for example: ``"identifiers": [1,2,3,4]``
+   When dealing with event types where all the events for an group_identifier are added/edited as a group (such as swap events and asset movements), use the identifier of the primary event in the group, i.e. for asset movements, the identifier of the deposit/withdrawal event, and for swap events, the identifier of the spend event.
+   For events that are edited as a group but may have other events/groups with the same group_identifier (such as evm swap events), specify the identifiers of all the events in the group, for example: ``"identifiers": [1,2,3,4]``
 
    **Example Response**:
 
@@ -5676,11 +6049,11 @@ Exporting History Events
 
    :reqjson list[string] order_by_attributes: This is the list of attributes of the transaction by which to order the results.
    :reqjson list[bool] ascending: Should the order be ascending? This is the default. If set to false, it will be on descending order.
-   :reqjson bool group_by_event_ids: A boolean determining if results should be grouped by common event identifiers. If true, the result will return only the first event of each group but also the number of events the group has. Default is false.
+   :reqjson bool aggregate_by_group_ids: A boolean determining if results should be grouped by common group identifiers. If true, the result will return only the first event of each group but also the number of events the group has. Default is false.
    :reqjson int from_timestamp: The timestamp from which to start querying. Default is 0.
    :reqjson int to_timestamp: The timestamp until which to query. Default is now.
    :reqjson list[int] identifiers: List of unique integer identifiers of the history events to retrieve.
-   :reqjson list[string] event_identifiers: An optional list of event identifiers to filter for.
+   :reqjson list[string] group_identifiers: An optional list of group identifiers to filter for.
    :reqjson list[string] event_types: An optional list of event types by which to filter the decoded events.
    :reqjson list[string] event_subtypes: An optional list of event subtypes by which to filter the decoded events.
    :reqjson list location: An optional location name to filter events only for that location.
@@ -5688,10 +6061,9 @@ Exporting History Events
    :reqjson string notes_substring: An optional string to filter events by searching for a substring in the notes field. This searches both user notes and auto-generated notes.
    :reqjson object entry_types: An object with two keys named 'values' and 'behavior'. 'values' is a list of entry types to optionally filter by. 'behavior' is optional and is a string with the value 'include' or 'exclude' which defines the filtering behavior. It defaults to 'include'. Entry type is the event category and defines the schema. Possible values are: "history event," "evm event," "eth withdrawal event," "eth block event," "eth deposit event."
    :reqjson string asset: The asset to optionally filter by.
-   :reqjson list[string] tx_hashes: An optional list of transaction hashes to filter for. This will make it an EVM event query.
-   :reqjson list[string] counterparties: An optional list of counterparties to filter by. List of strings. This will make it an EVM event query. We currently have a special exception for "eth2" as a counterparty. It filters for all eth staking events if given. It can't be given along with other counterparties in a filter. Or with an entry types filter.
-   :reqjson list[string] products: An optional list of product type to filter by. List of strings. This will make it an EVM event query.
-   :reqjson list[string] addresses: An optional list of EVM addresses to filter by in the set of counterparty addresses. This will make it an EVM event query.
+   :reqjson list[string] tx_refs: An optional list of transaction references to filter for. This will make it an EVM/Solana event query.
+   :reqjson list[string] counterparties: An optional list of counterparties to filter by. List of strings. We currently have a special exception for "eth2" as a counterparty. It filters for all eth staking events if given. It can't be given along with other counterparties in a filter. Or with an entry types filter.
+   :reqjson list[string] addresses: An optional list of EVM addresses to filter by in the set of counterparty addresses. This will make it an EVM/Solana event query.
    :reqjson list[int] validator_indices: An optional list of validator indices to filter by. This makes it an EthStakingevent query.
 
 
@@ -5840,6 +6212,180 @@ Querying exchange history events
    :statuscode 500: Internal rotki error.
    :statuscode 502: The exchange api could not be reached or returned an unexpected response.
 
+Re-querying exchange history events in a range
+==============================================
+
+.. http:post:: /api/(version)/history/events/query/exchange/range
+
+   Re-queries history events for a specific exchange between ``start_ts`` and ``end_ts`` and stores only new events.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      POST /api/1/history/events/query/exchange/range HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "async_query": false,
+          "location": "kraken",
+          "name": "Kraken 1",
+          "from_timestamp": 0,
+          "to_timestamp": 1700000000
+      }
+
+   :reqjson bool async_query: Optional. Boolean denoting whether this is an asynchronous query or not (defaults to ``false``)
+   :reqjson string location: Exchange location identifier
+   :reqjson string name: Name of the exchange entry to query
+   :reqjson int start_ts: Start timestamp for the re-query (seconds since epoch)
+   :reqjson int end_ts: End timestamp for the re-query (seconds since epoch)
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+         "result": {
+             "queried_events": 2,
+             "stored_events": 2,
+             "skipped_events": 0,
+             "actual_end_ts": 1700000000
+         },
+         "message": ""
+      }
+
+   :resjson int result.queried_events: Number of events returned by the exchange
+   :resjson int result.stored_events: Number of new events stored in the database
+   :resjson int result.skipped_events: Number of events skipped because they already exist
+   :resjson int result.actual_end_ts: Last timestamp successfully processed
+   :resjson str message: Error message if any errors occurred
+   :statuscode 200: Re-query completed successfully
+   :statuscode 400: Provided JSON is malformed
+   :statuscode 401: No user is currently logged in
+   :statuscode 409: Exchange entry is missing or the provided range is invalid
+
+Match exchange asset movements with onchain events
+==================================================
+
+.. http:put:: /api/(version)/history/events/match/asset_movements
+
+   Matches exchange asset movement events with corresponding onchain events.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      PUT /api/1/history/events/match/asset_movements HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "asset_movement": 123,
+          "matched_event": 124
+      }
+
+   :reqjson int asset_movement: DB identifier of the asset movement to match
+   :reqjson int matched_event: DB identifier of the corresponding onchain event to match with the asset movement.
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": true,
+          "message": ""
+      }
+
+   :resjson bool result: A boolean for success or failure
+   :resjson str message: Error message if any errors occurred.
+   :statuscode 200: Events matched successfully
+   :statuscode 400: Provided JSON is in some way malformed
+   :statuscode 409: No user is logged in or failure.
+   :statuscode 500: Internal rotki error
+
+.. http:get:: /api/(version)/history/events/match/asset_movements
+
+   Get a list of unmatched asset movements group identifiers.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      GET /api/1/history/events/match/asset_movements HTTP/1.1
+      Host: localhost:5042
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": [
+              "ef2fcd9d69e358f184e5aae29f74b39e7613a13eaaae00717bde70a165cfd69f",
+              "b4e1c0d8439c1abc501c2198f7ed86f3047d23caf7b49df6dbaa3d9b1753a934",
+          ],
+          "message": ""
+      }
+
+   :resjson list result: A list of group identifiers for the unmatched asset movements.
+   :resjson str message: Error message if any errors occurred.
+   :statuscode 200: List of group identifiers returned successfully
+   :statuscode 400: Provided JSON is in some way malformed
+   :statuscode 409: No user is logged in or failure
+   :statuscode 500: Internal rotki error
+
+.. http:post:: /api/(version)/history/events/match/asset_movements
+
+   Find possible matching events for an unmatched asset movement.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      POST /api/1/history/events/match/asset_movements HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "asset_movement": "ef2fcd9d69e358f184e5aae29f74b39e7613a13eaaae00717bde70a165cfd69f",
+          "time_range": 7200
+      }
+
+   :reqjson string asset_movement: Group identifier of the asset movement to find matches for.
+   :reqjson int time_range: Optional. Time range in seconds to search for matches. Defaults to 7200 (2 hours).
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": {
+              "close_matches": [3, 4],
+              "other_events": [2, 5]
+          },
+          "message": ""
+      }
+
+   :resjson list close_matches: List of event identifiers that closely match the asset movement criteria.
+   :resjson list other_events: List of other event identifiers within the time range.
+   :resjson str message: Error message if any errors occurred.
+   :statuscode 200: Possible matches returned successfully
+   :statuscode 400: Provided JSON is in some way malformed or asset movement not found
+   :statuscode 409: No user is logged in or failure
+   :statuscode 500: Internal rotki error
+
 Querying messages to show to the user
 =====================================
 
@@ -5970,7 +6516,7 @@ Export PnL report debug data
             "events": [
                 {
                 "identifier": 12,
-                "event_identifier": "0xb626d9d9e3a5b9ecbe0c2194cf96ab7561063c6d31e0e6799d56a589b8094609",
+                "group_identifier": "0xb626d9d9e3a5b9ecbe0c2194cf96ab7561063c6d31e0e6799d56a589b8094609",
                 "sequence_index": 0,
                 "timestamp": 1651258550,
                 "location": "blockchain",
@@ -5985,7 +6531,7 @@ Export PnL report debug data
                 },
                 {
                 "identifier": 8,
-                "event_identifier": "0xa9905f5eaa664a53e6513f7ba2147dcebc3e54d4062df9df1925116b6a220014",
+                "group_identifier": "0xa9905f5eaa664a53e6513f7ba2147dcebc3e54d4062df9df1925116b6a220014",
                 "sequence_index": 0,
                 "timestamp": 1651259834,
                 "location": "blockchain",
@@ -6678,12 +7224,12 @@ Querying periodic data
           "result": {
               "last_balance_save": 1572345881,
               "connected_nodes": {
-                  "ethereum": ["nodeX", "nodeY"],
+                  "eth": ["nodeX", "nodeY"],
                   "optimism": ["nodeW", "nodeZ"],
                   "polygon_pos": ["nodeA", "nodeB"],
               },
               "failed_to_connect": {
-                  "ethereum": ["nodeZ"]
+                  "eth": ["nodeZ"]
               },
               "last_data_upload_ts": 0
           }
@@ -6692,8 +7238,8 @@ Querying periodic data
 
    :resjson int last_balance_save: The last time (unix timestamp) at which balances were saved in the database.
    :resjson int last_data_upload_ts: The last time (unix timestamp) at which a new DB was pushed to the remote as backup.
-   :resjson object connected_nodes: A dictionary containing the evm chain name and a list of connected nodes.
-   :resjson object failed_to_connect [Optional]: A dictionary containing the evm chain name and the nodes that rotki couldn't connect with. If nothing failed for a chain we don't include it in the mapping.
+   :resjson object connected_nodes: A dictionary containing the chain and a list of connected nodes.
+   :resjson object failed_to_connect [Optional]: A dictionary containing the chain and the nodes that rotki couldn't connect with. If nothing failed for a chain we don't include it in the mapping.
    :statuscode 200: Data were queried successfully.
    :statuscode 409: No user is currently logged in.
    :statuscode 500: Internal rotki error.
@@ -6812,154 +7358,6 @@ Getting blockchain account data
    :statuscode 409: User is not logged in.
    :statuscode 500: Internal rotki error
 
-Getting all DeFi balances
-=========================
-
-.. http:get:: /api/(version)/blockchains/eth/defi
-
-   Doing a GET on the DeFi balances endpoint will return a mapping of all accounts to their respective balances in DeFi protocols.
-
-   .. note::
-      This endpoint can also be queried asynchronously by using ``"async_query": true``
-
-   .. note::
-      This endpoint also accepts parameters as query arguments.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      GET /api/1/blockchains/eth/defi HTTP/1.1
-      Host: localhost:5042
-
-   :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      {
-          "result": {
-              "0xA0B6B7fEa3a3ce3b9e6512c0c5A157a385e81056": [{
-                  "protocol": {"name": "Curve"},
-                  "balance_type": "Asset",
-                  "base_balance": {
-                      "token_address": "0xdF5e0e81Dff6FAF3A7e52BA697820c5e32D806A8",
-                      "token_name": "Y Pool",
-                      "token_symbol": "yDAI+yUSDC+yUSDT+yTUSD",
-                      "balance": {
-                          "amount": "1000",
-                          "usd_value": "1009.12"
-                      }
-                  },
-                  "underlying_balances": [{
-                      "token_address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-                      "token_name": "Dai Stablecoin",
-                      "token_symbol": "DAI",
-                      "balance": {
-                          "amount": "200",
-                          "usd_value": "201.12"
-                      }
-                  }, {
-                      "token_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-                      "token_name": "USD//C",
-                      "token_symbol": "USDC",
-                      "balance": {
-                          "amount": "300",
-                          "usd_value": "302.14"
-                      }
-                  }, {
-                      "token_address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-                      "token_name": "Tether USD",
-                      "token_symbol": "USDT",
-                      "balance": {
-                          "amount": "280",
-                          "usd_value": "281.98"
-                      }
-                  }, {
-                      "token_address": "0x0000000000085d4780B73119b644AE5ecd22b376",
-                      "token_name": "TrueUSD",
-                      "token_symbol": "TUSD",
-                      "balance": {
-                          "amount": "220",
-                          "usd_value": "221.201"
-                      }
-                  }]
-              }, {
-                  "protocol": {"name": "Compound"},
-                  "balance_type": "Asset",
-                  "base_balance": {
-                      "token_address": "0x6C8c6b02E7b2BE14d4fA6022Dfd6d75921D90E4E",
-                      "token_name": "Compound Basic Attention Token",
-                      "token_symbol": "cBAT",
-                      "balance": {
-                          "amount": "8000",
-                          "usd_value": "36.22"
-                      }
-                  },
-                  "underlying_balances": [{
-                      "token_address": "0x0D8775F648430679A709E98d2b0Cb6250d2887EF",
-                      "token_name": "Basic Attention Token",
-                      "token_symbol": "BAT",
-                      "balance": {
-                          "amount": "150",
-                          "usd_value": "36.21"
-                      }
-                  }]
-              }, {
-                  "protocol": {"name": "Compound"},
-                  "balance_type": "Asset",
-                  "base_balance": {
-                      "token_address": "0xc00e94Cb662C3520282E6f5717214004A7f26888",
-                      "token_name": "Compound",
-                      "token_symbol": "COMP",
-                      "balance": {
-                          "amount": "0.01",
-                          "usd_value": "1.9"
-                      }
-                  },
-                  "underlying_balances": []
-              }],
-              "0x78b0AD50E768D2376C6BA7de33F426ecE4e03e0B": [{
-                  "protocol": {"name": "Aave"},
-                  "balance_type": "Asset",
-                  "base_balance": {
-                      "token_address": "0xfC1E690f61EFd961294b3e1Ce3313fBD8aa4f85d",
-                      "token_name": "Aave Interest bearing DAI",
-                      "token_symbol": "aDAI",
-                      "balance": {
-                          "amount": "2000",
-                          "usd_value": "2001.95"
-                      }
-                  },
-                  "underlying_balances": [{
-                      "token_address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
-                      "token_name": "Dai Stablecoin",
-                      "token_symbol": "DAI",
-                      "balance": {
-                          "amount": "2000",
-                          "usd_value": "2001.95"
-                      }
-                  }]
-              }],
-          },
-          "message": ""
-      }
-
-   :resjson object result: A mapping from account to list of DeFi balances.
-   :resjsonarr object protocol: The name of the protocol. Since these names come from Zerion check `here <https://github.com/zeriontech/defi-sdk#supported-protocols>`__ for supported names.
-   :resjsonarr string balance_type: One of ``"Asset"`` or ``"Debt"`` denoting that one if deposited asset in DeFi and the other a debt or liability.
-   :resjsonarr string base_balance: A single DefiBalance entry. It's comprised of a token address, name, symbol and a balance. This is the actually deposited asset in the protocol. Can also be a synthetic in case of synthetic protocols or lending pools.
-   :resjsonarr string underlying_balances: A list of underlying DefiBalances supporting the base balance. Can also be an empty list. The format of each balance is the same as that of base_balance. For lending this is going to be the normal token. For example for aDAI this is DAI. For cBAT this is BAT etc. For pools this list contains all tokens that are contained in the pool.
-
-   :statuscode 200: Balances successfully queried.
-   :statuscode 409: User is not logged in or if using own chain the chain is not synced.
-   :statuscode 500: Internal rotki error.
-   :statuscode 502: An external service used in the query such as etherscan could not be reached or returned unexpected response.
-
 
 Getting current ethereum MakerDAO DSR balance
 =================================================
@@ -6996,11 +7394,11 @@ Getting current ethereum MakerDAO DSR balance
               "balances": {
                   "0xA0B6B7fEa3a3ce3b9e6512c0c5A157a385e81056": {
                       "amount": "125.24423",
-                      "usd_value": "126.5231"
+                      "value": "126.5231"
                   },
                   "0x1D7D7Eb7035B42F39f200AA3af8a65BC3475A237": {
                       "amount": "456.323",
-                      "usd_value": "460.212"
+                      "value": "460.212"
                   }
                 }
           },
@@ -7053,11 +7451,11 @@ Getting ethereum MakerDAO DSR historical report
                       "movement_type": "deposit",
                       "gain_so_far": {
                           "amount": "0",
-                          "usd_value": "0"
+                          "value": "0"
                       },
                       "value": {
                           "amount": "350",
-                          "usd_value": "351.21"
+                          "value": "351.21"
                       },
                       "block_number": 9128160,
                       "timestamp": 1582706553,
@@ -7066,11 +7464,11 @@ Getting ethereum MakerDAO DSR historical report
                       "movement_type": "deposit",
                       "gain_so_far": {
                           "amount": "0.875232",
-                          "usd_value": "0.885292"
+                          "value": "0.885292"
                       },
                       "value": {
                           "amount": "50",
-                          "usd_value": "50.87"
+                          "value": "50.87"
                       },
                       "block_number": 9129165,
                       "timestamp": 1582806553,
@@ -7079,11 +7477,11 @@ Getting ethereum MakerDAO DSR historical report
                       "movement_type": "withdrawal",
                       "gain_so_far": {
                           "amount": "1.12875932",
-                          "usd_value": "1.34813"
+                          "value": "1.34813"
                       },
                       "value": {
                           "amount": "350",
-                          "usd_value": "353.12"
+                          "value": "353.12"
                       },
                       "block_number": 9149160,
                       "timestamp": 1592706553,
@@ -7092,7 +7490,7 @@ Getting ethereum MakerDAO DSR historical report
                   }],
                   "gain_so_far": {
                       "amount": "1.14875932",
-                      "usd_value": "1.2323"
+                      "value": "1.2323"
                   }
               },
               "0x1D7D7Eb7035B42F39f200AA3af8a65BC3475A237": {
@@ -7100,11 +7498,11 @@ Getting ethereum MakerDAO DSR historical report
                       "movement_type": "deposit",
                       "gain_so_far": {
                           "amount": "0",
-                          "usd_value": "0"
+                          "value": "0"
                       },
                       "value": {
                           "amount": "550",
-                          "usd_value": "553.43"
+                          "value": "553.43"
                       },
                       "block_number": 9128174,
                       "timestamp": 1583706553,
@@ -7112,7 +7510,7 @@ Getting ethereum MakerDAO DSR historical report
                   }],
                   "gain_so_far": {
                       "amount": "0.953423",
-                      "usd_value": "0.998421"
+                      "value": "0.998421"
                   }
               }
           },
@@ -7172,11 +7570,11 @@ Getting MakerDAO vaults basic data
               "collateral_asset": "ETH",
               "collateral": {
                   "amount": "5.232",
-                  "usd_value": "950.13"
+                  "value": "950.13"
               },
               "debt": {
                   "amount": "650",
-                  "usd_value": "653.42"
+                  "value": "653.42"
               },
               "collateralization_ratio": "234.21%",
               "liquidation_ratio": "150%",
@@ -7189,11 +7587,11 @@ Getting MakerDAO vaults basic data
               "collateral_asset": "eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
               "collateral": {
                   "amount": "150",
-                  "usd_value": "150"
+                  "value": "150"
               },
               "debt": {
                   "amount": "50",
-                  "usd_value": "53.2"
+                  "value": "53.2"
               },
               "collateralization_ratio": "250.551%",
               "liquidation_ratio": "150%",
@@ -7261,13 +7659,13 @@ Getting MakerDAO vault details
               "total_interest_owed": "0.02341",
               "total_liquidated": {
                   "amount": "0",
-                  "usd_value": "0"
+                  "value": "0"
               },
               "events": [{
                   "event_type": "deposit",
                   "value": {
                       "amount": "5.551",
-                      "usd_value": "120.32"
+                      "value": "120.32"
                   },
                   "timestamp": 1589067899,
                   "tx_hash": "0x678f31d49dd70d76c0ce441343c0060dc600f4c8dbb4cee2b08c6b451b6097cd"
@@ -7275,7 +7673,7 @@ Getting MakerDAO vault details
                   "event_type": "generate",
                   "value": {
                       "amount": "325",
-                      "usd_value": "12003.32"
+                      "value": "12003.32"
                   },
                   "timestamp": 1589067900,
                   "tx_hash": "0x678f31d49dd70d76c0ce441343c0060dc600f4c8dbb4cee2b08c6b451b6097cd"
@@ -7287,13 +7685,13 @@ Getting MakerDAO vault details
               "total_interest_owed": "-751.32",
               "total_liquidated": {
                   "amount": "1050.21",
-                  "usd_value": "2501.234"
+                  "value": "2501.234"
               },
               "events": [{
                   "event_type": "deposit",
                   "value": {
                       "amount": "1050.21",
-                      "usd_value": "10500.21"
+                      "value": "10500.21"
                   },
                   "timestamp": 1589067899,
                   "tx_hash": "0x678f31d49dd70d76c0ce441343c0060dc600f4c8dbb4cee2b08c6b451b6097cd"
@@ -7301,7 +7699,7 @@ Getting MakerDAO vault details
                   "event_type": "generate",
                   "value": {
                       "amount": "721.32",
-                      "usd_value": "7213.2"
+                      "value": "7213.2"
                   },
                   "timestamp": 1589067900,
                   "tx_hash": "0x678f31d49dd70d76c0ce441343c0060dc600f4c8dbb4cee2b08c6b451b6097cd"
@@ -7309,7 +7707,7 @@ Getting MakerDAO vault details
                   "event_type": "liquidation",
                   "value": {
                       "amount": "500",
-                      "usd_value": "5000"
+                      "value": "5000"
                   },
                   "timestamp": 1589068000,
                   "tx_hash": "0x678f31d49dd70d76c0ce441343c0060dc600f4c8dbb4cee2b08c6b451b6097cd"
@@ -7317,7 +7715,7 @@ Getting MakerDAO vault details
                   "event_type": "liquidation",
                   "value": {
                       "amount": "550.21",
-                      "usd_value": "5502.1"
+                      "value": "5502.1"
                   },
                   "timestamp": 1589068001,
                   "tx_hash": "0x678f31d49dd70d76c0ce441343c0060dc600f4c8dbb4cee2b08c6b451b6097cd"
@@ -7384,12 +7782,12 @@ Getting Liquity balances
                   "collateral": {
                      "asset": "ETH"
                      "amount": "5.3100000000000005",
-                     "usd_value": "16161.675300000001521815"
+                     "value": "16161.675300000001521815"
                   },
                   "debt": {
                      "asset": "eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0"
                      "amount": "6029.001719188487",
-                     "usd_value": "6089.29173638037187"
+                     "value": "6089.29173638037187"
                   },
                   "collateralization_ratio": "268.0655281381374051287323733",
                   "liquidation_price": "1261.435199626818912670885158",
@@ -7452,17 +7850,17 @@ Getting Liquity staked amount
                   "staked": {
                     "asset": "ETH",
                     "amount": "43.180853032438783295",
-                    "usd_value": "43.180853032438783295",
+                    "value": "43.180853032438783295",
                   },
                   "lusd_rewards": {
                     "asset": "eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D",
                     "amount": "94477.70111867384658505",
-                    "usd_value": "94477.70111867384658505",
+                    "value": "94477.70111867384658505",
                   },
                   "eth_rewards": {
                     "asset": "eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0",
                     "amount": "10211401.723115634393264567",
-                    "usd_value": "10211401.723115634393264567",
+                    "value": "10211401.723115634393264567",
                   }
                 },
                 "proxies": {
@@ -7470,17 +7868,17 @@ Getting Liquity staked amount
                       "staked": {
                         "asset": "ETH",
                         "amount": "43.180853032438783295",
-                        "usd_value": "43.180853032438783295",
+                        "value": "43.180853032438783295",
                       },
                       "lusd_rewards": {
                         "asset": "eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D",
                         "amount": "94477.70111867384658505",
-                        "usd_value": "94477.70111867384658505",
+                        "value": "94477.70111867384658505",
                       },
                       "eth_rewards": {
                         "asset": "eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0",
                         "amount": "10211401.723115634393264567",
-                        "usd_value": "10211401.723115634393264567",
+                        "value": "10211401.723115634393264567",
                       }
                 }
             }
@@ -7534,17 +7932,17 @@ Getting Liquity stability pool information
                   "gains": {
                     "asset": "ETH",
                     "amount": "43.180853032438783295",
-                    "usd_value": "43.180853032438783295",
+                    "value": "43.180853032438783295",
                   },
                   "rewards": {
                     "asset": "eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D",
                     "amount": "94477.70111867384658505",
-                    "usd_value": "94477.70111867384658505",
+                    "value": "94477.70111867384658505",
                   },
                   "deposited": {
                     "asset": "eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0",
                     "amount": "10211401.723115634393264567",
-                    "usd_value": "10211401.723115634393264567",
+                    "value": "10211401.723115634393264567",
                   }
                 },
                 "proxies": {
@@ -7552,17 +7950,17 @@ Getting Liquity stability pool information
                       "gains": {
                         "asset": "ETH",
                         "amount": "43.180853032438783295",
-                        "usd_value": "43.180853032438783295",
+                        "value": "43.180853032438783295",
                       },
                       "rewards": {
                         "asset": "eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D",
                         "amount": "94477.70111867384658505",
-                        "usd_value": "94477.70111867384658505",
+                        "value": "94477.70111867384658505",
                       },
                       "deposited": {
                         "asset": "eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0",
                         "amount": "10211401.723115634393264567",
-                        "usd_value": "10211401.723115634393264567",
+                        "value": "10211401.723115634393264567",
                       }
                 }
             }
@@ -7614,109 +8012,109 @@ Getting Liquity staking information
       {
         "result": {
           "global_stats": {
-            "total_usd_gains_stability_pool": "41902.74041824219",
-            "total_usd_gains_staking": "190.09104568340678",
+            "total_value_gains_stability_pool": "41902.74041824219",
+            "total_value_gains_staking": "190.09104568340678",
             "total_deposited_stability_pool": "1915600.7290263602",
             "total_withdrawn_stability_pool": "914454.5094041774",
-            "total_deposited_stability_pool_usd_value": "0.0",
-            "total_withdrawn_stability_pool_usd_value": "0.0",
+            "total_deposited_stability_pool_value": "0.0",
+            "total_withdrawn_stability_pool_value": "0.0",
             "staking_gains": [
               {
                 "asset": "ETH",
                 "amount": "0.19015022103888912",
-                "usd_value": "23.001055387590114"
+                "value": "23.001055387590114"
               },
               {
                 "asset": "eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0",
                 "amount": "168.7710091203543",
-                "usd_value": "167.08999029581668"
+                "value": "167.08999029581668"
               },
               {
                 "asset": "eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D",
                 "amount": "1445.7823568041297",
-                "usd_value": "0.0"
+                "value": "0.0"
               }
             ],
             "stability_pool_gains": [
               {
                 "asset": "ETH",
                 "amount": "14.0767134582469",
-                "usd_value": "31051.389153894255"
+                "value": "31051.389153894255"
               },
               {
                 "asset": "eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D",
                 "amount": "11887.091269011284",
-                "usd_value": "10851.35126434794"
+                "value": "10851.35126434794"
               }
             ]
           },
           "by_address": {
             "0xF662f831361c8Ab48d807f7753eb3d641be25d24": {
-              "total_usd_gains_stability_pool": "0.0",
-              "total_usd_gains_staking": "0.0",
+              "total_value_gains_stability_pool": "0.0",
+              "total_value_gains_staking": "0.0",
               "total_deposited_stability_pool": "1519146.7290263602",
               "total_withdrawn_stability_pool": "914454.5094041774",
-              "total_deposited_stability_pool_usd_value": "0.0",
-              "total_withdrawn_stability_pool_usd_value": "0.0",
+              "total_deposited_stability_pool_value": "0.0",
+              "total_withdrawn_stability_pool_value": "0.0",
               "staking_gains": [
                 {
                   "asset": "ETH",
                   "amount": "0.18236022449762773",
-                  "usd_value": "0.0"
+                  "value": "0.0"
                 },
                 {
                   "asset": "eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0",
                   "amount": "2.23017071973649",
-                  "usd_value": "0.0"
+                  "value": "0.0"
                 },
                 {
                   "asset": "eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D",
                   "amount": "1445.7823568041297",
-                  "usd_value": "0.0"
+                  "value": "0.0"
                 }
               ],
               "stability_pool_gains": [
                 {
                   "asset": "ETH",
                   "amount": "1.7820064710306824",
-                  "usd_value": "0.0"
+                  "value": "0.0"
                 },
                 {
                   "asset": "eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D",
                   "amount": "7646.741845927703",
-                  "usd_value": "0.0"
+                  "value": "0.0"
                 }
               ]
             },
             "0xbB8311c7bAD518f0D8f907Cad26c5CcC85a06dC4": {
-              "total_usd_gains_stability_pool": "41902.74041824219",
-              "total_usd_gains_staking": "190.09104568340678",
+              "total_value_gains_stability_pool": "41902.74041824219",
+              "total_value_gains_staking": "190.09104568340678",
               "total_deposited_stability_pool": "396454.0",
               "total_withdrawn_stability_pool": "0",
-              "total_deposited_stability_pool_usd_value": "0.0",
-              "total_withdrawn_stability_pool_usd_value": "0",
+              "total_deposited_stability_pool_value": "0.0",
+              "total_withdrawn_stability_pool_value": "0",
               "staking_gains": [
                 {
                   "asset": "ETH",
                   "amount": "0.007789996541261418",
-                  "usd_value": "23.001055387590114"
+                  "value": "23.001055387590114"
                 },
                 {
                   "asset": "eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0",
                   "amount": "166.54083840061782",
-                  "usd_value": "167.08999029581668"
+                  "value": "167.08999029581668"
                 }
               ],
               "stability_pool_gains": [
                 {
                   "asset": "ETH",
                   "amount": "12.294706987216218",
-                  "usd_value": "31051.389153894255"
+                  "value": "31051.389153894255"
                 },
                 {
                   "asset": "eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D",
                   "amount": "4240.34942308358",
-                  "usd_value": "10851.35126434794"
+                  "value": "10851.35126434794"
                 }
               ]
             }
@@ -7728,12 +8126,12 @@ Getting Liquity staking information
    :resjson object result: A mapping with the keys ``global_stats`` and ``by_address``.
    :resjson object global_stats: Stats aggregating the information for all the addresses tracked in the liquity module.
    :resjson object global_stats: Breakdown by tracked address of the stats.
-   :resjson string total_usd_gains_stability_pool: Sum of all the gains valued at the moment of the event for the stability pool.
-   :resjson string total_usd_gains_staking: Sum of all the gains valued at the moment of the event for liquity staking.
+   :resjson string total_value_gains_stability_pool: Sum of all the gains valued at the moment of the event for the stability pool in the user's main currency.
+   :resjson string total_value_gains_staking: Sum of all the gains valued at the moment of the event for liquity staking in the user's main currency.
    :resjson string total_deposited_stability_pool: Total amount of LUSD deposited in the stability pool.
    :resjson string total_withdrawn_stability_pool: Total amount of LUSD withdrawn from the stability pool.
-   :resjson string total_deposited_stability_pool_usd_value: Sum of the USD value deposited in the stability pool at the time of the events.
-   :resjson string total_withdrawn_stability_pool_usd_value: Sum of the USD value withdrawn from the stability pool at the time of the events.
+   :resjson string total_deposited_stability_pool_value: Sum of the value deposited in the stability pool at the time of the events in the user's main currency.
+   :resjson string total_withdrawn_stability_pool_value: Sum of the value withdrawn from the stability pool at the time of the events in the user's main currency.
    :resjson list[object] staking_gains: Breakdown by asset of the gains claimed by staking.
    :resjson list[object] stability_pool_gains: Breakdown by asset of the gains claimed by depositing in the stability pool.
 
@@ -7786,7 +8184,7 @@ Getting Uniswap balances
                   "usd_price": "0.3015901111469715543448531276626107",
                   "user_balance": {
                     "amount": "4424094.631122964837017895643",
-                    "usd_value": "1334263.191525095084350185834"
+                    "value": "1334263.191525095084350185834"
                   }
                 },
                 {
@@ -7795,14 +8193,14 @@ Getting Uniswap balances
                   "usd_price": "1.001",
                   "user_balance": {
                     "amount": "1336837.868136041506994516873",
-                    "usd_value": "1338174.706004177548501511390"
+                    "value": "1338174.706004177548501511390"
                   }
                 }
               ],
               "total_supply": "5.255427314262137581",
               "user_balance": {
                 "amount": "2.424878911648769806",
-                "usd_value": "2672437.897529272632851697224"
+                "value": "2672437.897529272632851697224"
               }
             }
           ],
@@ -7821,88 +8219,6 @@ Getting Uniswap balances
    :statuscode 409: Uniswap module is not activated.
    :statuscode 500: Internal rotki error.
    :statuscode 502: An external service used in the query such as etherscan or the graph node could not be reached or returned unexpected response.
-
-Getting Uniswap V3 balances
-==============================
-
-.. http:get:: /api/(version)/blockchains/eth/modules/uniswap/v3/balances
-
-   Doing a GET on the uniswap v3 balances resource will return the balances locked in Uniswap V3 Liquidity Pools (LPs or pools).
-
-   .. note::
-      This endpoint can also be queried asynchronously by using ``"async_query": true``
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      GET /api/1/blockchains/eth/modules/uniswap/v3/balances HTTP/1.1
-      Host: localhost:5042
-
-   :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      {
-        "result": {
-          "0xcf2B8EeC2A9cE682822b252a1e9B78EedebEFB02": [
-            {
-              "address": "0x318BE2AA088FFb991e3F6E61AFb276744e36F4Ae",
-              "nft_id": 223251,
-              "price_range": ["1000", "1500"],
-              "assets": [
-                {
-                  "asset": {
-                    "ethereum_address": "0x364A7381A5b378CeD7AB33d1CDf6ff1bf162Bfd6",
-                    "name": "DeFi-X Token",
-                    "symbol": "TGX"
-                  },
-                  "total_amount": "410064.7008276195",
-                  "usd_price": "0.3015901111469715543448531276626107",
-                  "user_balance": {
-                    "amount": "4.631122964837017895643",
-                    "usd_value": "1334263.191525095084350185834"
-                  }
-                },
-                {
-                  "asset": "eip155:1/erc20:0xdAC17F958D2ee523a2206206994597C13D831ec7",
-                  "total_amount": "1251.608339987909",
-                  "usd_price": "1.001",
-                  "user_balance": {
-                    "amount": "1336837.868136041506994516873",
-                    "usd_value": "1338174.706004177548501511390"
-                  }
-                }
-              ],
-              "total_supply": null,
-              "user_balance": {
-                "amount": "0",
-                "usd_value": "2672437.897529272632851697224"
-              }
-            }
-          ],
-        },
-        "message": "",
-      }
-
-   :resjson object result: A mapping between accounts and their Uniswap V3 balances (represented by a list where each item is a LP).
-   :resjson string address: The LP contract address.
-   :resjson int nft_id: The LP position NFT ID.
-   :resjson string price_range: The range of prices the LP position is valid for.
-   :resjson list[object] assets: A list with the LP underlying tokens data. Per item, when ``"asset"`` is an object, it means the token is unknown to rotki. ``"total_amount"`` is the total amount of this token the pool has. ``"usd_price"`` is the token USD price. ``"user_balance"`` contains the user token balance and its estimated USD value.
-   :resjson string total_supply: The total amount of liquidity tokens the LP has. This is ``null`` as Uniswap V3 does not store LP as tokens.
-   :resjson object user_balance: The liquidity token user balance and its USD value.
-
-   :statuscode 200: Uniswap balances successfully queried.
-   :statuscode 401: User is not logged in.
-   :statuscode 409: Uniswap module is not activated.
-   :statuscode 500: Internal rotki error.
-   :statuscode 502: An external service used in the query such as etherscan could not be reached or returned unexpected response.
 
 
 Getting Loopring balances
@@ -7936,11 +8252,11 @@ Getting Loopring balances
             "0xE74ad5437C6CFB0cCD6bADda1F6b57b6E542E75e": [{
                     "ETH": {
                         "amount": "1050",
-                        "usd_value": "950"
+                        "value": "950"
                     },
                     "eip155:1/erc20:0x6810e776880C02933D47DB1b9fc05908e5386b96": {
                         "amount": "1",
-                        "usd_value": "5"
+                        "value": "5"
                     }
             }]
         },
@@ -8254,63 +8570,6 @@ Getting tracked Eth2 validators
    :statuscode 409: eth2 module is not activated.
    :statuscode 500: Internal rotki error.
    :statuscode 502: Error contacting to a remote to query data.
-
-
-Getting Pickle's DILL balances
-==============================
-
-.. http:get:: /api/(version)/blockchains/eth/modules/pickle/dill
-
-   Doing a GET on the pickle's DILL balances resource will return the balances that the user has locked with the rewards that can be claimed.
-
-   .. note::
-      This endpoint can also be queried asynchronously by using ``"async_query": true``
-
-   .. note::
-      This endpoint also accepts parameters as query arguments.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      GET /api/1/blockchains/eth/modules/pickle/dill HTTP/1.1
-      Host: localhost:5042
-
-   :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-        {
-            "result": {
-                "0x5c4D8CEE7dE74E31cE69E76276d862180545c307": {
-                    "locked_amount": {
-                        "amount": "4431.204412216798860222",
-                        "usd_value": "43735.98754857980475039114",
-                        "asset": "eip155:1/erc20:0x429881672B9AE42b8EbA0E26cD9C73711b891Ca5"
-                    },
-                    "pending_rewards": {
-                        "amount": "82.217560698031032969",
-                        "usd_value": "811.48732408956629540403",
-                        "asset": "eip155:1/erc20:0x429881672B9AE42b8EbA0E26cD9C73711b891Ca5"
-                    },
-                    "locked_until": 1755129600
-                }
-            },
-            "message": ""
-        }
-
-   :resjson object result: A mapping of all accounts that currently have Pickle locked to keys ``locked_amount``,  ``pending_rewards`` and ``locked_until``
-
-   :statuscode 200: Pickle balances successfully queried.
-   :statuscode 401: User is not logged in.
-   :statuscode 409: Pickle module is not activated.
-   :statuscode 500: Internal rotki error.
-   :statuscode 502: An external service used in the query such as etherscan could not be reached or returned unexpected response.
 
 
 Querying ethereum airdrops
@@ -8633,7 +8892,7 @@ Adding blockchain accounts
 .. http:put:: /api/(version)/blockchains/(blockchain)/accounts
 
    .. note::
-      Supported blockchains: ``"BTC", "BCH", "ETH", "KSM", "DOT", "AVAX", "OPTIMISM"``
+      Supported blockchains: ``"BTC", "BCH", "KSM", "DOT", "SOLANA"`` and all supported EVM chains.
 
       Supported blockchains with ENS domains: ``"BTC", "BCH", "ETH", "KSM", "DOT"``
 
@@ -8932,13 +9191,78 @@ Deleting BTC/BCH xpubs
    :statuscode 502: Error occurred with some external service query such as blockstream/haskoin. Check message for details.
 
 
+Querying BTC/BCH xpub balances
+===============================
+
+.. http:get:: /api/(version)/blockchains/(blockchain)/xpub
+
+   .. note::
+      This endpoint can also be queried asynchronously by using ``"async_query": true``
+
+   .. note::
+      Only ``"BCH"`` and ``"BTC"`` are the supported blockchain values for Xpubs.
+
+   Doing a GET on the xpub endpoint will query balances for all addresses derived from the specified extended public key.
+
+   When ``ignore_cache`` is true, the endpoint will first check for newly derived addresses from the xpub and include them in the balance query. When false, it uses only existing derived addresses stored in the database.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      GET /api/1/blockchains/BTC/xpub?xpub=xpub68V4ZQQ62mea7ZUKn2urQu47Bdn2Wr7SxrBxBDDwE3kjytj361YBGSKDT4WoBrE5htrSB8eAMe59NPnKrcAbiv2veN5GQUmfdjRddD1Hxrk&derivation_path=m/0/0&ignore_cache=true&async_query=false HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+   :query string xpub: The extended public key to query balances for
+   :query string derivation_path: [Optional] The derivation path used with the xpub
+   :query bool ignore_cache: [Optional] Whether to check for new derived addresses. Defaults to false
+   :query bool async_query: [Optional] Boolean denoting whether this is an asynchronous query or not
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": {
+              "per_account": {
+                  "BTC": {
+                      "1LZypJUwJJRdfdndwvDmtAjrVYaHko136r": {
+                          "amount": "0.5", "usd_value": "3770.075"
+                      },
+                      "1AMrsvqsJzDq25QnaJzX5BzEvdqQ8T6MkN": {
+                          "amount": "0.0005", "usd_value": "3.77"
+                      }
+                  }
+              },
+              "totals": {
+                  "assets": {
+                      "BTC": {"amount": "0.5005", "usd_value": "3773.845"}
+                  },
+                  "liabilities": {}
+              }
+          },
+          "message": ""
+      }
+
+   :resjson object result: An object containing balance information for all addresses derived from the xpub. Uses the same format as blockchain balance queries with ``"per_account"`` and ``"totals"`` keys as defined `here <blockchain_balances_result_>`_.
+
+   :statuscode 200: Xpub balances successfully queried
+   :statuscode 400: Provided parameters are malformed or the xpub is invalid
+   :statuscode 401: User is not logged in
+   :statuscode 502: Error occurred with some external service query such as blockstream/haskoin. Check message for details.
+
+
 Editing blockchain account data
 =================================
 
 .. http:patch:: /api/(version)/blockchains/(blockchain)/accounts
 
    .. note::
-      Supported blockchains: ``"BTC", "BCH", "ETH", "KSM", "DOT", "AVAX", "OPTIMISM"``
+      Supported blockchains: ``"BTC", "BCH", "KSM", "DOT", "SOLANA"`` and all supported EVM chains.
 
       Supported blockchains with ENS domains: ``"BTC", "BCH", "ETH", "KSM", "DOT"``
 
@@ -9011,7 +9335,7 @@ Account operations by chain type
 .. http:patch:: /api/(version)/blockchains/type/(chain_type)/accounts
 
    .. note::
-      Supported blockchains types: ``EVM, BITCOIN, SUBSTRATE``
+      Supported blockchains types: ``EVM, BITCOIN, SUBSTRATE, SOLANA``
 
    .. note::
       This endpoint doesn't support ENS resolution
@@ -9076,7 +9400,7 @@ Account operations by chain type
 .. http:delete:: /api/(version)/blockchains/type/(chain_type)/accounts
 
    .. note::
-      Supported blockchains types: ``EVM, BITCOIN, SUBSTRATE``
+      Supported blockchains types: ``EVM, BITCOIN, SUBSTRATE, SOLANA``
 
    .. note::
       This endpoint doesn't support ENS resolution
@@ -9128,7 +9452,7 @@ Removing blockchain accounts
 .. http:delete:: /api/(version)/blockchains/(blockchain)/accounts
 
    .. note::
-      Supported blockchains: ``"BTC", "BCH", "ETH", "KSM", "DOT", "AVAX", "OPTIMISM"``
+      Supported blockchains: ``"BTC", "BCH", "KSM", "DOT", "SOLANA"`` and all supported EVM chains.
 
       Supported blockchains with ENS domains: ``"BTC", "BCH", "ETH", "KSM", "DOT"``
 
@@ -9214,16 +9538,16 @@ Getting manually tracked balances
       This endpoint can also be queried asynchronously by using ``"async_query": true``
 
    Doing a GET on the manually tracked balances endpoint will return all the manually tracked balance accounts from the database.
-   If a USD value threshold is provided, only balances with USD value greater than the threshold are returned.
+   If a value threshold is provided, only balances with value greater than the threshold are returned (in user's main currency).
 
    **Example Request**:
 
    .. http:example:: curl wget httpie python-requests
 
-      GET /api/1/balances/manual?usd_value_threshold=1000 HTTP/1.1
+      GET /api/1/balances/manual?value_threshold=1000 HTTP/1.1
       Host: localhost:5042
 
-   :query decimal usd_value_threshold: Optional. If provided, only returns balances with USD value greater than this threshold.
+   :query decimal value_threshold: Optional. If provided, only returns balances with value greater than this threshold (in user's main currency).
 
    **Example Response**:
 
@@ -9239,7 +9563,7 @@ Getting manually tracked balances
                   "asset": "XMR",
                   "label": "My monero wallet",
                   "amount": "50.315",
-                  "usd_value": "2370.13839",
+                  "value": "2370.13839",
                   "tags": ["public"],
                   "location": "blockchain"
               }, {
@@ -9247,21 +9571,21 @@ Getting manually tracked balances
                   "asset": "BTC",
                   "label": "My XPUB BTC wallet",
                   "amount": "1.425",
-                  "usd_value": "9087.22",
+                  "value": "9087.22",
                   "location": "blockchain"
               }, {
                   "identifier": 3,
                   "asset": "ZEC",
                   "label" "My favorite wallet",
                   "amount": "76.2"
-                  "usd_value": "6067.77",
+                  "value": "6067.77",
                   "tags": ["private", "inheritance"],
                   "location": "blockchain"
               }]
           "message": ""
       }
 
-   :resjson object result: An object containing all the manually tracked balances as defined `here <manually_tracked_balances_section_>`__ with additionally a current usd equivalent value per account.
+   :resjson object result: An object containing all the manually tracked balances as defined `here <manually_tracked_balances_section_>`__ with additionally a current value in user's main currency per account.
    :statuscode 200: Balances successfully queried
    :statuscode 401: User is not logged in.
    :statuscode 500: Internal rotki error
@@ -9326,7 +9650,7 @@ Adding manually tracked balances
                   "asset": "XMR",
                   "label": "My monero wallet",
                   "amount": "50.315",
-                  "usd_value": "2370.13839",
+                  "value": "2370.13839",
                   "tags": ["public"],
                   "location": "blockchain",
                    "balance_type": "asset"
@@ -9335,7 +9659,7 @@ Adding manually tracked balances
                   "asset": "BTC",
                   "label": "My XPUB BTC wallet",
                   "amount": "1.425",
-                  "usd_value": "9087.22",
+                  "value": "9087.22",
                   "location": "blockchain",
                   "balance_type": "asset"
               }, {
@@ -9343,7 +9667,7 @@ Adding manually tracked balances
                   "asset": "ZEC",
                   "label" "My favorite wallet",
                   "amount": "76.2"
-                  "usd_value": "6067.77",
+                  "value": "6067.77",
                   "tags": ["private", "inheritance"]
                   "location": "blockchain",
                   "balance_type": "asset"
@@ -9412,7 +9736,7 @@ Editing manually tracked balances
                   "asset": "XMR",
                   "label": "My monero wallet",
                   "amount": "4.5",
-                  "usd_value": "210.548",
+                  "value": "210.548",
                   "tags": ["public"],
                   "location": "blockchain",
                   "balance_type": "asset"
@@ -9421,7 +9745,7 @@ Editing manually tracked balances
                   "asset": "BTC",
                   "label": "My XPUB BTC wallet",
                   "amount": "1.425",
-                  "usd_value": "9087.22",
+                  "value": "9087.22",
                   "location": "blockchain",
                   "balance_type": "asset"
               }, {
@@ -9429,7 +9753,7 @@ Editing manually tracked balances
                   "asset": "ZEC",
                   "label" "My favorite wallet",
                   "amount": "10"
-                  "usd_value": "1330.85"
+                  "value": "1330.85"
                   "location": "kraken",
                   "balance_type": "asset"
               }]
@@ -9482,7 +9806,7 @@ Deleting manually tracked balances
                   "asset": "BTC",
                   "label": "My XPUB BTC wallet",
                   "amount": "1.425",
-                  "usd_value": "9087.22",
+                  "value": "9087.22",
                   "location": "blockchain",
                   "balance_type": "asset"
               }]
@@ -10375,7 +10699,7 @@ Querying  NFTs
                 "external_link": "https://www.bastardganpunks.club/v2/8636",
                 "price_in_asset": "0.025",
                 "price_asset": "ETH",
-                "price_usd": "250",
+                "price": "250",
                 "collection": {
                   "name": "BASTARD GAN PUNKS V2",
                   "banner_image": "https://lh3.googleusercontent.com/InX38GA4YmuR2ukDhN0hjf8-Qj2U3Tdw3wD24IsbjuXNtrTZXNwWiIeWR9bJ_-rEUOnQgkpLbj71TDKrzNzHLHkOSRdLo8Yd2tE3_jg=s2500",
@@ -10403,7 +10727,7 @@ Querying  NFTs
    :resjson string permalink: [Optional]. A link to the NFT in opensea.
    :resjson string price_in_asset: The last known price of the NFT in `price_asset`. Can be zero.
    :resjson string price_asset: The identifier of the asset used for `price_in_asset`.
-   :resjson string price_usd: The last known price of the NFT in USD. Can be zero.
+   :resjson string price: The last known price of the NFT in the user's preferred currency. Can be zero.
    :statuscode 200: NFTs successfully queried
    :statuscode 400: Provided JSON is in some way malformed
    :statuscode 401: User is not logged in.
@@ -10465,7 +10789,7 @@ Show NFT Balances
                     "manually_input": true,
                     "price_asset": "ETH",
                     "price_in_asset": "1",
-                    "usd_price": "2501.15"
+                    "price": "2501.15"
                     "image_url": "https://storage.opensea.io/files/305952feb5321a50d5d4f6ab6c16da1f.mov",
                     "is_lp": false
                   }, {
@@ -10475,14 +10799,14 @@ Show NFT Balances
                     "manually_input": false,
                     "price_asset": "USD",
                     "price_in_asset": "150.55",
-                    "usd_price": "150.55"
+                    "price": "150.55"
                     "image_url": "https://lh3.googleusercontent.com/xJpOAw7P96jdPgs91w7ZQMTq91tvcCva4J2RYHh7LjFufod_UP9FE0bVjhp1cYpbx2p1qFFj2NDFf3oS0eEcNI3L5w",
                     "is_lp": true
                   },
                 ],
                 "entries_found": 2,
                 "entries_total": 10,
-                "total_usd_value": "2651.70"
+                "total_value": "2651.70"
             },
             "message": ""
         }
@@ -10491,7 +10815,7 @@ Show NFT Balances
    :resjson object entries: A list of nfts balances. ``name`` can also be null. ``collection_name`` can be null if nft does not have a collection.
    :resjson int entries_found: The number of entries found for the current filter. Ignores pagination.
    :resjson int entries_total: The number of total entries ignoring all filters.
-   :resjson int total_usd_value: Total usd value of the nfts in the filter.
+   :resjson int total_value: Total value (in user's preferred currency) of the nfts in the filter.
    :statuscode 200: NFT balances successfully queried
    :statuscode 400: Provided JSON is in some way malformed
    :statuscode 401: User is not logged in.
@@ -10683,6 +11007,189 @@ Get associated locations
    :statuscode 409: Other error. Check error message for details.
    :statuscode 500: Internal Rotki error
 
+
+Get location labels
+========================
+
+.. http:get:: /api/(version)/locations/labels
+
+   Doing a GET on this endpoint will return a list of all unique location labels with their corresponding locations from the user's history events. Results are ordered with the most frequently occurring labels first.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      GET /api/1/locations/labels HTTP/1.1
+      Host: localhost:5042
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": [
+              {
+                  "location_label": "0x616B71067BE19BdbdBea3600Db0626859Ff25A75",
+                  "location": "ethereum"
+              },
+              {
+                  "location_label": "Kraken 1",
+                  "location": "kraken"
+              },
+              {
+                  "location_label": "Binance Account",
+                  "location": "binance"
+              }
+          ],
+          "message": ""
+      }
+
+   :resjsonarr string location_label: A unique location label from the history events. An account address, exchange name, etc.
+   :resjsonarr string location: The location of events with this label.
+
+   :statuscode 200: Location labels successfully queried.
+   :statuscode 401: User is not logged in.
+   :statuscode 409: Other error. Check error message for details.
+   :statuscode 500: Internal Rotki error
+
+
+ Lido CSM staking
+ =================
+
+.. http:get:: /api/(version)/lido-csm/node-operators
+
+   Return the list of tracked Lido Community Staking Module (CSM) node operators.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      GET /api/1/lido-csm/node-operators HTTP/1.1
+      Host: localhost:5042
+      Accept: application/json, text/javascript
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": [
+              {
+                  "address": "0xbB8311c7bAD518f0D8f907Cad26c5CcC85a06dC4",
+                  "node_operator_id": 7,
+                  "metrics": {
+                      "operatorType": {"id": 1, "label": "Permissionless"},
+                      "bond": {"current": "1.5", "required": "2.0", "claimable": "0.2"},
+                      "keys": {"totalDeposited": 64},
+                      "rewards": {"pending": "0.15"}
+                  }
+              }
+          ],
+          "message": ""
+      }
+
+   :resjson list result: Tracked node operator entries.
+   :resjson string result[].address: Checksummed Ethereum address.
+   :resjson int result[].node_operator_id: Node operator identifier.
+   :resjson object result[].metrics: Cached metrics for the node operator (may be ``null``).
+   :statuscode 200: Query succeeded.
+
+.. http:put:: /api/(version)/lido-csm/node-operators
+
+   Add a new tracked Lido CSM node operator. The backend persists the association and attempts to compute metrics immediately. The provided address must already be registered as an Ethereum blockchain account in ``/api/(version)/blockchains/accounts``.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      PUT /api/1/lido-csm/node-operators HTTP/1.1
+      Host: localhost:5042
+      Accept: application/json, text/javascript
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "address": "0xbB8311c7bAD518f0D8f907Cad26c5CcC85a06dC4",
+          "node_operator_id": 7
+      }
+
+   :reqjson string address: Checksummed Ethereum address that owns the node operator. It must be registered as an Ethereum EVM account.
+   :reqjson int node_operator_id: Non-negative node operator identifier.
+   :statuscode 200: Node operator stored and metrics computed when possible.
+   :statuscode 400: Malformed payload.
+   :statuscode 409: Address is not registered as an Ethereum EVM account or node operator already tracked.
+   :statuscode 502: Operator stored but metrics could not be fetched from the blockchain.
+
+.. http:delete:: /api/(version)/lido-csm/node-operators
+
+   Remove a tracked node operator.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      DELETE /api/1/lido-csm/node-operators HTTP/1.1
+      Host: localhost:5042
+      Accept: application/json, text/javascript
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "address": "0xbB8311c7bAD518f0D8f907Cad26c5CcC85a06dC4",
+          "node_operator_id": 7
+      }
+
+   :reqjson string address: Address that owns the node operator.
+   :reqjson int node_operator_id: Identifier to remove.
+   :statuscode 200: Node operator removed.
+   :statuscode 400: Malformed payload.
+   :statuscode 409: Node operator not found.
+
+.. http:post:: /api/(version)/lido-csm/metrics
+
+   Recompute metrics for all tracked node operators and return the refreshed entries.
+
+   **Example Request**:
+
+   .. http:example:: curl wget httpie python-requests
+
+      POST /api/1/lido-csm/metrics HTTP/1.1
+      Host: localhost:5042
+      Accept: application/json, text/javascript
+
+   **Example Response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": [
+              {
+                  "address": "0xbB8311c7bAD518f0D8f907Cad26c5CcC85a06dC4",
+                  "node_operator_id": 7,
+                  "metrics": {
+                      "operatorType": {"id": 1, "label": "Permissionless"},
+                      "bond": {"current": "1.6", "required": "2.0", "claimable": "0.2"},
+                      "keys": {"totalDeposited": 64},
+                      "rewards": {"pending": "0.05"}
+                  }
+              }
+          ],
+          "message": ""
+      }
+
+   :resjson list result: Updated node operator entries.
+   :statuscode 200: Metrics refreshed successfully.
+   :statuscode 500: Refresh failed; see message for details.
+   :statuscode 502: Refresh partially succeeded but at least one operator's metrics failed to update.
+
+
 Staking events
 ==============
 
@@ -10732,7 +11239,7 @@ Staking events
                     "timestamp": 1636740198,
                     "location": "kraken",
                     "amount": "0.0600000000",
-                    "usd_value": "278.7345000000000"
+                    "value": "278.7345000000000"
                 },
                 {
                   "event_type": "get reward",
@@ -10740,7 +11247,7 @@ Staking events
                   "timestamp": 1636864588,
                   "location": "kraken",
                   "amount": "0.0000103220",
-                  "usd_value": "0.0478582110500"
+                  "value": "0.0478582110500"
                 },
                 {
                     "event_type": "stake asset",
@@ -10748,7 +11255,7 @@ Staking events
                     "timestamp": 1636738550,
                     "location": "kraken",
                     "amount": "0.0600000000",
-                    "usd_value": "278.7345000000000"
+                    "value": "278.7345000000000"
                 }
               ],
               "entries_found": 3,
@@ -10760,7 +11267,7 @@ Staking events
                   {
                       "asset": "ETH2",
                       "amount": "0.0000103220",
-                      "usd_value": "0.21935353362"
+                      "value": "0.21935353362"
                   }
               ]
           },
@@ -10776,9 +11283,9 @@ Staking events
    :resjson int entries_found: The number of entries found for the current filter. Ignores pagination.
    :resjson int entries_limit: The limit of entries if free version. -1 for premium.
    :resjson int entries_total: The number of total entries ignoring all filters.
-   :resjsonarr string total_usd_value: Sum of the USD value for the assets received computed at the time of acquisition of each event.
+   :resjsonarr string total_value: Sum of the value for the assets received computed at the time of acquisition of each event in the user's main currency.
    :resjson list[string] assets: Assets involved in events ignoring all filters.
-   :resjson list[object] received: Assets received with the total amount received for each asset and the aggregated USD value at time of acquisition.
+   :resjson list[object] received: Assets received with the total amount received for each asset and the aggregated value at time of acquisition in the user's main currency.
 
    :statuscode 200: Events are successfully returned
    :statuscode 400: Provided JSON is in some way malformed
@@ -10904,19 +11411,19 @@ Handling snapshot manipulation
                         "category": "asset",
                         "asset_identifier": "AVAX",
                         "amount": "1000.00",
-                        "usd_value": "12929.00",
+                        "value": "12929.00",
                     }
                 ],
               "location_data_snapshot": [
                     {
                         "timestamp": 149095883,
                         "location": "external",
-                        "usd_value": "12929.00"
+                        "value": "12929.00"
                     },
                     {
                         "timestamp": 149095883,
                         "location": "total",
-                        "usd_value": "12929.00"
+                        "value": "12929.00"
                     }
               ]
           },
@@ -11044,19 +11551,19 @@ Handling snapshot manipulation
                     "category": "asset",
                     "asset_identifier": "AVAX",
                     "amount": "1000.00",
-                    "usd_value": "12929.00"
+                    "value": "12929.00"
                 }
             ],
             "location_data_snapshot": [
                 {
                     "timestamp": 149095883,
                     "location": "external",
-                    "usd_value": "12929.00"
+                    "value": "12929.00"
                 },
                 {
                     "timestamp": 149095883,
                     "location": "total",
-                    "usd_value": "12929.00"
+                    "value": "12929.00"
                 }
             ]
         }
@@ -11260,6 +11767,7 @@ Get mappings from addressbook
     :reqjson list[bool] ascending: Should the order be ascending? This is the default. If set to false, it will be on descending order.
     :reqjson str[optional] name_substring: The substring to use as filter for the name to be found in the addressbook.
     :reqjson str[optional] blockchain: The blockchain in which to use the provided name.
+    :reqjson bool[optional] strict_blockchain: Defaults to true. When true, the provided ``blockchain`` must match exactly. When false, include all blockchains where the address format is valid for the same chain family (e.g., any EVM-based chain when ``blockchain`` is an EVM chain).
     :reqjson object[optional] addresses: List of addresses that the backend should find names for.
 
     **Example Response**
@@ -11924,56 +12432,6 @@ Events Details
    :statuscode 401: No user is currently logged in.
    :statuscode 500: Internal rotki error.
 
-Add EVM Transaction By Hash
-================================
-
-.. http:put:: /api/(version)/blockchains/evm/transactions/add-hash
-
-   Doing a PUT on this endpoint will add an EVM transaction to the database and associate it with the provided address.
-   .. note::
-   This endpoint can also be queried asynchronously by using ``"async_query": true``.
-
-   **Example Request**:
-
-   .. http:example:: curl wget httpie python-requests
-
-      PUT /api/1/blockchains/evm/transactions/add-hash HTTP/1.1
-      Host: localhost:5042
-      Content-Type: application/json;charset=UTF-8
-
-      {
-        "evm_chain": "ethereum",
-        "tx_hash": "0x65d53653c584cde22e559cec4667a7278f75966360590b725d87055fb17552ba",
-        "associated_address": "0xb8553D9ee35dd23BB96fbd679E651B929821969B",
-        "async_query": true
-      }
-
-   :reqjson bool async_query: Boolean denoting whether this is an asynchronous query or not.
-   :reqjson str evm_chain: The name of the evm chain for the transaction to the added e.g. ``"ethereum"``, ``"optimism"`` etc.
-   :reqjson str tx_hash: The hash of the transaction to be added.
-   :reqjson str associated_address: The address to be associated with the transaction. The address must be one that is already tracked by rotki.
-
-   **Example Response**:
-
-   .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      {
-          "result": true
-          "message": ""
-      }
-
-   :resjson bool result: It contains a boolean representing the status of the request.
-
-   :statuscode 200: The transaction was saved successfully.
-   :statuscode 400: Provided JSON is in some way malformed. Transaction is already present in DB. Address provided is not tracked by rotki.
-   :statuscode 404: Transaction hash not found for the specified chain.
-   :statuscode 401: No user is currently logged in.
-   :statuscode 500: Internal rotki error.
-   :statuscode 502: An external service used in the query such as etherscan could not be reached or returned unexpected response.
-
 
 Get Binance Savings Interests History
 =======================================
@@ -12062,9 +12520,9 @@ Get Binance Savings Interests History
    :resjson int entries_found: The number of entries found for the current filter. Ignores pagination.
    :resjson int entries_limit: The limit of entries if free version. -1 for premium.
    :resjson int entries_total: The number of total entries ignoring all filters.
-   :resjson string total_usd_value: Sum of the USD value for the assets received computed at the time of acquisition of each event.
+   :resjson string total_value: Sum of the value for the assets received computed at the time of acquisition of each event in the user's main currency.
    :resjson list[string] assets: Assets involved in events ignoring all filters.
-   :resjson list[object] received: Assets received with the total amount received for each asset and the aggregated USD value at time of acquisition.
+   :resjson list[object] received: Assets received with the total amount received for each asset and the aggregated value at time of acquisition in the user's main currency.
 
    :statuscode 200: The balances were returned successfully.
    :statuscode 400: Invalid location provided.
@@ -12375,53 +12833,6 @@ Getting all available counterparties
   :statuscode 200: Information was correctly generated
   :statuscode 500: Internal rotki error
 
-Getting EVM products
-=====================================
-
-.. http:get:: /api/(version)/history/events/products
-
-   Doing a GET on this endpoint will return information for all the counterparties and the products that they use. Also it will return a list of all the available product values.
-
-  **Example Request**
-
-  .. http:example:: curl wget httpie python-requests
-
-    GET /history/events/products HTTP/1.1
-    Host: localhost:5042
-
-
-  **Example Response**
-
-  .. sourcecode:: http
-
-      HTTP/1.1 200 OK
-      Content-Type: application/json
-
-      {
-        "result":{
-          "mappings":{
-            "convex":[
-              "gauge",
-              "staking"
-            ],
-            "curve":[
-              "gauge"
-            ]
-          },
-          "products":[
-            "pool",
-            "staking",
-            "gauge"
-          ]
-        },
-        "message":""
-      }
-
-  :resjson object mappings: A mapping of each counterparty to a list with the products that they use
-  :resjson object products: A list of all the available products
-
-  :statuscode 200: Information was correctly generated
-  :statuscode 500: Internal rotki error
 
 Get all valid locations
 ========================
@@ -12783,6 +13194,9 @@ Managing custom accounting rules
   :reqjsonarr optional[array[string]] event_types: List of possible event types to use while filtering.
   :reqjsonarr optional[array[string]] event_subtypes: List of possible event subtypes to use while filtering.
   :reqjsonarr optional[array[string]] counterparties: List of possible counterparties to use while filtering. Instead of a string a null value can also be given to mean counterparty being None.
+  :reqjsonarr optional[array[int]] identifiers: List of rule identifiers to filter by. Only rules with these identifiers will be returned.
+  :reqjsonarr optional[string] custom_rule_handling: Controls filtering of rules by event ID association. Possible values: 'all' (default - no filtering), 'only' (only rules with event IDs), 'exclude' (only rules without event IDs). Cannot be used together with event_ids when set to 'only' or 'exclude'.
+  :reqjsonarr optional[array[int]] event_ids: List of specific group identifiers to filter accounting rules by. Only rules that apply to these specific events will be returned. Cannot be used together with custom_rule_handling when it's set to 'only' or 'exclude'.
 
 
   **Example Response**
@@ -12800,6 +13214,7 @@ Managing custom accounting rules
             "count_entire_amount_spend":{"value": false},
             "accounting_treatment":null,
             "identifier":2,
+            "event_ids": [3234554],
             "event_type":"staking",
             "event_subtype":"spend",
             "counterparty":"compound"
@@ -12825,6 +13240,9 @@ Managing custom accounting rules
 
   Doing a PUT request on this endpoint will allow to create a new accounting rule.
 
+  .. note::
+     If ``event_ids`` id provided, those event IDs are first removed from any existing rules. They are then either added to an existing event-specific rule with matching settings or a new event-specific rule is created.
+
   **Example Request**
 
   .. http:example:: curl wget httpie python-requests
@@ -12839,6 +13257,7 @@ Managing custom accounting rules
          "count_cost_basis_pnl":{"value": true},
          "event_type":"staking",
          "event_subtype":"spend",
+         "event_ids": [12345],
          "counterparty": "compound",
          "accounting_treatment":"swap"
       }
@@ -12853,6 +13272,7 @@ Managing custom accounting rules
   :reqjsonarr string event_subtype: The event subtype that the rule targets.
   :reqjsonarr optional[string] counterparty: The counterparty that the rule targets.
   :reqjsonarr accounting_treatment: Special rule to handle pairs of events. Can be ``swap`` or ``swap with fee``
+  :reqjsonarr optional[list[int]] event_ids: The identifiers (integer IDs) for a specified group of events. Only required when the rule should apply to certain events.
 
   **Example Response**:
 
@@ -13128,9 +13548,9 @@ Managing calendar entries
 
   :reqjsonarr optional[list[object]] accounts: List of addresses + their chain linked to the calendar events. The blockchain part can be omitted and it will return information for the address in all the chains.
   :reqjsonarr optional[integer] identifiers: List of identifiers linked to the calendar events.
-  :reqjsonarr string counterparty: Counterparty used to filter the events.
-  :reqjsonarr string name: Substring used to filter for in the ``name`` attribute when querying calendar events.
-  :reqjsonarr string description: Substring used to filter for in the ``description`` attribute when querying calendar events.
+  :reqjson optional[string] counterparty: Counterparty used to filter the events.
+  :reqjson optional[string] name: Substring used to filter for in the ``name`` attribute when querying calendar events.
+  :reqjson optional[string] description: Substring used to filter for in the ``description`` attribute when querying calendar events.
   :resjson int from_timestamp: The earliest timestamp of the events queried.
   :resjson int to_timestamp: The latest timestamp of the events queried.
 
@@ -13480,15 +13900,15 @@ Managing calendar reminders
   :statuscode 500: Internal rotki error.
 
 
-.. http:post:: /api/(version)/statistics/wrap
+.. http:post:: /api/(version)/statistics/events
 
-  Doing a POST on this endpoint will query basic statistics from the user DB.
+  Doing a POST on this endpoint will query basic events statistics from the user DB.
 
   **Example Request**:
 
   .. http:example:: curl wget httpie python-requests
 
-    POST /api/(version)/statistics/wrap HTTP/1.1
+    POST /api/(version)/statistics/events HTTP/1.1
     Host: localhost:5042
     Content-Type: application/json;charset=UTF-8
 
@@ -13693,7 +14113,7 @@ Historical Balance Queries
         }
 
         :resjson list[integer] times: Timestamps of balance changes.
-        :resjson list last_event_identifier: (Optional) A list containing [identifier, group_identifier] of the event that caused the negative balance amount.
+        :resjson list last_group_identifier: (Optional) A list containing [identifier, group_identifier] of the event that caused the negative balance amount.
         :resjson list[string] values: Net asset balance amount at each corresponding timestamp.
         :statuscode 200: Historical balances returned
         :statuscode 400: Malformed query
@@ -13739,7 +14159,7 @@ Historical Balance Queries
             "result": {
               "times": [1672531200, 1673308800, 1674518400],
               "values": ["50000.5", "48750.25", "52100.75"],
-              "last_event_identifier": [1, "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f"],
+              "last_group_identifier": [1, "10x8d822b87407698dd869e830699782291155d0276c5a7e5179cb173608554e41f"],
               "missing_prices": [
                 ["BTC", 1672531200],
                 ["ETH", 1674518400]
@@ -13750,7 +14170,7 @@ Historical Balance Queries
 
         :resjson list[integer] times: Timestamps at which net worth was calculated
         :resjson list[string] values: Net worth value at each corresponding timestamp in user's profit currency
-        :resjson list last_event_identifier: (Optional) A list containing [identifier, group_identifier] of the event that caused the negative balance.
+        :resjson list last_group_identifier: (Optional) A list containing [identifier, group_identifier] of the event that caused the negative balance.
         :resjson list[list] missing_prices: List of [asset_identifier, timestamp] pairs where price data was missing
         :statuscode 200: Historical net worth values returned
         :statuscode 400: Malformed query
@@ -13822,10 +14242,10 @@ Historical Balance Queries
       :statuscode 500: Internal Rotki error
 
 
-Refetch EVM transactions for a specific time period
+Refetch transactions for a specific time period
 ===================================================
 
-.. http:post:: /api/(version)/blockchains/evm/transactions/refetch
+.. http:post:: /api/(version)/blockchains/transactions/refetch
 
    Doing a POST on the transactions refetch endpoint will force a re-query of transactions for the
    specified time period. This is useful to recover potentially missed transactions due to API
@@ -13839,7 +14259,7 @@ Refetch EVM transactions for a specific time period
 
    .. http:example:: curl wget httpie python-requests
 
-      POST /api/1/blockchains/evm/transactions/refetch HTTP/1.1
+      POST /api/1/blockchains/transactions/refetch HTTP/1.1
       Host: localhost:5042
       Content-Type: application/json;charset=UTF-8
 
@@ -13847,15 +14267,15 @@ Refetch EVM transactions for a specific time period
           "async_query": false,
           "from_timestamp": 1640995200,
           "to_timestamp": 1672531200,
-          "evm_chain": "ethereum",
+          "chain": "eth",
           "address": "0xb8553D9ee35dd23BB96fbd679E651B929821969B"
       }
 
    :reqjson bool async_query: If true, the query will be processed asynchronously.
    :reqjson int from_timestamp: Start of the time period to refetch transactions for.
    :reqjson int to_timestamp: End of the time period to refetch transactions for.
-   :reqjson string evm_chain: Optional. The EVM chain to query (e.g., "ethereum", "optimism"). If not provided, all supported chains will be queried.
-   :reqjson string address: Optional. The address to query transactions for. If not provided, all tracked addresses will be queried.
+   :reqjson string chain: The chain to query (e.g., "eth", "optimism", "solana"). Only supports Solana and EVM chains.
+   :reqjson string address: Optional. The address to query transactions for. If not provided, all tracked addresses for the specified chain will be queried.
 
    **Example Response**:
 
@@ -13873,13 +14293,13 @@ Refetch EVM transactions for a specific time period
    :statuscode 500: Internal rotki error
 
 
-Get EVM transaction status
-===========================
+Get history status summary
+======================
 
-.. http:post:: /api/(version)/blockchains/evm/transactions/status
+.. http:post:: /api/(version)/history/status/summary
 
    Doing a GET on the transactions status endpoint will query status information about how recently all EVM chains
-   have been queried for transactions and how many transactions are waiting to be decoded.
+   and exchanges have been queried for transactions/events and how many transactions are waiting to be decoded.
 
    .. note::
       This endpoint can also be queried asynchronously by using ``"async_query": true``
@@ -13888,7 +14308,7 @@ Get EVM transaction status
 
    .. http:example:: curl wget httpie python-requests
 
-      GET /api/1/blockchains/evm/transactions/status HTTP/1.1
+      GET /api/1/history/status/summary HTTP/1.1
       Host: localhost:5042
       Content-Type: application/json;charset=UTF-8
 
@@ -13901,12 +14321,14 @@ Get EVM transaction status
       HTTP/1.1 200 OK
       Content-Type: application/json
 
-      {"result": {"last_queried_ts": 1600000000, "undecoded_tx_count": 3, "has_evm_accounts": true}, "message": "" }
+      {"result": {"evm_last_queried_ts": 1600000000, "exchanges_last_queried_ts": 1599999000, "undecoded_tx_count": 3, "has_evm_accounts": true, "has_exchanges_accounts": true}, "message": "" }
 
    :resjson object result: An object containing the status data
-   :resjson integer last_queried_ts: The last timestamp when transactions for all EVM chains have been queried.
+   :resjson integer evm_last_queried_ts: The last timestamp when transactions for all EVM chains have been queried.
+   :resjson integer exchanges_last_queried_ts: The last timestamp when history events for all exchanges have been queried.
    :resjson integer undecoded_tx_count: The number of transactions waiting to be decoded.
    :resjson boolean has_evm_accounts: Whether there are any EVM accounts added to rotki.
+   :resjson boolean has_exchanges_accounts: Whether there are any exchange accounts added to rotki.
    :statuscode 200: Status successfully queried.
    :statuscode 401: User is not logged in.
    :statuscode 409: Other error. Check error message for details.
@@ -14243,3 +14665,208 @@ Solana Token Migration
    :statuscode 401: No user is currently logged in.
    :statuscode 409: Token does not exist in user_added_solana_tokens table, or failed to create the new Solana token due to unknown asset or input error.
    :statuscode 500: Internal rotki error.
+
+Monerium OAuth
+===============
+
+.. http:get:: /api/(version)/services/monerium
+
+   Doing a GET on this endpoint returns the Monerium authentication status.
+
+   **Example Response**
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": {
+              "authenticated": true,
+              "user_email": "alice@example.com",
+              "default_profile_id": "profile-123",
+              "profiles": [],
+              "expires_at": 1700000000,
+          },
+          "message": ""
+      }
+
+   :resjson object result: Status payload describing the saved Monerium OAuth credentials.
+   :resjson bool authenticated: ``true`` when access tokens are stored, ``false`` otherwise.
+   :resjson str user_email: Email address of the connected Monerium account. Present only when authenticated.
+   :resjson str default_profile_id: Identifier of the default Monerium profile. Present only when authenticated.
+   :resjson list profiles: List of available Monerium profiles with metadata. Present only when authenticated.
+   :resjson int expires_at: Unix timestamp when the cached access token expires. Present only when authenticated.
+
+   :statuscode 200: Status queried successfully.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 500: Internal rotki error.
+
+.. http:put:: /api/(version)/services/monerium
+
+   Doing a PUT on this endpoint stores Monerium OAuth tokens obtained from the external OAuth flow and fetches the user context.
+
+   **Example Request**
+
+   .. http:example:: curl wget httpie python-requests
+
+      PUT /api/1/services/monerium HTTP/1.1
+      Host: localhost:5042
+      Content-Type: application/json;charset=UTF-8
+
+      {
+          "access_token": "access-token",
+          "refresh_token": "refresh-token",
+          "expires_in": 3600
+      }
+
+   **Example Response**
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": {
+              "success": true,
+              "message": "Successfully authenticated with Monerium",
+              "user_email": "alice@example.com",
+              "default_profile_id": "profile-123",
+              "profiles": []
+          },
+          "message": ""
+      }
+
+   :reqjson str access_token: Access token returned by the Monerium OAuth callback.
+   :reqjson str refresh_token: Refresh token returned by the OAuth callback.
+   :reqjson int expires_in: Lifetime of the access token in seconds.
+   :resjson object result: Confirmation payload containing the stored user context.
+   :resjson bool success: ``true`` when the credentials were stored successfully.
+   :resjson str message: Confirmation message returned by rotki.
+   :resjson str user_email: Email address retrieved from Monerium.
+   :resjson str default_profile_id: Default profile identifier fetched from Monerium.
+   :resjson list profiles: List of Monerium profiles associated with the account.
+   :statuscode 200: Credentials stored successfully.
+   :statuscode 400: Failed to validate or store the credentials, or Monerium returned an error.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 500: Internal rotki error.
+
+.. http:delete:: /api/(version)/services/monerium
+
+   Doing a DELETE on this endpoint removes stored Monerium OAuth credentials.
+
+   **Example Response**
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": true,
+          "message": ""
+      }
+
+   :statuscode 200: Credentials removed successfully.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 500: Internal rotki error.
+
+GnosisPay admins
+=================
+
+.. http:get:: /api/(version)/services/gnosispay/admins
+
+   Retrieve tracked Gnosis addresses whose corresponding safe has at least one administrator
+   reported by the Gnosis Pay contract.
+
+   .. note::
+      This endpoint can also be queried asynchronously by using ``"async_query": true``.
+
+   **Example Response**
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": {
+              "0xaCFEb570426e260Eb930971FE528c8014f1002a0": [
+                  "0x37f18A82493cdF80675fF01e58c1A1b39637cf50",
+                  "0xc37b40ABdB939635068d3c5f13E7faF686F03B65"
+              ]
+          },
+          "message": ""
+      }
+
+   :resjson object result: Mapping of tracked safe addresses to the list of admin addresses.
+   :statuscode 200: The request was successful.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 409: Error querying the on chain information.
+   :statuscode 502: Failed to query the external contract.
+
+GnosisPay nonce
+================
+
+.. http:get:: /api/(version)/services/gnosispay/nonce
+
+   Retrieve a SIWE nonce from the Gnosis Pay public API. The nonce is returned as plain text.
+
+   .. note::
+      This endpoint can be queried asynchronously via ``"async_query": true``.
+
+   **Example Response**
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": "e9d4b01d-8f3b-43d3-8d52-4d7e1c6fa4b1",
+          "message": ""
+      }
+
+   :resjson string result: SIWE nonce obtained from the Gnosis Pay API.
+   :statuscode 200: The request was successful.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 409: Failed to query the Gnosis Pay API.
+
+GnosisPay SIWE token
+=====================
+
+.. http:post:: /api/(version)/services/gnosispay/token
+
+   Use the signed SIWE message to retrieve a Gnosis Pay session token and store it in rotki.
+
+   **Example Request**
+
+   .. sourcecode:: http
+
+      POST /api/1/services/gnosispay/token HTTP/1.1
+      Content-Type: application/json
+
+      {
+          "message": "rotki wants you to sign in with your Ethereum account...",
+          "signature": "0x4f4c1df6..."
+      }
+
+   **Example Response**
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Content-Type: application/json
+
+      {
+          "result": true,
+          "message": ""
+      }
+
+   :reqjson string message: SIWE message that was signed.
+   :reqjson string signature: Signature produced by the user's wallet.
+   :resjson string result: true if it was saved successfully.
+   :statuscode 200: The request was successful.
+   :statuscode 401: No user is currently logged in.
+   :statuscode 409: Failed to verify the SIWE signature with Gnosis Pay.

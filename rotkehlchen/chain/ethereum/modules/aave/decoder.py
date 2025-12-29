@@ -1,20 +1,19 @@
 import logging
 from typing import Any
 
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.assets.utils import token_normalized_value_decimals
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS, STAKED_TOPIC
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.constants.assets import A_AAVE
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
@@ -33,9 +32,9 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class AaveDecoder(DecoderInterface):
+class AaveDecoder(EvmDecoderInterface):
     """Aave decoder for staking and unstaking events"""
-    def _decode_staking_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_staking_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode aave staking unstaking events"""
         if context.tx_log.topics[0] in (STAKED_AAVE, STAKED_TOPIC):
             method = self._decode_stake
@@ -44,12 +43,12 @@ class AaveDecoder(DecoderInterface):
         elif context.tx_log.topics[0] == REWARDS_CLAIMED:
             method = self._decode_rewards_claim
         else:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         from_address = bytes_to_address(context.tx_log.topics[1])
         to_address = bytes_to_address(context.tx_log.topics[2])
         if not self.base.any_tracked([from_address, to_address]):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[:32]),
@@ -63,7 +62,7 @@ class AaveDecoder(DecoderInterface):
             to_address: ChecksumEvmAddress,
             amount: FVal,
             context: DecoderContext,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         for event in context.decoded_events:
             if (
                     event.event_type == HistoryEventType.RECEIVE and
@@ -77,15 +76,14 @@ class AaveDecoder(DecoderInterface):
                 event.notes = f'Claim {amount} AAVE from staking'
                 if from_address != to_address:
                     event.notes += f' for {to_address}'
-                event.product = EvmProduct.STAKING
                 event.counterparty = CPT_AAVE
                 event.address = STK_AAVE_ADDR
                 break
 
         else:
-            log.error(f'Aave stake receive was not found for {context.transaction.tx_hash.hex()}')
+            log.error(f'Aave stake receive was not found for {context.transaction.tx_hash!s}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _decode_stake(
             self,
@@ -93,7 +91,7 @@ class AaveDecoder(DecoderInterface):
             to_address: ChecksumEvmAddress,
             amount: FVal,
             context: DecoderContext,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         out_event, in_event = None, None
         for event in context.decoded_events:
             if (
@@ -108,7 +106,6 @@ class AaveDecoder(DecoderInterface):
                 event.notes = f'Stake {amount} AAVE'
                 if from_address != to_address:
                     event.notes += f' for {to_address}'
-                event.product = EvmProduct.STAKING
                 event.counterparty = CPT_AAVE
                 out_event = event
             elif (
@@ -127,7 +124,7 @@ class AaveDecoder(DecoderInterface):
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events,
         )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _decode_unstake(
             self,
@@ -135,7 +132,7 @@ class AaveDecoder(DecoderInterface):
             to_address: ChecksumEvmAddress,
             amount: FVal,
             context: DecoderContext,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         for event in context.decoded_events:
             if (
                 event.event_type == HistoryEventType.SPEND and
@@ -148,7 +145,6 @@ class AaveDecoder(DecoderInterface):
                 event.notes = f'Unstake {amount} stkAAVE'
                 if from_address != to_address:
                     event.notes += f' for {to_address}'
-                event.product = EvmProduct.STAKING
                 event.counterparty = CPT_AAVE
             elif (
                 event.event_type == HistoryEventType.RECEIVE and
@@ -162,7 +158,7 @@ class AaveDecoder(DecoderInterface):
                 event.event_subtype = HistoryEventSubType.REMOVE_ASSET
                 event.notes = f'Receive {event.amount} AAVE after unstaking from Aave'
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # DecoderInterface method
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:

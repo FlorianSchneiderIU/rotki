@@ -83,7 +83,7 @@ USER_TOKEN3 = EvmToken.initialize(
 )
 
 
-def patch_for_globaldb_upgrade_to(stack: ExitStack, version: Literal[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]) -> ExitStack:  # noqa: E501
+def patch_for_globaldb_upgrade_to(stack: ExitStack, version: Literal[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) -> ExitStack:  # noqa: E501
     stack.enter_context(
         patch(
             'rotkehlchen.globaldb.upgrades.manager.GLOBAL_DB_VERSION',
@@ -109,7 +109,7 @@ def patch_for_globaldb_migrations(stack: ExitStack, new_list: list) -> ExitStack
     )
     stack.enter_context(
         patch(
-            'rotkehlchen.globaldb.migrations.manager.LAST_DATA_MIGRATION',
+            'rotkehlchen.globaldb.migrations.manager.LAST_GLOBALDB_DATA_MIGRATION',
             len(new_list),
         ),
     )

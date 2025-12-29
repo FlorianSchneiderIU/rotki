@@ -1,19 +1,87 @@
 import type { ComputedRef, Ref } from 'vue';
 import type { AssetSearchParams } from '@/composables/api/assets/info';
 import type { AssetNameReturn, AssetSymbolReturn } from '@/composables/assets/retrieval';
-import type { AssetInfoWithId, AssetsWithId } from '@/types/asset';
 import type { DateFormat } from '@/types/date-format';
 import {
-  assert,
   type AssetBalance,
-  type AssetInfo,
+  type AssetInfoWithId,
   getAddressFromEvmIdentifier,
+  getAddressFromSolanaIdentifier,
   getTextToken,
   isEvmIdentifier,
+  isSolanaTokenIdentifier,
   isValidEthAddress,
+  isValidSolanaAddress,
   type Nullable,
 } from '@rotki/common';
+import { useSupportedChains } from '@/composables/info/chains';
+import { type AssetsWithId, EVM_TOKEN, SOLANA_CHAIN, SOLANA_TOKEN } from '@/types/asset';
 import { convertFromTimestamp, convertToTimestamp } from '@/utils/date';
+
+interface ParsedAssetKeyword {
+  value: string;
+  address?: string;
+}
+
+/**
+ * Parses an asset search keyword to extract value and address.
+ * Handles EVM identifiers, Solana addresses, and Ethereum addresses.
+ */
+export function parseAssetSearchKeyword(keyword: string): ParsedAssetKeyword {
+  if (isEvmIdentifier(keyword)) {
+    return {
+      address: getAddressFromEvmIdentifier(keyword),
+      value: '',
+    };
+  }
+
+  if (isSolanaTokenIdentifier(keyword)) {
+    return {
+      address: getAddressFromSolanaIdentifier(keyword),
+      value: '',
+    };
+  }
+
+  if (isValidEthAddress(keyword) || isValidSolanaAddress(keyword)) {
+    return {
+      address: keyword,
+      value: '',
+    };
+  }
+
+  return { value: keyword };
+}
+
+/**
+ * Sanitizes a chain identifier by matching it against supported chains
+ * and returning the appropriate EVM chain name.
+ */
+export function getSanitizedChain(
+  chain: string | undefined,
+  matchChain: (chain: string) => string | undefined,
+  getEvmChainName: (chain: string) => string | undefined,
+): string | undefined {
+  if (!chain) {
+    return undefined;
+  }
+
+  const matchedChain = matchChain(chain);
+  if (!matchedChain) {
+    return undefined;
+  }
+
+  return getEvmChainName(matchedChain) || matchedChain;
+}
+
+/**
+ * Gets asset search parameters based on chain type.
+ */
+export function getAssetSearchTypeParams(usedChain: string | undefined): { assetType?: string; evmChain?: string } {
+  return {
+    assetType: usedChain === SOLANA_CHAIN ? SOLANA_TOKEN : (usedChain ? EVM_TOKEN : undefined),
+    evmChain: usedChain === SOLANA_CHAIN ? undefined : usedChain,
+  };
+}
 
 function levenshtein(a: string, b: string): number {
   let tmp;
@@ -93,7 +161,7 @@ export function compareTextByKeyword(a: string, b: string, keyword: string): num
   return rankA - rankB;
 }
 
-export function getSortItems<T extends AssetBalance>(getInfo: (identifier: string) => AssetInfo | null) {
+export function getSortItems<T extends AssetBalance>(getInfo: (identifier: string) => AssetInfoWithId | null) {
   return (items: T[], sortBy: (keyof AssetBalance)[], sortDesc: boolean[]): T[] => {
     const sortByElement = sortBy[0];
     const sortByDesc = sortDesc[0];
@@ -101,9 +169,8 @@ export function getSortItems<T extends AssetBalance>(getInfo: (identifier: strin
       if (sortByElement === 'asset') {
         const aAsset = getInfo(a.asset);
         const bAsset = getInfo(b.asset);
-        assert(aAsset && bAsset);
-        const bSymbol = bAsset.symbol || '';
-        const aSymbol = aAsset.symbol || '';
+        const bSymbol = bAsset?.symbol || b.asset;
+        const aSymbol = aAsset?.symbol || a.asset;
         return sortByDesc ? bSymbol.toLowerCase().localeCompare(aSymbol) : aSymbol.toLowerCase().localeCompare(bSymbol);
       }
 
@@ -129,10 +196,12 @@ export function assetFilterByKeyword(
   return symbol.includes(keyword) || name.includes(keyword);
 }
 
-export function assetSuggestions(assetSearch: (params: AssetSearchParams) => Promise<AssetsWithId>, evmChain?: string): (value: string) => Promise<AssetsWithId> {
+export function assetSuggestions(assetSearch: (params: AssetSearchParams) => Promise<AssetsWithId>, location?: string): (keyword: string) => Promise<AssetsWithId> {
   let pending: AbortController | null = null;
 
-  return useDebounceFn(async (value: string) => {
+  const { getEvmChainName, matchChain } = useSupportedChains();
+
+  return useDebounceFn(async (keyword: string) => {
     if (pending) {
       pending.abort();
       pending = null;
@@ -140,42 +209,23 @@ export function assetSuggestions(assetSearch: (params: AssetSearchParams) => Pro
 
     pending = new AbortController();
 
-    let keyword = value;
-    let address;
-
-    if (isEvmIdentifier(value)) {
-      keyword = '';
-      address = getAddressFromEvmIdentifier(value);
-    }
-
-    else if (isValidEthAddress(value)) {
-      keyword = '';
-      address = value;
-    }
+    const { address, value } = parseAssetSearchKeyword(keyword);
+    const usedChain = getSanitizedChain(location, matchChain, getEvmChainName);
 
     const result = await assetSearch({
       address,
-      evmChain,
+      ...getAssetSearchTypeParams(usedChain),
       limit: 10,
       signal: pending.signal,
-      value: keyword,
+      value,
     });
     pending = null;
     return result;
   }, 200);
 }
 
-export function assetDeserializer(assetInfo: (identifier: string) => ComputedRef<AssetInfo | null>): (identifier: string) => AssetInfoWithId | null {
-  return (identifier: string): AssetInfoWithId | null => {
-    const asset = get(assetInfo(identifier));
-    if (!asset)
-      return null;
-
-    return {
-      ...asset,
-      identifier,
-    };
-  };
+export function assetDeserializer(assetInfo: (identifier: string) => ComputedRef<AssetInfoWithId | null>): (identifier: string) => AssetInfoWithId | null {
+  return (identifier: string): AssetInfoWithId | null => get(assetInfo(identifier)) || null;
 }
 
 export function dateValidator(dateInputFormat: Ref<DateFormat>): (value: string) => boolean {

@@ -1,21 +1,21 @@
 from typing import TYPE_CHECKING, Any, Final
 
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.ethereum.airdrops import AIRDROP_IDENTIFIER_KEY
 from rotkehlchen.chain.ethereum.modules.spark.constants import (
     SPARK_AIRDROP_DISTRIBUTOR,
     SPARK_STAKE_TOKEN,
 )
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS, DEPOSIT_TOPIC
 from rotkehlchen.chain.evm.decoding.interfaces import MerkleClaimDecoderInterface
 from rotkehlchen.chain.evm.decoding.spark.constants import CPT_SPARK
 from rotkehlchen.chain.evm.decoding.spark.lend.decoder import SparklendCommonDecoder
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -23,7 +23,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.types import ChecksumEvmAddress
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -36,7 +36,7 @@ class SparklendDecoder(SparklendCommonDecoder, MerkleClaimDecoderInterface):
     def __init__(
             self,
             evm_inquirer: 'EthereumInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -49,10 +49,10 @@ class SparklendDecoder(SparklendCommonDecoder, MerkleClaimDecoderInterface):
             incentives=string_to_evm_address('0x4370D3b6C9588E02ce9D22e684387859c7Ff5b34'),
         )
 
-    def _decode_spark_airdrop_claim(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_spark_airdrop_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode Spark airdrop claims using the ClaimReward event"""
         if context.tx_log.topics[0] != SPARK_CLAIM_SIGNATURE:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         raw_amount = int.from_bytes(context.tx_log.data[0:32])
         amount = token_normalized_value_decimals(
@@ -77,12 +77,12 @@ class SparklendDecoder(SparklendCommonDecoder, MerkleClaimDecoderInterface):
                 event.extra_data = {AIRDROP_IDENTIFIER_KEY: 'spark'}
                 break
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_spark_staking(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_spark_staking(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode Spark token staking into the staking contract"""
         if context.tx_log.topics[0] != DEPOSIT_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         user_address = bytes_to_address(context.tx_log.topics[1])
         raw_amount = int.from_bytes(context.tx_log.data[0:32])
@@ -120,7 +120,7 @@ class SparklendDecoder(SparklendCommonDecoder, MerkleClaimDecoderInterface):
             to_counterparty=CPT_SPARK,
         ))
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def addresses_to_decoders(self) -> dict['ChecksumEvmAddress', tuple[Any, ...]]:
         """Map contract addresses to their respective decoder methods"""

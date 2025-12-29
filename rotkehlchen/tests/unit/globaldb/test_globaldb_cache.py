@@ -25,6 +25,8 @@ from rotkehlchen.chain.evm.decoding.balancer.balancer_cache import (
     read_balancer_pools_and_gauges_from_cache,
 )
 from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V2
+from rotkehlchen.chain.evm.decoding.beefy_finance.constants import CPT_BEEFY_FINANCE
+from rotkehlchen.chain.evm.decoding.beefy_finance.utils import query_beefy_vaults
 from rotkehlchen.chain.evm.decoding.curve.constants import (
     CPT_CURVE,
     CURVE_ADDRESS_PROVIDER,
@@ -32,11 +34,19 @@ from rotkehlchen.chain.evm.decoding.curve.constants import (
     CURVE_CHAIN_ID,
 )
 from rotkehlchen.chain.evm.decoding.curve.curve_cache import read_curve_pools_and_gauges
-from rotkehlchen.chain.evm.decoding.gearbox.constants import CPT_GEARBOX
+from rotkehlchen.chain.evm.decoding.gearbox.constants import (
+    CHAIN_ID_TO_DATA_COMPRESSOR,
+    CPT_GEARBOX,
+)
 from rotkehlchen.chain.evm.decoding.gearbox.gearbox_cache import (
+    GearboxPoolData,
     get_gearbox_pool_tokens,
     query_gearbox_data,
     read_gearbox_data_from_cache,
+)
+from rotkehlchen.chain.evm.decoding.superfluid.utils import (
+    _get_token_list as get_superfluid_token_list,
+    query_superfluid_tokens,
 )
 from rotkehlchen.chain.evm.decoding.velodrome.velodrome_cache import (
     POOL_DATA_CHUNK_SIZE,
@@ -50,8 +60,10 @@ from rotkehlchen.constants.timing import WEEK_IN_SECONDS
 from rotkehlchen.db.addressbook import DBAddressbook
 from rotkehlchen.db.filtering import AddressbookFilterQuery
 from rotkehlchen.errors.misc import InputError
+from rotkehlchen.globaldb.cache import globaldb_get_general_cache_values
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.tests.conftest import TestEnvironment, requires_env
 from rotkehlchen.tests.utils.factories import make_evm_address
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import (
@@ -161,6 +173,7 @@ GEARBOX_SOME_EXPECTED_POOLS = {
     string_to_evm_address('0xda00010eDA646913F273E10E7A5d1F659242757d'),
     string_to_evm_address('0xda0002859B2d05F66a753d8241fCDE8623f26F4f'),
     string_to_evm_address('0x1DC0F3359a254f876B37906cFC1000A35Ce2d717'),
+    string_to_evm_address('0x31426271449F60d37Cc5C9AEf7bD12aF3BdC7A94'),
 }
 
 GEARBOX_SOME_EXPECTED_ASSETS = [
@@ -168,6 +181,8 @@ GEARBOX_SOME_EXPECTED_ASSETS = [
     'eip155:1/erc20:0xc411dB5f5Eb3f7d552F9B8454B2D74097ccdE6E3',
     'eip155:1/erc20:0xe753260F1955e8678DCeA8887759e07aa57E8c54',
     'eip155:1/erc20:0xda00010eDA646913F273E10E7A5d1F659242757d',
+    'eip155:1/erc20:0x31426271449F60d37Cc5C9AEf7bD12aF3BdC7A94',
+    'eip155:1/erc20:0x865377367054516e17014CcdED1e7d814EDC9ce4',
 ]
 
 VELODROME_SOME_EXPECTED_ADDRESBOOK_ENTRIES = [
@@ -482,7 +497,7 @@ def test_gearbox_cache(ethereum_inquirer: EthereumInquirer):
         # make sure that gearbox cache is clear of expected pools and gauges
         for pool in GEARBOX_SOME_EXPECTED_POOLS:
             write_cursor.execute(f"DELETE FROM general_cache WHERE value LIKE '%{pool}%'")
-            write_cursor.execute('DELETE FROM address_book WHERE address=?', (pool,))
+            write_cursor.execute(f"DELETE FROM unique_cache WHERE key LIKE '%{pool}%'")
 
         for asset in GEARBOX_SOME_EXPECTED_ASSETS:
             write_cursor.execute(f"DELETE FROM assets WHERE identifier LIKE '%{asset}%'")
@@ -505,13 +520,47 @@ def test_gearbox_cache(ethereum_inquirer: EthereumInquirer):
             cache_type=CacheType.GEARBOX_POOL_ADDRESS,
             query_method=query_gearbox_data,
             chain_id=ChainID.ETHEREUM,
-        )  # populates cache, addressbook and assets tables
+        )  # populates cache and assets tables
     pools, = read_gearbox_data_from_cache(ChainID.ETHEREUM)
     assert pools.keys() >= GEARBOX_SOME_EXPECTED_POOLS
 
+    # Check that the count of pools in the DB matches the total count of raw pool data from onchain
+    assert len(pools) == len(ethereum_inquirer.contracts.contract(
+        CHAIN_ID_TO_DATA_COMPRESSOR[ethereum_inquirer.chain_id],
+    ).call(node_inquirer=ethereum_inquirer, method_name='getPoolsV3List'))
+
+    # Check tokens and pool data for both a pool with farming/lp tokens and one without.
+    assert (usdc_pool := GlobalDBHandler.get_evm_token(
+        address=string_to_evm_address('0xda00000035fef4082F78dEF6A8903bee419FbF8E'),
+        chain_id=ChainID.ETHEREUM,
+    )) is not None
+    assert len(usdc_pool.underlying_tokens) == 1
+    assert usdc_pool.underlying_tokens[0].address == string_to_evm_address('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48')  # noqa: E501
+    assert pools[usdc_pool.evm_address] == GearboxPoolData(
+        pool_address=usdc_pool.evm_address,
+        pool_name='Trade USDC v3',
+        farming_pool_token='eip155:1/erc20:0x9ef444a6d7F4A5adcd68FD5329aA5240C90E14d2',
+        lp_tokens={
+            'eip155:1/erc20:0xc411dB5f5Eb3f7d552F9B8454B2D74097ccdE6E3',
+            'eip155:1/erc20:0xda00000035fef4082F78dEF6A8903bee419FbF8E',
+        },
+    )
+    assert (dola_pool := GlobalDBHandler.get_evm_token(
+        address=string_to_evm_address('0x31426271449F60d37Cc5C9AEf7bD12aF3BdC7A94'),
+        chain_id=ChainID.ETHEREUM,
+    )) is not None
+    assert len(dola_pool.underlying_tokens) == 1
+    assert dola_pool.underlying_tokens[0].address == string_to_evm_address('0x865377367054516e17014CcdED1e7d814EDC9ce4')  # noqa: E501
+    assert pools[dola_pool.evm_address] == GearboxPoolData(
+        pool_address=dola_pool.evm_address,
+        pool_name='Trade DOLA v3',
+        farming_pool_token=None,
+        lp_tokens=set(),
+    )
+
     assert mock_notify.call_args_list == [
         make_call_object(CPT_GEARBOX, ChainID.ETHEREUM, processed=0, total=0),
-        make_call_object(CPT_GEARBOX, ChainID.ETHEREUM, processed=1, total=5),
+        make_call_object(CPT_GEARBOX, ChainID.ETHEREUM, processed=1, total=8),
     ]
 
 
@@ -582,3 +631,110 @@ def test_balancer_cache(ethereum_inquirer):
     )
     assert pools >= BALANCER_SOME_EXPECTED_POOLS
     assert gauges >= BALANCER_SOME_EXPECTED_GAUGES
+
+
+@pytest.mark.vcr
+def test_query_balancer_data_protocol_version_gnosis(gnosis_inquirer):
+    """Test that query_balancer_data correctly sets the protocol version for tokens."""
+    with GlobalDBHandler().conn.read_ctx() as cursor:
+        assert cursor.execute('SELECT COUNT(*) FROM evm_tokens WHERE address=?', (pool_address := string_to_evm_address('0xBc2acf5E821c5c9f8667A36bB1131dAd26Ed64F9'),)).fetchone()[0] == 0  # noqa: E501
+
+    query_balancer_data(
+        version=2,
+        inquirer=gnosis_inquirer,
+        msg_aggregator=gnosis_inquirer.database.msg_aggregator,
+        protocol=CPT_BALANCER_V2,
+        cache_type=CacheType.BALANCER_V2_POOLS,
+        reload_all=True,
+    )
+
+    with GlobalDBHandler().conn.read_ctx() as cursor:
+        assert cursor.execute('SELECT protocol FROM evm_tokens WHERE address=?', (pool_address,)).fetchone()[0] == 'balancer-v2'  # noqa: E501
+
+
+@pytest.mark.vcr
+def test_query_beefy_legacy_boosts(ethereum_inquirer: 'EthereumInquirer') -> None:
+    """Test that query_beefy_vaults correctly creates legacy boost tokens."""
+    with GlobalDBHandler().conn.read_ctx() as cursor:
+        assert cursor.execute('SELECT COUNT(*) FROM evm_tokens WHERE protocol=?', (CPT_BEEFY_FINANCE,)).fetchone()[0] == 0  # noqa: E501
+
+    def mock_request_get(url: str, *args, **kwargs):
+        if 'vaults/all/1' in url:
+            return []
+        elif 'boosts/ethereum' in url:
+            return [{'version': 1, 'poolId': 'curve-shezeth-eth', 'earnContractAddress': '0xbd313b13ed794B86Bd161885F8e170769E0e68b2', 'tokenAddress': '0x46EA5993fdDC27E4f770eFfB6921F401101Cbd59'}, {'version': 1, 'poolId': 'silo-weeth-eth', 'earnContractAddress': '0xC0dD9F05511Eec7f3C9C755816E4A25caECde47a', 'tokenAddress': '0x0E5F3a47122901D3eE047d2C7e1B36b419Ede5FE'}]  # noqa: E501
+        raise ValueError(f'Unexpected URL: {url}')
+
+    with patch('rotkehlchen.chain.evm.decoding.beefy_finance.utils.request_get', side_effect=mock_request_get):  # noqa: E501
+        query_beefy_vaults(evm_inquirer=ethereum_inquirer)
+
+    with GlobalDBHandler().conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT a.name, cad.symbol, et.decimals FROM evm_tokens et '
+            'JOIN assets a ON et.identifier = a.identifier '
+            'JOIN common_asset_details cad ON a.identifier = cad.identifier '
+            'WHERE et.protocol = ?',
+            (CPT_BEEFY_FINANCE,),
+        ).fetchall() == [
+            ('Reward Moo Curve ShezETH-ETH', 'rmooCurveShezETH-ETH', 18),
+            ('Reward Moo Silo WETH (weETH Market)', 'rmooSiloWETH', 18),
+        ]
+
+
+def test_superfluid_cache(ethereum_inquirer: EthereumInquirer):
+    """Test that the superfluid super tokens are created correctly"""
+    with GlobalDBHandler().conn.read_ctx() as cursor:
+        assert globaldb_get_general_cache_values(
+            cursor=cursor,
+            key_parts=(CacheType.SUPERFLUID_SUPER_TOKENS, str(ChainID.ETHEREUM.serialize_for_db())),  # noqa: E501
+        ) == []
+
+    def mock_request_get(url: str, *args, **kwargs):
+        if 'superfluid-org/tokenlist' in url:
+            return json.loads('{"name":"Superfluid Token List","timestamp":"2025-11-04T19:21:20.148Z","version":{"major":5,"minor":35,"patch":0},"tokens":[{"chainId":1,"address":"0x1ba8603da702602a8657980e825a6daa03dee93a","name":"Super USD Coin","symbol":"USDCx","decimals":18,"logoURI":"https://tokenlist.superfluid.org/icons/usdc.svg","tags":["supertoken"],"extensions":{"orderingScore":380,"superTokenInfo":{"type":"Wrapper","underlyingTokenAddress":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"}}},{"chainId":1,"address":"0xc22bea0be9872d8b7b3933cec70ece4d53a900da","name":"Super ETH","symbol":"ETHx","decimals":18,"logoURI":"https://tokenlist.superfluid.org/icons/eth.svg","tags":["supertoken"],"extensions":{"orderingScore":319,"superTokenInfo":{"type":"Native Asset"}}},{"chainId":56,"address":"0x529a4116f160c833c61311569d6b33dff41fd657","name":"Super BNB","symbol":"BNBx","decimals":18,"logoURI":"https://tokenlist.superfluid.org/icons/bnb.svg","tags":["supertoken"],"extensions":{"orderingScore":429,"superTokenInfo":{"type":"Native Asset"}}},{"chainId":1,"address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","name":"USD Coin","symbol":"USDC","decimals":6,"logoURI":"https://tokenlist.superfluid.org/icons/usdc.svg","tags":["underlying"]}]}')  # noqa: E501
+
+        raise ValueError(f'Unexpected request: {url}')
+
+    with patch('rotkehlchen.chain.evm.decoding.superfluid.utils.request_get_dict', side_effect=mock_request_get):  # noqa: E501
+        query_superfluid_tokens(chain_id=ChainID.ETHEREUM)
+
+    with GlobalDBHandler().conn.read_ctx() as cursor:
+        assert globaldb_get_general_cache_values(
+            cursor=cursor,
+            key_parts=(CacheType.SUPERFLUID_SUPER_TOKENS, str(ChainID.ETHEREUM.serialize_for_db())),  # noqa: E501
+        ) == [
+            '0x1BA8603DA702602A8657980e825A6DAa03Dee93a,0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+            '0xC22BeA0Be9872d8B7B3933CEc70Ece4D53A900da,native',
+        ]
+
+    # Check that querying again doesn't try to process tokens since the cached version is the same.
+    with (
+        patch('rotkehlchen.chain.evm.decoding.superfluid.utils.request_get_dict', side_effect=mock_request_get),  # noqa: E501
+        patch('rotkehlchen.chain.evm.decoding.superfluid.utils.globaldb_set_general_cache_values') as set_cache_mock,  # noqa: E501
+    ):
+        query_superfluid_tokens(chain_id=ChainID.ETHEREUM)
+
+    assert set_cache_mock.call_count == 0
+
+
+@requires_env([TestEnvironment.NIGHTLY])
+def test_superfluid_remote_data_is_as_expected():
+    """Nightly test to check that the Superfluid token list contains the expected data."""
+    _, token_data_list = get_superfluid_token_list()
+    for token_data in token_data_list:
+        tags = token_data.get('tags', [])
+        assert (
+            (is_super := 'supertoken' in tags) or
+            'underlying' in tags
+        ), f'Expected either "supertoken" or "underlying" tag. Got: {tags}'
+        if not is_super:
+            continue
+
+        token_type = token_data.get('extensions', {}).get('superTokenInfo', {}).get('type')
+        assert token_type in ('Pure', 'Native Asset', 'Wrapper'), (
+            f'Expected token type of "Pure", "Native Asset" or "Wrapper", '
+            f'but got "{token_type}". Full token data: {token_data}'
+        )
+
+        for key in ('chainId', 'address'):
+            assert key in token_data, f'Expected key "{key}" in token data. Full token data: {token_data}'  # noqa: E501

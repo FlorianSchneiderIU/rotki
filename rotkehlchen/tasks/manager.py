@@ -37,9 +37,12 @@ from rotkehlchen.constants.timing import (
 from rotkehlchen.db.cache import DBCacheDynamic, DBCacheStatic
 from rotkehlchen.db.calendar import CalendarEntry, CalendarFilterQuery, DBCalendar
 from rotkehlchen.db.evmtx import DBEvmTx
-from rotkehlchen.db.filtering import EvmTransactionsFilterQuery
+from rotkehlchen.db.filtering import (
+    EvmTransactionsFilterQuery,
+    EvmTransactionsNotDecodedFilterQuery,
+)
 from rotkehlchen.db.settings import CachedSettings
-from rotkehlchen.errors.api import PremiumAuthenticationError
+from rotkehlchen.errors.api import PremiumAuthenticationError, PremiumPermissionError
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.externalapis.google_calendar import GoogleCalendarAPI
@@ -270,7 +273,7 @@ class TaskManager:
             return None
 
         now_ts = ts_now()
-        # Make sure there is a long enough period  between an asset's histohour query
+        # Make sure there is a long enough period between an asset's histohour query
         # to avoid getting rate limited by cryptocompare
         if now_ts - self.cryptocompare.last_histohour_query_ts <= CRYPTOCOMPARE_HISTOHOUR_FREQUENCY:  # noqa: E501
             return None
@@ -439,7 +442,7 @@ class TaskManager:
         random.shuffle(shuffled_chains)
         for blockchain in shuffled_chains:
             number_of_tx_to_decode = dbevmtx.count_hashes_not_decoded(
-                chain_id=blockchain.to_chain_id(),
+                filter_query=EvmTransactionsNotDecodedFilterQuery.make(chain_id=blockchain.to_chain_id()),
             )
             if number_of_tx_to_decode == 0:
                 return None
@@ -454,6 +457,7 @@ class TaskManager:
                 exception_is_error=True,
                 method=evm_inquirer.transactions_decoder.get_and_decode_undecoded_transactions,
                 limit=TX_DECODING_LIMIT,
+                send_ws_notifications=True,
             )]
         return None
 
@@ -482,6 +486,17 @@ class TaskManager:
                 msg_aggregator=self.msg_aggregator,
                 db=self.database,
             )
+        except PremiumPermissionError as e:  # only a device limit exceeded can happen here
+            log.debug(f'Device limit exceeded: {e}. Sending premium deactivate with reason')
+            self.msg_aggregator.add_message(
+                message_type=WSMessageType.PREMIUM_STATUS_UPDATE,
+                data={
+                    'is_premium_active': False,
+                    'expired': False,
+                    'reason': str(e),
+                },
+            )
+            self.deactivate_premium()
         except RemoteError:
             if self.premium_check_retries < PREMIUM_CHECK_RETRY_LIMIT:
                 self.premium_check_retries += 1
@@ -628,12 +643,14 @@ class TaskManager:
 
     def _maybe_run_events_processing(self) -> Optional[list[gevent.Greenlet]]:
         """Schedules the events processing task which may combine/edit events"""
-        now = ts_now()
         with self.database.conn.read_ctx() as cursor:
-            result = self.database.get_static_cache(
-                cursor=cursor, name=DBCacheStatic.LAST_EVENTS_PROCESSING_TASK_TS,
-            )
-            if result is not None and now - result <= HOUR_IN_SECONDS:
+            if (
+                (result := self.database.get_static_cache(
+                    cursor=cursor,
+                    name=DBCacheStatic.LAST_EVENTS_PROCESSING_TASK_TS,
+                )) is not None and
+                ts_now() - result <= CachedSettings().get_settings().events_processing_frequency
+            ):
                 return None
 
         task_name = 'Periodically process events'
@@ -674,29 +691,29 @@ class TaskManager:
                 return None
 
         greenlets = []
-        if should_update_protocol_cache(self.database, CacheType.MORPHO_VAULTS) is True:
-            greenlets.append(self.greenlet_manager.spawn_and_track(
-                after_seconds=None,
-                task_name='Update Morpho vaults',
-                exception_is_error=False,
-                method=self.query_morpho_vaults,
-                database=self.database,
-            ))
+        for chain_id in {ChainID.ETHEREUM, ChainID.BASE}:
+            if should_update_protocol_cache(self.database, CacheType.MORPHO_VAULTS, (str(chain_id),)) is True:  # noqa: E501
+                greenlets.append(self.greenlet_manager.spawn_and_track(
+                    after_seconds=None,
+                    task_name=f'Update Morpho vaults for {chain_id.to_name()}',
+                    exception_is_error=False,
+                    method=self.query_morpho_vaults,
+                    database=self.database,
+                    chain_id=chain_id,
+                ))
 
-        if any(
-            should_update_protocol_cache(
+            if should_update_protocol_cache(
                 userdb=self.database,
                 cache_key=CacheType.MORPHO_REWARD_DISTRIBUTORS,
                 args=(str(chain_id),),
-            )
-            for chain_id in {ChainID.ETHEREUM, ChainID.BASE}
-        ):
-            greenlets.append(self.greenlet_manager.spawn_and_track(
-                after_seconds=None,
-                task_name='Update Morpho reward distributors',
-                exception_is_error=False,
-                method=self.query_morpho_reward_distributors,
-            ))
+            ) is True:
+                greenlets.append(self.greenlet_manager.spawn_and_track(
+                    after_seconds=None,
+                    task_name=f'Update Morpho reward distributors for {chain_id.to_name()}',
+                    exception_is_error=False,
+                    method=self.query_morpho_reward_distributors,
+                    chain_id=chain_id,
+                ))
 
         return greenlets if len(greenlets) > 0 else None
 

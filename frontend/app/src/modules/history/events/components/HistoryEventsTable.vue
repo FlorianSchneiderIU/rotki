@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { DataTableColumn, DataTableSortData, TablePaginationData } from '@rotki/ui-library';
-import type { HistoryEventsTableEmits } from '../composables/types';
+import type { UseHistoryEventsSelectionModeReturn } from '@/modules/history/events/composables/use-selection-mode';
 import type { HistoryEventRequestPayload } from '@/modules/history/events/request-types';
+import type { HistoryEventsTableEmits } from '@/modules/history/events/types';
 import type { Collection } from '@/types/collection';
 import type {
   HistoryEventEntry,
@@ -32,6 +33,8 @@ const props = defineProps<{
   groupLoading: boolean;
   identifiers?: string[];
   highlightedIdentifiers?: string[];
+  hideActions?: boolean;
+  selection?: UseHistoryEventsSelectionModeReturn;
 }>();
 
 const emit = defineEmits<HistoryEventsTableEmits>();
@@ -44,15 +47,17 @@ const { groupLoading, groups: rawGroups, pageParams } = toRefs(props);
 
 // Event data management
 const {
+  allEventsMapped,
+  displayedEventsMapped,
   entriesFoundTotal,
   events,
-  eventsGroupedByEventIdentifier,
   eventsLoading,
   found,
   groups,
   hasIgnoredEvent,
   limit,
   loading,
+  rawEvents,
   sectionLoading,
   showUpgradeRow,
   total,
@@ -64,19 +69,28 @@ const {
   pageParams,
 }, emit);
 
+// Emit all event IDs and grouped events when events change
+watch([events, allEventsMapped, rawEvents], ([newEvents, groupedEvents, rawEventsData]) => {
+  const eventIds = newEvents.map(event => event.identifier);
+  emit('update-event-ids', { eventIds, groupedEvents, rawEvents: rawEventsData });
+}, { immediate: true });
+
 // Event operations (delete, redecode, etc.)
 const {
   confirmDelete,
   confirmRedecode,
   confirmTxAndEventsDelete,
   getItemClass,
+  hasCustomEvents,
   redecode,
   redecodePayload,
+  redecodeWithOptions,
+  showIndexerOptions,
   showRedecodeConfirmation,
   suggestNextSequenceId,
   toggle,
 } = useHistoryEventsOperations({
-  eventsGroupedByEventIdentifier,
+  allEventsMapped,
   flattenedEvents: events,
 }, emit);
 
@@ -89,35 +103,46 @@ const {
 
 const { t } = useI18n({ useScope: 'global' });
 
-const cols = computed<DataTableColumn<HistoryEventEntry>[]>(() => [{
-  cellClass: '!p-0 w-px',
-  class: '!p-0 w-px',
-  key: 'ignoredInAccounting',
-  label: '',
-}, {
-  cellClass: '!py-2',
-  key: 'txHash',
-  label: t('transactions.events.headers.event_identifier'),
-}, {
-  align: 'end',
-  cellClass: 'text-no-wrap !py-2 w-[12rem]',
-  class: 'w-[12rem]',
-  key: 'timestamp',
-  label: t('common.datetime'),
-  sortable: true,
-}, {
-  align: 'end',
-  cellClass: 'w-[1.25rem] !py-2',
-  class: 'w-[1.25rem]',
-  key: 'action',
-  label: '',
-}, {
-  align: 'end',
-  cellClass: '!w-0 !p-0',
-  class: '!w-0 !p-0',
-  key: 'expand',
-  label: '',
-}]);
+const cols = computed<DataTableColumn<HistoryEventEntry>[]>(() => {
+  const cols: DataTableColumn<HistoryEventEntry>[] = [{
+    cellClass: '!p-0 w-px',
+    class: '!p-0 w-px',
+    key: 'ignoredInAccounting',
+    label: '',
+  }, {
+    cellClass: '!py-2',
+    key: 'identifier',
+    label: t('transactions.events.headers.event_identifier'),
+  }, {
+    align: 'end',
+    cellClass: 'text-no-wrap !py-2 w-[12rem]',
+    class: 'w-[12rem]',
+    key: 'timestamp',
+    label: t('common.datetime'),
+    sortable: true,
+  }];
+
+  if (!props.hideActions) {
+    cols.push(
+      {
+        align: 'end',
+        cellClass: 'w-[1.25rem] !py-2',
+        class: 'w-[1.25rem]',
+        key: 'action',
+        label: '',
+      },
+      {
+        align: 'end',
+        cellClass: '!w-0 !p-0',
+        class: '!w-0 !p-0',
+        key: 'expand',
+        label: '',
+      },
+    );
+  }
+
+  return cols;
+});
 
 useRememberTableSorting<HistoryEventEntry>(TableId.HISTORY, sort, cols);
 </script>
@@ -150,7 +175,7 @@ useRememberTableSorting<HistoryEventEntry>(TableId.HISTORY, sort, cols);
         class="min-h-[3.25rem]"
       />
     </template>
-    <template #item.txHash="{ row }">
+    <template #item.identifier="{ row }">
       <LazyLoader class="flex items-center gap-2.5">
         <LocationIcon
           icon
@@ -175,7 +200,8 @@ useRememberTableSorting<HistoryEventEntry>(TableId.HISTORY, sort, cols);
           :loading="eventsLoading"
           @add-event="addEvent($event, row);"
           @toggle-ignore="toggle($event)"
-          @redecode="redecode($event, row.eventIdentifier)"
+          @redecode="redecode($event, row.groupIdentifier)"
+          @redecode-with-options="redecodeWithOptions($event, row.groupIdentifier)"
           @delete-tx="confirmTxAndEventsDelete($event)"
         />
       </LazyLoader>
@@ -185,11 +211,14 @@ useRememberTableSorting<HistoryEventEntry>(TableId.HISTORY, sort, cols);
       <HistoryEventsList
         class="-my-4"
         :class="{ 'opacity-50': row.ignoredInAccounting }"
-        :all-events="eventsGroupedByEventIdentifier[row.eventIdentifier] || []"
+        :all-events="allEventsMapped[row.groupIdentifier] || []"
+        :displayed-events="displayedEventsMapped[row.groupIdentifier] || []"
         :event-group="row"
+        :hide-actions="hideActions"
         :loading="sectionLoading || eventsLoading"
         :has-ignored-event="hasIgnoredEvent"
         :highlighted-identifiers="highlightedIdentifiers"
+        :selection="selection"
         @edit-event="editEvent($event, row);"
         @delete-event="confirmDelete($event)"
         @show:missing-rule-action="addMissingRule($event, row);"
@@ -215,6 +244,8 @@ useRememberTableSorting<HistoryEventEntry>(TableId.HISTORY, sort, cols);
   <RedecodeConfirmationDialog
     v-model:show="showRedecodeConfirmation"
     :payload="redecodePayload"
+    :has-custom-events="hasCustomEvents"
+    :show-indexer-options="showIndexerOptions"
     @confirm="confirmRedecode($event)"
   />
 </template>

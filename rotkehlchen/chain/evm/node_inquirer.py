@@ -1,10 +1,10 @@
+import itertools
 import json
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Sequence
-from contextlib import suppress
+from collections.abc import Callable, Iterator, Sequence
 from itertools import zip_longest
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
 
 import requests
 from eth_abi.exceptions import DecodingError
@@ -18,10 +18,9 @@ from web3.exceptions import InvalidAddress, TransactionNotFound, Web3Exception
 from web3.types import BlockIdentifier, FilterParams
 
 from rotkehlchen.assets.asset import CryptoAsset
-from rotkehlchen.chain.constants import DEFAULT_RPC_TIMEOUT
-from rotkehlchen.chain.ethereum.constants import (
-    ETHEREUM_ETHERSCAN_NODE_NAME,
-)
+from rotkehlchen.assets.utils import CHAIN_TO_WRAPPED_TOKEN
+from rotkehlchen.chain.constants import DEFAULT_RPC_TIMEOUT, SAFE_BASIC_ABI
+from rotkehlchen.chain.ethereum.constants import EVM_INDEXERS_NODE_NAME
 from rotkehlchen.chain.ethereum.types import LogIterationCallback
 from rotkehlchen.chain.ethereum.utils import MULTICALL_CHUNKS, should_update_protocol_cache
 from rotkehlchen.chain.evm.constants import (
@@ -33,14 +32,18 @@ from rotkehlchen.chain.evm.constants import (
     GENESIS_HASH,
 )
 from rotkehlchen.chain.evm.contracts import EvmContract, EvmContracts
+from rotkehlchen.chain.evm.l2_with_l1_fees.types import L2_CHAINIDS_WITH_L1_FEES
 from rotkehlchen.chain.evm.proxies_inquirer import EvmProxiesInquirer
-from rotkehlchen.chain.evm.types import RemoteDataQueryStatus, WeightedNode
+from rotkehlchen.chain.evm.types import EvmIndexer, RemoteDataQueryStatus, WeightedNode
 from rotkehlchen.chain.mixins.rpc_nodes import EVMRPCMixin
 from rotkehlchen.chain.structures import TimestampOrBlockRange
 from rotkehlchen.constants import ONE
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.misc import (
     BlockchainQueryError,
+    ChainNotSupported,
     EventNotInABI,
+    NoAvailableIndexers,
     NotERC20Conformant,
     NotERC721Conformant,
     RemoteError,
@@ -48,6 +51,8 @@ from rotkehlchen.errors.misc import (
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.blockscout import Blockscout
 from rotkehlchen.externalapis.etherscan import Etherscan
+from rotkehlchen.externalapis.etherscan_like import EtherscanLikeApi, HasChainActivity
+from rotkehlchen.externalapis.routescan import Routescan
 from rotkehlchen.fval import FVal
 from rotkehlchen.greenlets.manager import GreenletManager
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -63,6 +68,7 @@ from rotkehlchen.types import (
     CacheType,
     ChainID,
     ChecksumEvmAddress,
+    EvmInternalTransaction,
     EvmTransaction,
     EVMTxHash,
     Timestamp,
@@ -78,6 +84,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
+
+T = TypeVar('T')
 
 
 def _connect_task_prefix(chain_name: str) -> str:
@@ -204,28 +212,36 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             greenlet_manager: GreenletManager,
             database: 'DBHandler',
             etherscan: Etherscan,
+            blockscout: Blockscout,
+            routescan: Routescan,
             blockchain: SUPPORTED_EVM_CHAINS_TYPE,
             contracts: EvmContracts,
             contract_scan: 'EvmContract',
             contract_multicall: 'EvmContract',
             native_token: CryptoAsset,
             rpc_timeout: int = DEFAULT_RPC_TIMEOUT,
-            blockscout: Blockscout | None = None,
     ) -> None:
         self.greenlet_manager = greenlet_manager
         self.database = database
         self.blockchain = blockchain
         self.etherscan = etherscan
+        self.routescan = routescan
+        self.blockscout = blockscout
+        self.available_indexers: dict[EvmIndexer, Blockscout | Etherscan | Routescan | None] = {
+            EvmIndexer.ETHERSCAN: self.etherscan,
+            EvmIndexer.BLOCKSCOUT: self.blockscout,
+            EvmIndexer.ROUTESCAN: self.routescan,
+        }
         self.contracts = contracts
         self.rpc_timeout = rpc_timeout
         self.chain_id: SUPPORTED_CHAIN_IDS = blockchain.to_chain_id()
         self.chain_name = self.chain_id.to_name()
         self.native_token = native_token
+        self.wrapped_native_token = CHAIN_TO_WRAPPED_TOKEN[self.blockchain].resolve_to_evm_token()
         # BalanceScanner from mycrypto: https://github.com/MyCryptoHQ/eth-scan
         self.contract_scan = contract_scan
         # Multicall from MakerDAO: https://github.com/makerdao/multicall/
         self.contract_multicall = contract_multicall
-        self.blockscout = blockscout
         # keep a cache per chain id of timestamp to block to avoid querying multiple times
         # the same information. Remove from here with
         # https://github.com/rotki/rotki/issues/9998
@@ -234,7 +250,8 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
         # A cache for erc20 and erc721 contract info to not requery the info
         self.contract_info_erc20_cache: LRUCacheWithRemove[ChecksumEvmAddress, dict[str, Any]] = LRUCacheWithRemove(maxsize=1024)  # noqa: E501
         self.contract_info_erc721_cache: LRUCacheWithRemove[ChecksumEvmAddress, dict[str, Any]] = LRUCacheWithRemove(maxsize=512)  # noqa: E501
-
+        # cache used by is_safe_proxy_or_eoa
+        self._known_accounts_cache: LRUCacheWithRemove[ChecksumEvmAddress, bool] = LRUCacheWithRemove(maxsize=50)  # noqa: E501
         LockableQueryMixIn.__init__(self)
         EVMRPCMixin.__init__(self)
         # Log the available nodes so we have extra information when debugging connection errors.
@@ -324,7 +341,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
                 if node_info.name in self.failed_to_connect_nodes:
                     continue
 
-                if node_info.name != ETHEREUM_ETHERSCAN_NODE_NAME:
+                if node_info.name != EVM_INDEXERS_NODE_NAME:
                     success, _ = self.attempt_connect(node=node_info)
                     if success is False:
                         self.failed_to_connect_nodes.add(node_info.name)
@@ -373,6 +390,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
                     TypeError,  # happened at the web3 level calling `apply_result_formatters` when the RPC node returned `None` in the response's result # noqa: E501
                     ValueError,  # not removing yet due to possibility of raising from missing trie error  # noqa: E501
                     AttributeError,  # happened at the web3 level when response is a string instead of dict # noqa: E501
+                    json.JSONDecodeError,  # happens when RPC returns empty or invalid JSON responses # noqa: E501
             ) as e:
                 log.warning(
                     f'Failed to query {node_info.name} with position on the query list {node_idx} '
@@ -395,7 +413,9 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             return web3.eth.block_number
 
         # else
-        return self.etherscan.get_latest_block_number(chain_id=self.chain_id)
+        return self._try_indexers(func=lambda indexer: indexer.get_latest_block_number(
+            chain_id=self.chain_id,
+        ))
 
     def get_latest_block_number(self, call_order: Sequence[WeightedNode] | None = None) -> int:
         return self._query(
@@ -424,10 +444,10 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
         by web3.eth.get_block().
         """
         if web3 is None:
-            return self.etherscan.get_block_by_number(
+            return self._try_indexers(func=lambda indexer: indexer.get_block_by_number(
                 chain_id=self.chain_id,
                 block_number=num,
-            )
+            ))
 
         block_data: MutableAttributeDict = MutableAttributeDict(web3.eth.get_block(num))  # type: ignore # pylint: disable=no-member
         block_data['hash'] = block_data['hash'].to_0x_hex()
@@ -448,41 +468,42 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
         """Gets the deployment bytecode at the given address as a 0x hex string
 
         May raise:
-        - RemoteError if Etherscan is used and there is a problem querying it or
+        - RemoteError if an indexer is used and there is a problem querying it or
         parsing its response
         """
         if web3 is None:
-            return self.etherscan.get_code(chain_id=self.chain_id, account=account)
+            return self._try_indexers(func=lambda indexer: indexer.get_code(
+                chain_id=self.chain_id,
+                account=account,
+            ))
 
         return web3.eth.get_code(account).to_0x_hex()
 
-    def _call_contract_etherscan(
+    def _call_contract_indexers(
             self,
             contract_address: ChecksumEvmAddress,
             abi: ABI,
             method_name: str,
             arguments: list[Any] | None = None,
     ) -> Any:
-        """Performs an eth_call to an evm contract via etherscan
+        """Performs an eth_call to an evm contract via the indexers.
 
         May raise:
-        - RemoteError if there is a problem with
-        reaching etherscan or with the returned result
+        - RemoteError if there is a problem reaching the indexers or with the returned result
         """
         web3 = Web3()
         given_arguments = arguments or []
         contract = web3.eth.contract(address=contract_address, abi=abi)
         input_data = contract.encode_abi(method_name, args=given_arguments)
-        result = self.etherscan.eth_call(
+        if (result := self._try_indexers(func=lambda indexer: indexer.eth_call(
             chain_id=self.chain_id,
             to_address=contract_address,
             input_data=input_data,
-        )
-        if result == '0x':
+        ))) == '0x':
             raise BlockchainQueryError(
                 f'Error doing call on contract {contract_address} for {method_name} '
                 f'and chain {self.chain_name} with arguments: {arguments!s} '
-                f'via etherscan. Returned 0x result',
+                f'via indexers. Returned 0x result',
             )
 
         fn_abi = contract._find_matching_fn_abi(
@@ -533,7 +554,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
         - BlockchainQueryError if web3 is used and there is a VM execution error
         """
         if web3 is None:
-            return self._call_contract_etherscan(
+            return self._call_contract_indexers(
                 contract_address=contract_address,
                 abi=abi,
                 method_name=method_name,
@@ -561,13 +582,12 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
         if tx_hash == GENESIS_HASH:
             return FAKE_GENESIS_TX_RECEIPT
         if web3 is None:
-            tx_receipt = self.etherscan.get_transaction_receipt(
+            if (tx_receipt := self._try_indexers(func=lambda indexer: indexer.get_transaction_receipt(  # noqa: E501
                 chain_id=self.chain_id,
                 tx_hash=tx_hash,
-            )
-            if tx_receipt is None:
+            ))) is None:
                 if must_exist:  # fail, so other nodes can be tried
-                    raise RemoteError(f'Querying for {self.chain_name} receipt {tx_hash.hex()} returned None')  # noqa: E501
+                    raise RemoteError(f'Querying for {self.chain_name} receipt {tx_hash!s} returned None')  # noqa: E501
 
                 return None  # else it does not exist
 
@@ -603,7 +623,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
                 ) from e
 
             if must_exist and tx_receipt is None:  # fail, so other nodes can be tried
-                raise RemoteError(f'Querying for {self.chain_name} receipt {tx_hash.hex()} returned None')  # noqa: E501
+                raise RemoteError(f'Querying for {self.chain_name} receipt {tx_hash!s} returned None')  # noqa: E501
 
             return tx_receipt
 
@@ -612,7 +632,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             tx_receipt = web3.eth.get_transaction_receipt(tx_hash)  # type: ignore
         except TransactionNotFound as e:
             if must_exist:  # fail, so other nodes can be tried
-                raise RemoteError(f'Querying for {self.chain_name} receipt {tx_hash.hex()} returned None') from e  # noqa: E501
+                raise RemoteError(f'Querying for {self.chain_name} receipt {tx_hash!s} returned None') from e  # noqa: E501
 
             raise  # else re-raise e
 
@@ -647,7 +667,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             must_exist=True,
         )
         if tx_receipt is None:
-            raise RemoteError(f'{self.chain_name} tx_receipt should exist for {tx_hash.hex()}')
+            raise RemoteError(f'{self.chain_name} tx_receipt should exist for {tx_hash!s}')
         return tx_receipt
 
     def _get_transaction_by_hash(
@@ -657,15 +677,15 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             must_exist: bool = False,
     ) -> tuple[EvmTransaction, dict[str, Any]] | None:
         if web3 is None:
-            tx_data = self.etherscan.get_transaction_by_hash(
+            tx_data = self._try_indexers(func=lambda indexer: indexer.get_transaction_by_hash(
                 chain_id=self.chain_id,
                 tx_hash=tx_hash,
-            )
+            ))
         else:
             tx_data = web3.eth.get_transaction(tx_hash)  # type: ignore
         if tx_data is None:
             if must_exist:  # fail, so other nodes can be tried
-                raise RemoteError(f'Querying for {self.chain_name} transaction {tx_hash.hex()} returned None')  # noqa: E501
+                raise RemoteError(f'Querying for {self.chain_name} transaction {tx_hash!s} returned None')  # noqa: E501
 
             return None  # else it does not exist
 
@@ -682,7 +702,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             ) from e
 
         if receipt_data is None:
-            raise RemoteError(f'{self.chain_name} transaction {tx_hash.hex()} receipt_data is expected to exist')  # noqa: E501  # as etherscan getTransactionByHash does not contains gasUsed'
+            raise RemoteError(f'{self.chain_name} transaction {tx_hash!s} receipt_data is expected to exist')  # noqa: E501  # as etherscan getTransactionByHash does not contains gasUsed'
         return transaction, receipt_data
 
     def maybe_get_transaction_by_hash(
@@ -715,7 +735,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             must_exist=True,
         )
         if result is None:
-            raise RemoteError(f'{self.chain_name} transaction {tx_hash.hex()} is expected to exist')  # noqa: E501
+            raise RemoteError(f'{self.chain_name} transaction {tx_hash!s} is expected to exist')
 
         return result
 
@@ -732,7 +752,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             log_iteration_cb_arguments: 'GnosisWithdrawalsQueryParameters | None' = None,
     ) -> list[dict[str, Any]]:
         if call_order is None:  # Default call order for logs
-            call_order = [self.etherscan_node]
+            call_order = [self.indexers_node]
             if (node_info := self.get_own_node_info()) is not None:
                 call_order.append(
                     WeightedNode(
@@ -809,7 +829,7 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             )
         else:  # etherscan
             until_block = (
-                self.etherscan.get_latest_block_number(self.chain_id) if to_block == 'latest' else to_block  # noqa: E501
+                self._get_latest_block_number(web3=None) if to_block == 'latest' else to_block
             )
             blocks_step = 300000
             while start_block <= until_block:
@@ -1169,11 +1189,10 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
 
         May raise:
         - RemoteError: in case of a problem contacting chain/nodes/remotes"""
-        deployed_hash = self.etherscan.get_contract_creation_hash(
+        if (deployed_hash := self.get_contract_creation_hash(
             chain_id=self.chain_id,
             address=address,
-        )
-        if deployed_hash is None:
+        )) is None:
             return None
 
         transaction, _ = self.get_transaction_by_hash(deployed_hash)
@@ -1199,28 +1218,49 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             ts: Timestamp,
             closest: Literal['before', 'after'] = 'before',
     ) -> int:
-        """Searches for the blocknumber of a specific timestamp
-        - Performs the blockscout api call by default first
-        - If RemoteError gets raised it queries etherscan
-        May raise RemoteError
+        """Searches for the blocknumber of a specific timestamp, checking the cached values first
+        and then querying the indexers, with blockscout first, then etherscan.
+        May raise RemoteError if all indexers fail.
         """
         # check if value exists in the cache
         if (block_number := self.timestamp_to_block_cache[self.chain_id].get(ts)) is not None:
             return block_number
 
-        assert self.blockscout is not None, 'Blockscout should be set'
-        with suppress(RemoteError):
-            block_number = self.blockscout.get_blocknumber_by_time(ts, closest)
-            self.timestamp_to_block_cache[self.chain_id].add(key=ts, value=block_number)
-            return block_number
-
-        block_number = self.etherscan.get_blocknumber_by_time(
-            chain_id=self.chain_id,
-            ts=ts,
-            closest=closest,
+        block_number = self._try_indexers(
+            func=lambda indexer: indexer.get_blocknumber_by_time(
+                chain_id=self.chain_id,
+                ts=ts,
+                closest=closest,
+            ),
         )
         self.timestamp_to_block_cache[self.chain_id].add(key=ts, value=block_number)
         return block_number
+
+    def maybe_get_l1_fees(
+            self,
+            account: ChecksumEvmAddress,
+            tx_hash: EVMTxHash,
+            block_number: int,
+    ) -> int | None:
+        """Retrieve L1 fee data for L2 transactions from available indexers.
+
+        Returns L1 fee in wei if successful, None if chain unsupported or query fails.
+        """
+        if self.chain_id not in L2_CHAINIDS_WITH_L1_FEES:
+            return None
+
+        try:
+            return self._try_indexers(
+                func=lambda indexer: indexer.get_l1_fee(
+                    chain_id=self.chain_id,  # type: ignore[arg-type]  # mypy doesn't understand the check above
+                    account=account,
+                    tx_hash=tx_hash,
+                    block_number=block_number,
+                ),
+            )
+        except RemoteError as e:
+            log.error(f'Failed to get L1 fees for {account=} {tx_hash=} {block_number=} due to {e!s}')  # noqa: E501
+            return None
 
     # -- methods to be optionally implemented by child classes --
 
@@ -1289,6 +1329,167 @@ class EvmNodeInquirer(EVMRPCMixin, LockableQueryMixIn):
             else RemoteDataQueryStatus.NO_UPDATE
         )
 
+    def is_safe_proxy_or_eoa(self, address: ChecksumEvmAddress) -> bool:
+        """
+        Check if an address is a SAFE contract or an EoA. We do this by checking the getThreshold,
+        VERSION and getChainId methods. We assume that if a contract has the same methods as a
+        safe then it is a safe. Also EoAs return (true, b'') for any method so this function
+        will also return True.
+        """
+        if (tracked_value := self._known_accounts_cache.get(address)) is not None:
+            # use a cache to avoid repeating the same query several times
+            return tracked_value
+
+        contract = EvmContract(address=address, abi=SAFE_BASIC_ABI)  # avoid creating the contract 3 times in the calls list  # noqa: E501
+        calls = [
+            (address, contract.encode(method_name=method_name, arguments=[]))
+            for method_name in ('getThreshold', 'VERSION', 'getChainId')
+        ]
+        try:
+            outputs = self.multicall_2(
+                calls=calls,
+                require_success=False,
+            )
+        except RemoteError as e:
+            log.error(
+                f'Failed to check SAFE properties for {address} in {self.chain_name} due to {e}. '
+                'Skipping',
+            )
+            return False
+
+        return all(result_tuple[0] for result_tuple in outputs)
+
+    @overload
+    def get_transactions(
+            self,
+            account: ChecksumEvmAddress | None,
+            action: Literal['txlistinternal'],
+            period_or_hash: TimestampOrBlockRange | EVMTxHash | None = None,
+    ) -> Iterator[list[EvmInternalTransaction]]:
+        ...
+
+    @overload
+    def get_transactions(
+            self,
+            account: ChecksumEvmAddress | None,
+            action: Literal['txlist'],
+            period_or_hash: TimestampOrBlockRange | EVMTxHash | None = None,
+    ) -> Iterator[list[EvmTransaction]]:
+        ...
+
+    def get_transactions(
+            self,
+            account: ChecksumEvmAddress | None,
+            action: Literal['txlist', 'txlistinternal'],
+            period_or_hash: TimestampOrBlockRange | EVMTxHash | None = None,
+    ) -> Iterator[list[EvmTransaction]] | Iterator[list[EvmInternalTransaction]]:
+        """Returns an iterator of transaction lists for a given account, action, and period/hash.
+        Tries etherscan first, then blockscout. Raises RemoteError if both fail.
+        """
+        yield from self._try_indexers_iterable(func=lambda indexer: indexer.get_transactions(  # type: ignore[misc]
+            chain_id=self.chain_id,
+            account=account,
+            period_or_hash=period_or_hash,
+            action=action,
+        ))
+
+    def get_token_transaction_hashes(
+            self,
+            account: ChecksumEvmAddress,
+            from_block: int | None = None,
+            to_block: int | None = None,
+    ) -> Iterator[list[EVMTxHash]]:
+        yield from self._try_indexers_iterable(func=lambda indexer: indexer.get_token_transaction_hashes(  # noqa: E501
+            chain_id=self.chain_id,
+            account=account,
+            from_block=from_block,
+            to_block=to_block,
+        ))
+
+    def has_activity(
+            self,
+            chain_id: SUPPORTED_CHAIN_IDS,
+            account: ChecksumEvmAddress,
+    ) -> HasChainActivity:
+        return self._try_indexers(func=lambda indexer: indexer.has_activity(
+            chain_id=chain_id,
+            account=account,
+        ))
+
+    def get_contract_abi(
+            self,
+            chain_id: SUPPORTED_CHAIN_IDS,
+            address: ChecksumEvmAddress,
+    ) -> str | None:
+        return self._try_indexers(func=lambda indexer: indexer.get_contract_abi(
+            chain_id=chain_id,
+            address=address,
+        ))
+
+    def get_contract_creation_hash(
+            self,
+            chain_id: SUPPORTED_CHAIN_IDS,
+            address: ChecksumEvmAddress,
+    ) -> EVMTxHash | None:
+        return self._try_indexers(func=lambda indexer: indexer.get_contract_creation_hash(
+            chain_id=chain_id,
+            address=address,
+        ))
+
+    def _get_indexers_in_order(self) -> list[tuple[EvmIndexer, EtherscanLikeApi]]:
+        """Return available indexers respecting user-defined order and optional subset."""
+        return [
+            (indexer_name, indexer)
+            for indexer_name in CachedSettings().get_evm_indexers_order_for_chain(chain_id=self.chain_id)  # noqa: E501
+            if (indexer := self.available_indexers.get(indexer_name)) is not None
+        ]
+
+    def _try_indexers(self, func: Callable[[EtherscanLikeApi], T]) -> T:
+        """Tries to call the given function on the indexers in order until one succeeds.
+        Raises RemoteError if all fail or NoAvailableIndexers if there are no indexers available.
+        """
+        if len(ordered_indexers := self._get_indexers_in_order()) == 0:
+            raise NoAvailableIndexers(f'No indexers are available for {self.chain_name}')
+
+        errors: list[tuple[str, Exception]] = []
+        for indexer_name, indexer in ordered_indexers:
+            if indexer_name not in self.available_indexers:
+                continue  # was removed while looping
+
+            try:
+                return func(indexer)
+            except ChainNotSupported as e:
+                if self.available_indexers.pop(indexer_name, None) is not None:
+                    log.warning(  # removed the indexer
+                        f'Indexer {indexer.name} doesnt support {self.chain_name} with the given '
+                        f'API key. {e!s} Removing it from the available indexers for this chain.',
+                    )
+                    errors.append((indexer.name, e))
+            except (RemoteError, DeserializationError) as e:
+                log.warning(f'Failed to query {indexer.name} due to {e!s}. Trying next indexer.')
+                errors.append((indexer.name, e))
+
+        raise RemoteError(
+            f'Failed to query any indexer. '
+            f"Errors: {', '.join(f'{name}: {e!s}' for name, e in errors)}",
+        )
+
+    def _try_indexers_iterable(
+            self,
+            func: Callable[[EtherscanLikeApi], Iterator[T]],
+    ) -> Iterator[T]:
+        """Wrapper for _try_indexers that returns an iterator instead of a single value."""
+        def _query_indexer_iterator(indexer: EtherscanLikeApi) -> Iterator[T]:
+            """Consume the first item in the iterator returned by `func` so if it fails the
+            exception is raised immediately, and _try_indexers goes to the next indexer.
+            """
+            generator = func(indexer)
+            # Force execution for first item so we go to the next indexer if this one fails.
+            first_batch = next(generator)
+            return itertools.chain([first_batch], generator)
+
+        yield from self._try_indexers(func=_query_indexer_iterator)
+
 
 class EvmNodeInquirerWithProxies(EvmNodeInquirer):
     def __init__(
@@ -1296,6 +1497,8 @@ class EvmNodeInquirerWithProxies(EvmNodeInquirer):
             greenlet_manager: GreenletManager,
             database: 'DBHandler',
             etherscan: Etherscan,
+            blockscout: Blockscout,
+            routescan: Routescan,
             blockchain: SUPPORTED_EVM_CHAINS_TYPE,
             contracts: EvmContracts,
             contract_scan: 'EvmContract',
@@ -1303,19 +1506,19 @@ class EvmNodeInquirerWithProxies(EvmNodeInquirer):
             dsproxy_registry: 'EvmContract',
             native_token: CryptoAsset,
             rpc_timeout: int = DEFAULT_RPC_TIMEOUT,
-            blockscout: Blockscout | None = None,
     ) -> None:
         super().__init__(
             greenlet_manager=greenlet_manager,
             database=database,
             etherscan=etherscan,
+            blockscout=blockscout,
+            routescan=routescan,
             blockchain=blockchain,
             contracts=contracts,
             contract_scan=contract_scan,
             contract_multicall=contract_multicall,
             rpc_timeout=rpc_timeout,
             native_token=native_token,
-            blockscout=blockscout,
         )
         self.proxies_inquirer = EvmProxiesInquirer(
             node_inquirer=self,
@@ -1333,6 +1536,8 @@ class DSProxyInquirerWithCacheData(EvmNodeInquirerWithProxies):
             greenlet_manager: GreenletManager,
             database: 'DBHandler',
             etherscan: Etherscan,
+            blockscout: Blockscout,
+            routescan: Routescan,
             blockchain: SUPPORTED_EVM_CHAINS_TYPE,
             contracts: EvmContracts,
             contract_scan: 'EvmContract',
@@ -1340,12 +1545,13 @@ class DSProxyInquirerWithCacheData(EvmNodeInquirerWithProxies):
             dsproxy_registry: 'EvmContract',
             native_token: CryptoAsset,
             rpc_timeout: int = DEFAULT_RPC_TIMEOUT,
-            blockscout: Blockscout | None = None,
     ) -> None:
         super().__init__(
             greenlet_manager=greenlet_manager,
             database=database,
             etherscan=etherscan,
+            blockscout=blockscout,
+            routescan=routescan,
             blockchain=blockchain,
             contracts=contracts,
             contract_scan=contract_scan,
@@ -1353,5 +1559,4 @@ class DSProxyInquirerWithCacheData(EvmNodeInquirerWithProxies):
             rpc_timeout=rpc_timeout,
             native_token=native_token,
             dsproxy_registry=dsproxy_registry,
-            blockscout=blockscout,
         )

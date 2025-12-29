@@ -31,8 +31,8 @@ export function useHistoryEventsDialogManager(): UseHistoryEventsDialogManager {
         openDialog({
           data: options.data || {
             associatedAddress: '',
-            evmChain: '',
-            txHash: '',
+            blockchain: '',
+            txRef: '',
           },
           type: DIALOG_TYPES.TRANSACTION_FORM,
         });
@@ -53,17 +53,22 @@ export function useHistoryEventsDialogManager(): UseHistoryEventsDialogManager {
         openDialog({
           data: {
             associatedAddress: '',
-            evmChain: '',
-            txHash: '',
+            blockchain: '',
+            txRef: '',
           },
           type: DIALOG_TYPES.TRANSACTION_FORM,
         });
         break;
-      case DIALOG_TYPES.ADD_MISSING_RULE:
+      case DIALOG_TYPES.ADD_MISSING_RULE: {
+        const { eventIds, ...restData } = options.data;
         await router.push({
           path: '/settings/accounting',
-          query: { 'add-rule': 'true', ...options.data },
+          query: { 'add-rule': 'true', 'eventId': eventIds ? eventIds[0].toString() : undefined, ...restData },
         });
+        break;
+      }
+      case DIALOG_TYPES.MATCH_ASSET_MOVEMENTS:
+        openDialog({ data: undefined, type: DIALOG_TYPES.MATCH_ASSET_MOVEMENTS });
         break;
       default:
         break;

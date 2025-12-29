@@ -2,12 +2,11 @@ from typing import Final
 
 from eth_typing import ABI
 
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.optimism.constants import CPT_OPTIMISM
 from rotkehlchen.history.events.structures.types import HistoryEventType
 
-CPT_GAS: Final = 'gas'
 CPT_GITCOIN: Final = 'gitcoin'
 CPT_BASE: Final = 'base'
 CPT_ACCOUNT_DELEGATION: Final = 'account delegation'

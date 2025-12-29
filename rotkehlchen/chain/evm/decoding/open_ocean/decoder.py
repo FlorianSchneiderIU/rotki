@@ -3,20 +3,20 @@ from abc import ABC
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.assets.utils import token_normalized_value_decimals
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS, ZERO_ADDRESS
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.uniswap.constants import (
     UNISWAP_V2_SWAP_SIGNATURE,
     UNISWAP_V3_SWAP_SIGNATURE,
 )
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress, EvmTransaction
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class OpenOceanDecoder(DecoderInterface, ABC):
+class OpenOceanDecoder(EvmDecoderInterface, ABC):
 
     def _get_asset_and_amount(
             self,
@@ -46,17 +46,20 @@ class OpenOceanDecoder(DecoderInterface, ABC):
         Uses native token if address is ZERO_ADDRESS:
         https://github.com/openocean-finance/OpenOceanExchangeV2/blob/5e83cc1cf0a29a3ab23e405f9528b876ff8b1478/contracts/libraries/UniversalERC20.sol#L62
         """
-        asset = self.base.get_or_create_evm_asset(address=asset_address) if asset_address != ZERO_ADDRESS else self.evm_inquirer.native_token  # noqa: E501
+        asset = self.base.get_or_create_evm_asset(address=asset_address) if asset_address != ZERO_ADDRESS else self.node_inquirer.native_token  # noqa: E501
         amount = token_normalized_value_decimals(
             token_amount=raw_amount,
-            token_decimals=DEFAULT_TOKEN_DECIMALS if asset == self.evm_inquirer.native_token else asset.resolve_to_evm_token().decimals,  # noqa: E501
+            token_decimals=DEFAULT_TOKEN_DECIMALS if asset == self.node_inquirer.native_token else asset.resolve_to_evm_token().decimals,  # noqa: E501
         )
         return asset, amount
 
-    def _decode_swapped(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_swapped(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode OpenOcean swaps that include a SWAPPED_TOPIC tx_log event."""
-        if context.tx_log.topics[0] != SWAPPED_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+        if (context.tx_log.topics[0] != SWAPPED_TOPIC or not self.base.any_tracked((
+            bytes_to_address(context.tx_log.topics[1]),  # sender
+            bytes_to_address(context.tx_log.data[:32])),  # receiver
+        )):
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         spend_asset, spend_amount = self._get_asset_and_amount(
             asset_address=bytes_to_address(context.tx_log.topics[2]),
@@ -74,7 +77,7 @@ class OpenOceanDecoder(DecoderInterface, ABC):
             receive_asset=receive_asset,
             receive_amount=receive_amount,
         )
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)
 
     @staticmethod
     def _decode_swap(

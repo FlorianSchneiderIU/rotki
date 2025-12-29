@@ -2,8 +2,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
-from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS, ZERO_ADDRESS
+from rotkehlchen.assets.utils import token_normalized_value_decimals
+from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
 from rotkehlchen.chain.evm.decoding.constants import STAKED, WITHDRAWN
 from rotkehlchen.chain.evm.decoding.giveth.constants import (
     CPT_GIVETH,
@@ -11,10 +11,10 @@ from rotkehlchen.chain.evm.decoding.giveth.constants import (
 )
 from rotkehlchen.chain.evm.decoding.giveth.decoder import GivethDecoderBase
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.gnosis.modules.giveth.constants import (
@@ -28,7 +28,7 @@ from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.gnosis.node_inquirer import GnosisInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -41,7 +41,7 @@ class GivethDecoder(GivethDecoderBase):
     def __init__(  # pylint: disable=super-init-not-called
             self,
             evm_inquirer: 'GnosisInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -54,7 +54,7 @@ class GivethDecoder(GivethDecoderBase):
             pow_token_id='eip155:100/erc20:0xD93d3bDBa18ebcB3317a57119ea44ed2Cf41C2F2',
         )
 
-    def decode_staking_events(self, context: DecoderContext) -> DecodingOutput:
+    def decode_staking_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] == STAKED:
             return self._decode_deposit(context=context)
         elif context.tx_log.topics[0] == WITHDRAWN:
@@ -62,11 +62,11 @@ class GivethDecoder(GivethDecoderBase):
         elif context.tx_log.topics[0] == TOKEN_LOCKED:
             return self._decode_token_locked(context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_deposit(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_deposit(self, context: DecoderContext) -> EvmDecodingOutput:
         if not self.base.is_tracked(user := bytes_to_address(context.tx_log.topics[1])):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[:32]),
@@ -88,7 +88,7 @@ class GivethDecoder(GivethDecoderBase):
                 break
         else:
             log.error(f'Could not find the GIV/PoW token transfers for {context.transaction}')
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         # Since the receive transaction comes after we need an action item
         action_items = [ActionItem(
@@ -98,7 +98,6 @@ class GivethDecoder(GivethDecoderBase):
             amount=amount,
             location_label=user,
             asset=Asset(self.pow_token_id),
-            address=ZERO_ADDRESS,
             to_event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
             to_location_label=user,
             to_address=context.tx_log.address,
@@ -112,13 +111,12 @@ class GivethDecoder(GivethDecoderBase):
             amount=amount,
             location_label=user,
             asset=Asset(GGIV_TOKEN_ID),
-            address=ZERO_ADDRESS,
         )]
-        return DecodingOutput(action_items=action_items)
+        return EvmDecodingOutput(action_items=action_items)
 
-    def _decode_withdraw(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_withdraw(self, context: DecoderContext) -> EvmDecodingOutput:
         if not self.base.is_tracked(user := bytes_to_address(context.tx_log.topics[1])):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[:32]),
@@ -131,7 +129,6 @@ class GivethDecoder(GivethDecoderBase):
             amount=amount,
             location_label=user,
             asset=Asset(self.pow_token_id),
-            address=ZERO_ADDRESS,
             to_event_subtype=HistoryEventSubType.RETURN_WRAPPED,
             to_address=context.tx_log.address,
             to_notes='Return {amount} POW to Giveth staking',  # to be filled by the action item
@@ -144,7 +141,6 @@ class GivethDecoder(GivethDecoderBase):
              amount=amount,
              location_label=user,
              asset=Asset(self.giv_token_id),
-             address=GNOSIS_GIVPOWERSTAKING_WRAPPER,
              to_event_type=HistoryEventType.WITHDRAWAL,
              to_event_subtype=HistoryEventSubType.REDEEM_WRAPPED,
              to_notes='Withdraw {amount} GIV from staking',  # to be filled by the action item
@@ -156,6 +152,5 @@ class GivethDecoder(GivethDecoderBase):
              amount=amount,
              location_label=user,
              asset=Asset(GGIV_TOKEN_ID),
-             address=ZERO_ADDRESS,
          )]
-        return DecodingOutput(action_items=action_items)
+        return EvmDecodingOutput(action_items=action_items)

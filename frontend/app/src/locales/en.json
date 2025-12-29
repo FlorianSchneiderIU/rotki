@@ -60,9 +60,8 @@
       }
     },
     "edit_tooltip": "Edit account",
-    "headers": {
-      "usd_value": "{symbol} value"
-    },
+    "enter_selection_mode": "Enter selection mode to bulk ignore or mark assets as spam",
+    "exit_selection_mode": "Exit selection mode",
     "per_chain": "Per chain",
     "refresh_tooltip": "Refresh {blockchain} balances ignoring any cached entries"
   },
@@ -75,7 +74,7 @@
     "labels": {
       "addresses": "Addresses",
       "addresses_entries": "no entries | {count} unique entry | {count} unique entries",
-      "addresses_hint": "Insert multiple comma separated addresses",
+      "addresses_hint": "Insert multiple addresses separated by commas or new lines",
       "all_supported_chains": "All Supported Chains",
       "blockchain": "Choose blockchain | Choose blockchains",
       "btc": {
@@ -161,6 +160,23 @@
   },
   "accounting_settings": {
     "rule": {
+      "action_dialog": {
+        "add_event_specific": "Add rule for this event only",
+        "add_general": "Add general accounting rule",
+        "add_new_event_specific": "Add new rule for this event only",
+        "affects_all_similar": "Affects all events with similar type, subtype, and counterparty",
+        "affects_events": "This rule affects {count} events",
+        "edit_event_specific": "Edit event-specific rule",
+        "edit_general": "Edit general accounting rule",
+        "event_specific_exists": "An event-specific rule already exists for this event.",
+        "for_all_similar": "For all events with this type, subtype, and counterparty",
+        "general_rule_exists": "A general accounting rule exists for this event type.",
+        "no_rule_exists": "No accounting rule exists for this event.",
+        "only_this_event": "Only applies to this specific event",
+        "override_general": "Override the general rule for this specific event",
+        "title": "Choose Accounting Rule Action",
+        "view_affected_events": "View affected events"
+      },
       "add": "Add accounting rule",
       "add_error": "Could not add accounting rule: {message}",
       "confirm_delete": "Are you sure you want to delete this custom accounting rule?",
@@ -179,10 +195,14 @@
         "title": "Resolve accounting rules conflicts"
       },
       "current_setting_value": "Current setting value:",
+      "custom_events_info": "Creating a custom accounting rule for {count} selected event(s)",
       "delete": "Delete accounting rule",
       "delete_error": "Could not delete accounting rule: {message}",
       "edit": "Edit accounting rule",
       "edit_error": "Could not edit accounting rule: {message}",
+      "events_dialog": {
+        "title": "Events affected by the accounting rule ({count})"
+      },
       "export": "Export accounting rules",
       "fetch_error": {
         "message": "Failed retrieving accounting rules: {message}",
@@ -200,6 +220,7 @@
         "count_cost_basis_pnl_subtitle": "Whether we have to count any profit/loss the asset may have had compared to when it was acquired.",
         "count_entire_amount_spend": "Count entire amount spend",
         "count_entire_amount_spend_subtitle": "Whether the entire amount is counted as a spend, which means an expense (negative pnl)",
+        "event_ids": "Event IDs",
         "event_subtype": "Event Sub Type",
         "event_type": "Event Type",
         "taxable": "Taxable",
@@ -208,6 +229,10 @@
       "overwrite_by_setting": "Overwrite by value from other accounting setting",
       "refresh_tooltip": "Refresh accounting rules",
       "subtitle": "Manage and view your event accounting rules",
+      "tabs": {
+        "custom": "Special rules for certain events",
+        "regular": "Regular Rules"
+      },
       "title": "Accounting Rules",
       "value_overwritten": "The value is overwritten by this setting:"
     },
@@ -250,6 +275,20 @@
       "task": {
         "description": "Adding ETH staking validator",
         "title": "Adding validator: {id}"
+      }
+    },
+    "asset_movement_matching": {
+      "error": {
+        "description": "Failed to match asset movement: {message}",
+        "title": "Asset Movement Matching"
+      },
+      "fetch_error": {
+        "description": "Failed to fetch unmatched asset movements: {message}",
+        "title": "Fetching Unmatched Asset Movements"
+      },
+      "success": {
+        "description": "Asset movement successfully matched to blockchain event.",
+        "title": "Asset Movement Matched"
       }
     },
     "assets": {
@@ -451,6 +490,7 @@
         }
       }
     },
+    "date_range": " from {from}| to {to}| from {from} to {to}",
     "defi": {
       "airdrops": {
         "error": {
@@ -566,10 +606,10 @@
       },
       "fetch_undecoded_transactions": {
         "error": {
-          "message": "Failed to query breakdown for EVM undecoded transactions: {message}"
+          "message": "Failed to query breakdown for undecoded transactions: {message}"
         },
         "task": {
-          "title": "Retrieving breakdown for EVM undecoded transactions."
+          "title": "Retrieving breakdown for undecoded transactions."
         }
       }
     },
@@ -593,6 +633,15 @@
         "message": "This event will not be processed in accounting. To handle it, you must choose one of these options:",
         "re_decode": "Redecode event",
         "title": "Event missing accounting rule"
+      },
+      "report_issue": {
+        "action": "Report Issue",
+        "description_intro": "I have a problem with my history event with these details:",
+        "location": "- Location: {location}",
+        "more_detail": "More detail:",
+        "placeholder": "[Add more context here]",
+        "title": "History Event Issue",
+        "tx_hash": "- Tx Hash: {hash}"
       }
     },
     "history_events_export": {
@@ -710,6 +759,19 @@
         }
       }
     },
+    "repulling_exchange_events": {
+      "error": {
+        "description": "Failed to re-pull events for {exchange}"
+      },
+      "success": {
+        "description": "{length} events re-pulled",
+        "no_events_description": "No events re-pulled"
+      },
+      "task": {
+        "description": "Re-pulling events for {exchange} {dateRange}",
+        "title": "Re-pulling exchange events"
+      }
+    },
     "repulling_transaction": {
       "error": {
         "description": "Failed to re-pull transactions for {address} ({chain}).",
@@ -720,8 +782,8 @@
         "no_tx_description": "No transactions re-pulled"
       },
       "task": {
-        "description": "Re-pulling transactions for {address} ({chain}) from {from} to {to}.",
-        "no_address_or_chain_transaction": "Re-pulling transactions from {from} to {to}",
+        "description": "Re-pulling transactions for {address} ({chain}) {dateRange}.",
+        "no_address_or_chain_transaction": "Re-pulling transactions {dateRange}",
         "title": "Re-pulling transactions"
       }
     },
@@ -860,7 +922,7 @@
       },
       "task": {
         "description": "Decoding transaction events for transactions: {tx} ({chain})",
-        "single_description": "Decoding transaction events for {number} transactions",
+        "single_description": "Decoding {chain} transaction events for {number} transactions",
         "title": "Decoding transaction events"
       }
     },
@@ -928,8 +990,7 @@
     },
     "form": {
       "labels": {
-        "address": "Address",
-        "for_all_chain": "Save this name for all chains"
+        "address": "Address"
       },
       "no_suggestions_available": "No Suggestions Available",
       "validation": {
@@ -963,6 +1024,10 @@
         "message": "{length} entries successfully added to the address book"
       },
       "title": "Import Address Book Entries"
+    },
+    "strict_blockchain_filter": {
+      "hint": "If true, results are limited to an exact match with the 'blockchain filter.' If false, results include all blockchains from the same chain family that accept the address format (e.g., all EVM-based chains if the filter is set to an EVM chain).",
+      "label": "Strict blockchain filter"
     }
   },
   "airdrops": {
@@ -1024,6 +1089,7 @@
       "chain": "Chain",
       "coingecko": "CoinGecko",
       "coingecko_hint": "The identifier of the asset on CoinGecko. If not set rotki will not be able to retrieve prices for the asset from CoinGecko.",
+      "collectible_id": "Collectible ID",
       "cryptocompare": "CryptoCompare",
       "cryptocompare_hint": "The identifier of the asset on CryptoCompare. If not given, the symbol is assumed as default. If that does not work and if not otherwise set rotki will not be able to retrieve prices for the asset from CryptoCompare",
       "decimals": "Decimals",
@@ -1051,8 +1117,7 @@
   "asset_locations": {
     "header": {
       "percentage": "Percentage",
-      "validator": "Validator Index | Public Key",
-      "value": "{symbol} value"
+      "validator": "Validator Index | Public Key"
     },
     "title": "Asset Locations"
   },
@@ -1072,7 +1137,6 @@
       "delete_error": "Could not delete the mapping: {message}",
       "edit_error": "Could not edit the mapping: {message}",
       "edit_title": "Edit the mapping",
-      "exchange": "Exchange",
       "filter_by_exchange": "Filter by exchange",
       "filter_by_location_symbol": "Filter by asset symbol",
       "form": {
@@ -1127,6 +1191,28 @@
       "title": "Caching asset mappings"
     }
   },
+  "asset_movement_matching": {
+    "banner": {
+      "action": "Match Now",
+      "message": "There are {count} unmatched asset movements that require manual matching."
+    },
+    "dialog": {
+      "check_unmatched": "Check Unmatched Asset Movements",
+      "confirm_match": "Confirm Match",
+      "description": "Select an unmatched asset movement and find a matching blockchain transaction to link them together.",
+      "find_match": "Find Match",
+      "matching_for": "Matching for:",
+      "no_matches_found": "No potential matches found. Try adjusting the time range.",
+      "no_unmatched": "All asset movements have been matched.",
+      "recommended": "Recommended",
+      "search_description": "Search for on-chain events within the specified time range:",
+      "select": "Select",
+      "select_match_title": "Select Matching Event",
+      "selected": "Selected",
+      "time_range_hours": "Time range (hours)",
+      "title": "Match Asset Movements"
+    }
+  },
   "asset_search": {
     "error": {
       "message": "Failed to search asset: {message}",
@@ -1149,6 +1235,8 @@
     "headers": {
       "started": "Started"
     },
+    "mark_spam": "Mark as spam",
+    "mark_spam_tooltip": "Mark the selected assets as spam",
     "newly_detected": {
       "accept": "Accept token",
       "accept_selected": "Accept selected tokens",
@@ -1202,7 +1290,7 @@
     "show_advanced": "Show advanced options",
     "skip_notification": "Don't notify me until the next update",
     "success": {
-      "description": "The asset database has been successfully updated to version {remoteVersion}. You will now need to re-login to apply the changes",
+      "description": "The asset database has been successfully updated to version {remoteVersion}. rotki will restart the backend and then you can continue.",
       "title": "Asset database update"
     },
     "title": "A supported asset update is available",
@@ -1355,6 +1443,13 @@
           "pro": "Pro",
           "starter": "Starter / Express"
         }
+      },
+      "okx": {
+        "location": {
+          "eea": "European Economic Area (EEA)",
+          "global": "Global",
+          "us": "United States (US)"
+        }
       }
     },
     "profit_loss_event_type": {
@@ -1383,8 +1478,8 @@
     "advanced": "Advanced",
     "config_file_disabled": "This parameter is already set in the rotki_config.json",
     "confirm": {
-      "message": "Are you sure you want to rest the backend settings to default?",
-      "title": "Rest backend settings"
+      "message": "Are you sure you want to reset the backend settings to default?",
+      "title": "Reset backend settings"
     },
     "data_directory": {
       "select": "Select where rotki will store the data"
@@ -1417,6 +1512,7 @@
         "label": "Log Directory"
       },
       "log_level": {
+        "hint": "Specify minimum severity level for recorded log messages.",
         "label": "Log Level"
       }
     },
@@ -1441,6 +1537,10 @@
   },
   "binance_market_selector": {
     "default_label": "Filter market pair(s)",
+    "paste_result": {
+      "invalid": "{count} invalid pair not found in available markets | {count} invalid pairs not found in available markets",
+      "valid": "{count} pair selected successfully | {count} pairs selected successfully"
+    },
     "query_all": {
       "error": "Couldn't get the list of markets for binance.",
       "title": "Query Binance markets"
@@ -1459,6 +1559,7 @@
   },
   "blockchain_balances": {
     "add_account": "Add Account",
+    "binance_warning": "Binance Smart Chain accounts can only be detected with a paid Etherscan key.",
     "evm_detection": {
       "title": "Detect EVM accounts",
       "tooltip": "Detect activities of all registered EVM accounts in other EVM chains, and register them."
@@ -1477,6 +1578,7 @@
       "invalid_format": "Invalid CSV format. Must contain \"chain\" and \"address\" columns.",
       "message": "Error importing blockchain accounts: {error}"
     },
+    "solana_warning": "This is an initial Solana integration. Only a few protocols are currently supported, but more will be added over time.",
     "tabs": {
       "accounts": "Accounts",
       "validators": "Validators"
@@ -1484,6 +1586,7 @@
     "title": "Blockchain Balances per asset",
     "validator_index_label": "Ethereum validator No. {index}",
     "validators": {
+      "auto_detection_info": "rotki will automatically detect validators if you add the depositor address as an Ethereum account. First, ensure the events for that depositor address are fetched and decoded in history events, where any ETH deposit events will be detected. After the events are found, manually hit the refresh button to update the validator list.",
       "consolidated": "Consolidated into:",
       "selected": "{count} validator(s) selected",
       "title": "Ethereum Validators"
@@ -1623,6 +1726,8 @@
       "save": "Save",
       "search": "Search",
       "select_all": "Select All",
+      "show_less": "Show less",
+      "show_more_num": "Show {count} more",
       "skip": "Skip",
       "terminate": "Terminate",
       "update": "Update",
@@ -1645,6 +1750,11 @@
     "details": "Details",
     "entry_type": "Entry Type",
     "events": "Events",
+    "exchange": "Exchange",
+    "external_link_confirmation": {
+      "message": "You are about to open an external link. Please verify the URL carefully and be cautious of phishing attempts.",
+      "title": "Open External Link?"
+    },
     "fee": "Fee",
     "filter": {
       "date_hint": "format {format} HH:mm:ss (time/seconds are optional)",
@@ -1674,6 +1784,7 @@
     "rewards": "Rewards",
     "select_address": "Select address(es)",
     "select_directory": "Select a directory",
+    "signature": "Signature",
     "status": "Status",
     "tags": "Tags",
     "total": "Total",
@@ -1682,6 +1793,7 @@
     "type": "Type",
     "unclaimed": "Unclaimed",
     "unknown": "Unknown",
+    "url": "URL",
     "validator_index": "Validator Index",
     "value_in_symbol": "{symbol} Value",
     "xpub": "XPUB"
@@ -1754,6 +1866,9 @@
         "valid_username": "A profile name must contain only alphanumeric characters and have no spaces"
       }
     },
+    "error": {
+      "device_limit_link": "Click {here} if you want to learn more about managing premium devices"
+    },
     "have_account": {
       "description": "Already have an account?",
       "log_in": "Unlock your account"
@@ -1790,20 +1905,25 @@
     }
   },
   "currencies": {
+    "aed": "Uni Arab Emirates Dirham",
     "aud": "Australian Dollar",
     "brl": "Brazilian Real",
     "cad": "Canadian Dollar",
     "chf": "Swiss Franc",
     "cny": "Chinese Yuan",
+    "czk": "Czech koruna",
     "dkk": "Danish krone",
     "eur": "Euro",
     "gbp": "British Pound",
+    "ils": "Israeli new shekel",
     "inr": "Indian rupee",
     "jpy": "Japanese Yen",
     "krw": "Korean Won",
+    "mxn": "Mexican Peso",
     "ngn": "Nigerian naira",
     "nok": "Norwegian krone",
     "nzd": "New Zealand Dollar",
+    "php": "Philippine Peso",
     "pln": "Polish zloty",
     "rub": "Russian Ruble",
     "sek": "Swedish Krona",
@@ -1828,6 +1948,7 @@
       "categories": {
         "bitcoin": "Bitcoin Address",
         "evm": "EVM Address",
+        "solana": "Solana Address",
         "substrate": "Substrate Address"
       },
       "title": "blockchain"
@@ -1838,13 +1959,41 @@
       "title": "exchange"
     },
     "history_query_indicator": {
+      "balance_status": {
+        "querying_balances": "Querying blockchain balances...",
+        "querying_chain_balances": "Querying {chain} balances...",
+        "querying_chain_balances_with_progress": "({current}/{total}) Querying {chain} balances... "
+      },
+      "event_status": {
+        "default": "Processing",
+        "querying_events_finished": "Finished querying",
+        "querying_events_started": "Querying events",
+        "querying_events_status_update": "Querying events"
+      },
       "go_to_history_events": "Go to history events",
       "incomplete_decoding": "The last event query completed {time}. Due to incomplete event processing, protocol balances may not reflect the latest state. Navigate to history events to begin processing.",
       "just_updated": "The application has recently been updated. Some balances may not display until transaction processing is fully complete. Navigate to history events to begin to begin processing.",
       "last_queried": "The last event query completed {time}. Protocol balances may be stale or missing if the transaction history has not been refreshed recently. Navigate to history events to begin refreshing them.",
       "last_queried_long": "Some balances may not display until transaction processing is fully complete. Navigate to history events to begin to begin processing.",
       "never_queried": "The transaction history has not been queried yet. Navigate to history events to begin querying them.",
-      "processing": "Historical event processing is underway. Updated protocol balances will be available once the operation concludes."
+      "processing": "Historical event processing is underway. Updated protocol balances will be available once the operation concludes.",
+      "processing_operation_event": "{status} for {name} ({location})",
+      "processing_operation_transaction": "{status} for {address}",
+      "processing_with_progress": "Historical event processing is underway. Updated protocol balances will be available once the operation concludes. ({current}/{total})",
+      "token_detection_status": {
+        "detecting": "Detecting tokens for",
+        "detecting_with_details": "({current}/{total}) Detecting tokens for"
+      },
+      "transaction_status": {
+        "decoding_transactions_finished": "Finished decoding",
+        "decoding_transactions_started": "Starting decoding",
+        "default": "Processing",
+        "querying_evm_tokens_transactions": "Querying token transactions",
+        "querying_internal_transactions": "Querying internal transactions",
+        "querying_transactions": "Querying transactions",
+        "querying_transactions_finished": "Finished querying",
+        "querying_transactions_started": "Starting transaction query"
+      }
     },
     "liabilities": {
       "title": "Liabilities"
@@ -2116,6 +2265,23 @@
     "subtitle": "These are the supported date formatting options",
     "title": "Date Format"
   },
+  "date_time_picker": {
+    "days_before": "{days} Days Before",
+    "month_before": "1 Month Before",
+    "months_before": "{months} Months Before",
+    "one_day_before": "1 Day Before",
+    "week_before": "1 Week Before",
+    "year_before": "1 Year Before"
+  },
+  "date_time_range_picker": {
+    "last_1_month": "Last 1 month",
+    "last_1_year": "Last 1 year",
+    "last_6_months": "Last 6 months",
+    "last_7_days": "Last 7 days",
+    "last_12_hours": "Last 12 hours",
+    "last_24_hours": "Last 24 hours",
+    "last_90_days": "Last 90 days"
+  },
   "docker_warning": {
     "action": "Yes, I understand",
     "documentation": "documentation",
@@ -2218,6 +2384,32 @@
     },
     "weight": "{weight}%"
   },
+  "evm_settings": {
+    "general": {
+      "chains_to_skip_detection": {
+        "subtitle": "Select EVM chains where automatic token detection should be disabled.",
+        "title": "Skip Token Detection"
+      },
+      "title": "EVM General Setting",
+      "treat_eth2_as_eth": {
+        "subtitle": "When enabled, staked ETH (ETH2) will be displayed and counted as regular ETH.",
+        "title": "Treat ETH2 as ETH"
+      }
+    },
+    "indexer": {
+      "add_chain": "Add specific chain setting",
+      "chain_order": "{chain} Indexer Order",
+      "chain_updated": "{chain} indexer order updated",
+      "data_name": "indexer",
+      "default_order": "Default Indexer Order",
+      "default_tab": "Default",
+      "default_updated": "Default indexer order updated",
+      "no_indexers_warning": "At least one indexer must be selected. The list cannot be empty.",
+      "remove_chain": "Remove chain specific setting",
+      "subtitle": "Indexers are used to query history events. Configure the priority order of indexers for each EVM chain. If the first indexer fails, the next one will be tried, and so on.",
+      "title": "Indexer Order"
+    }
+  },
   "exchange_balances": {
     "add_exchange": "Add exchange",
     "click_here": "Click here",
@@ -2238,10 +2430,10 @@
       "activate_tooltip": "Edit the api keys for the exchange.",
       "deactivate_tooltip": "Cancel the edit of the api keys for the exchange."
     },
-    "exchange": "Exchange",
     "name": {
       "non_empty": "The name field cannot be empty."
     },
+    "region": "Region",
     "validation": {
       "non_empty": "This field cannot be empty."
     },
@@ -2275,7 +2467,6 @@
       "api_key_name": "API Key Name",
       "api_secret": "API Secret",
       "experimental": "The integration for this exchange is experimental, and you may find some imperfections. Please let us know if you encounter any issues.",
-      "format": "Format",
       "id": "ID",
       "kraken_account": "Select the type of your Kraken account",
       "passphrase": "Passphrase",
@@ -2314,6 +2505,15 @@
     "tx_url": "Transactions will open at {txUrl}"
   },
   "external_services": {
+    "actions": {
+      "authenticate": "Authenticate",
+      "delete_key": "Delete key",
+      "enter_api_key": "Enter API key",
+      "reauthenticate": "Re-Authenticate",
+      "remove_authentication": "Remove Authentication",
+      "replace_key": "Replace key",
+      "save_key": "Save key"
+    },
     "alchemy": {
       "description": "rotki uses alchemy to obtain price information about assets in your portfolio. An API key is needed if you want it included in your list of oracles.",
       "hint": "Enter your Alchemy API key",
@@ -2321,7 +2521,8 @@
     },
     "api_key": "API key",
     "beaconchain": {
-      "description": "rotki uses Beaconcha.in to obtain information about ETH staking in your portfolio. An API key is only needed if you are being rate-limited.",
+      "api_key_message": "Please add a Beaconcha.in API key to be able to query the ETH staking history of withdrawals and blocks data.",
+      "description": "Required for ETH staking data. Beaconcha.in now requires API keys for all requests.",
       "hint": "Enter your Beaconcha.in API key",
       "title": "Beaconcha.in"
     },
@@ -2340,10 +2541,6 @@
       "message": "Are you sure you want to delete this API Key?",
       "title": "Delete API Key"
     },
-    "credential": {
-      "password": "Password",
-      "username": "Username"
-    },
     "cryptocompare": {
       "description": "rotki uses cryptocompare to obtain price information about assets in your portfolio. An API key is only needed if you have a lot of assets and are being rate-limited.",
       "hint": "Enter your CryptoCompare API key",
@@ -2357,23 +2554,52 @@
     "delete_error": {
       "description": "Error while removing the external service api keys: {message}"
     },
-    "delete_key": "Delete key",
-    "enter_api_key": "Enter API key",
     "etherscan": {
-      "api_key_message": "Please add an Etherscan API key to be able to query historical EVM transactions.",
+      "api_key_message": "Etherscan API key is needed to query historical EVM transactions.",
+      "change_indexer": {
+        "action": "Change Indexer Order"
+      },
       "description": "Recommended for any EVM blockchain balances or transactions if you are not using your own node.",
       "hint": "Enter your Etherscan API key",
       "title": "Etherscan"
     },
     "get_api_key": "You can apply for an API key {link}",
     "gnosispay": {
-      "api_key_hint": "Enter your Gnosis Pay session token",
-      "api_key_label": "Session Token",
-      "description": "Add your Gnosis Pay session token to integrate Gnosis Pay transactions.",
-      "session_token_instructions": "Follow the guide to obtain your Gnosis Pay session token {link}",
-      "title": "Gnosis Pay",
-      "understand": "I understand",
-      "warning": "Gnosis Pay integration is experimental. The session token provides read-only access to your Gnosis Pay data."
+      "delete_confirmation": {
+        "message": "Are you sure you want to remove authentication for Gnosis Pay?",
+        "title": "Remove Authentication"
+      },
+      "description": "Authenticate with Gnosis Pay using your Ethereum wallet to access your transaction data.",
+      "errors": {
+        "allowed_admin_addresses": "Allowed admin addresses:",
+        "connection_failed": "Failed to connect wallet",
+        "invalid_address": "This address is not registered as an on-chain admin for any Gnosis Pay account. You can still proceed with sign-in as there may be other authorized addresses not visible on-chain. The registered admin addresses are listed below for reference.",
+        "no_registered_accounts": "No Gnosis Pay safe accounts are registered in rotki. Please add a Gnosis Pay safe account first before attempting to authenticate.",
+        "no_wallet_connected": "No wallet connected",
+        "safe_wallet": "Safe Wallet:",
+        "signature_rejected": "Signature request was rejected by user",
+        "unknown": "An unknown error occurred"
+      },
+      "siwe": {
+        "checking_accounts": "Checking for registered Gnosis Pay accounts...",
+        "connected_address": "Connected Address",
+        "controlled_safe": "Controlled Gnosis Pay Safe account(s):",
+        "disconnect": "Disconnect Wallet",
+        "explanation": "To authenticate with Gnosis Pay, you need to sign a message with an Ethereum wallet that is a controller of the Gnosis Pay Safe.",
+        "failed": "Failed to authenticate Gnosis Pay",
+        "fetching_nonce": "Fetching authentication nonce",
+        "sign_explanation": "Sign a message with your wallet to authenticate and generate a session token.",
+        "sign_message": "Sign Message to Authenticate",
+        "step1_title": "Select Wallet Mode & Connect",
+        "step2_title": "Checking connected address eligibility",
+        "step3_title": "Sign Authentication Message",
+        "success_message": "Successfully authenticated with Gnosis Pay",
+        "switch_to_gnosis": "Switch to Gnosis",
+        "validating_address": "Validating address...",
+        "verifying_signature": "Verifying signature and generating token",
+        "wrong_chain": "You are not connected to the Gnosis network. Please switch to continue."
+      },
+      "title": "Gnosis Pay"
     },
     "google_calendar": {
       "access_token": "Access Token",
@@ -2397,6 +2623,12 @@
       "title": "Google Calendar",
       "token_required": "Please enter a valid access token"
     },
+    "helius": {
+      "api_key_message": "Helius API key is needed to query historical Solana transactions.",
+      "description": "Recommended for Solana to query transaction data without the heavy rate limits of public RPCs.",
+      "hint": "Enter your Helius API key",
+      "title": "Helius"
+    },
     "loopring": {
       "description": "Used to query balances in Loopring. This API key will only be able to query the account that generated this key.",
       "hint": "Enter your Loopring API key",
@@ -2405,10 +2637,25 @@
       "title": "Loopring"
     },
     "monerium": {
+      "access_token": "Access token",
+      "auth_failed": "Failed to authorize with Monerium",
+      "authorizing": "Authorizing with Monerium",
+      "connect": "Get access token",
+      "connected_as": "Connected as {email}",
       "description": "Used to augment Monerium EVM transactions with banking information.",
+      "disconnect": "Disconnect",
+      "disconnected": "Disconnected from Monerium.",
+      "error": "Monerium OAuth",
+      "instructions": "Connect with Monerium to keep your rotki data in sync with your account.",
+      "opening_browser": "Opening browser to complete Monerium authorization...",
+      "refresh_token": "Refresh token",
+      "submit_token": "Submit tokens",
+      "success": "Monerium OAuth",
       "title": "Monerium",
-      "understand": "I understand the risk",
-      "warning": "At the moment, Monerium uses basic authentication only, so these are not read-only credentials."
+      "token_required": "Both access and refresh tokens are required.",
+      "unknown_email": "unknown email",
+      "warning": "Authorize Monerium to allow rotki to enrich your transactions with banking context. Tokens are stored locally and used read-only.",
+      "website_url_missing": "Monerium OAuth website URL is not configured."
     },
     "need_premium": "Upgrade to premium to use this feature.",
     "no_services_found": "No services found",
@@ -2417,8 +2664,6 @@
       "hint": "Enter your OpenSea API key",
       "title": "Opensea"
     },
-    "replace_key": "Replace key",
-    "save_key": "Save key",
     "search": "Search for external services",
     "set": {
       "error": {
@@ -2426,14 +2671,6 @@
       },
       "success": {
         "message": "Successfully updated the key for {serviceName}"
-      }
-    },
-    "set_credential": {
-      "error": {
-        "message": "Error while settings external service credentials: {error}"
-      },
-      "success": {
-        "message": "Successfully updated the credentials for {serviceName}"
       }
     },
     "subtitle": "rotki connects to various service providers in order to obtain information such as historical prices or blockchain data. In certain cases rotki depends on these APIs for basic information, in which case you will need to provide an API key.",
@@ -2513,7 +2750,13 @@
           "non_empty": "Please enter the number of hours"
         }
       },
-      "title": "History Query Indicator"
+      "reset_dismissal_status": {
+        "button": "Reset dismissal status",
+        "subtitle": "Click the button to reset the dismissal status. All query progress indicators will be shown again immediately.",
+        "success": "Dismissal status has been reset successfully",
+        "title": "Reset dismissal status"
+      },
+      "title": "Progress Query Indicator on Dashboard"
     },
     "periodic_query": {
       "hint": "How often (in seconds) the backend will be checked for messages,",
@@ -2629,7 +2872,8 @@
       "validation": {
         "cannot_be_numeric_character": "The decimal separator cannot be numeric character",
         "cannot_be_the_same": "The decimal separator cannot be the same as the thousand separator",
-        "empty": "The decimal separator cannot be empty"
+        "empty": "The decimal separator cannot be empty",
+        "single_character": "The decimal separator must be a single character"
       }
     },
     "display_date_in_localtime": {
@@ -2639,10 +2883,20 @@
         "error": "Error setting the display date in local time setting"
       }
     },
+    "events_processing_frequency": {
+      "label": "Frequency in hours",
+      "subtitle": "How often the background task runs to automatically match exchange deposit/withdrawal events with on-chain transactions.",
+      "title": "Asset movement matching frequency",
+      "validation": {
+        "error": "Error setting asset movement matching frequency",
+        "invalid_frequency": "Frequency must be between {start} and {end} hours",
+        "non_empty": "Please enter the number of hours",
+        "success": "Asset movement matching frequency set to {frequency} hours"
+      }
+    },
     "evm_chains": {
       "deselect": "Deselect all chains",
-      "select": "Select all chains",
-      "title": "EVM Chains"
+      "select": "Select all chains"
     },
     "external_service_setting": {
       "label": {
@@ -2672,7 +2926,6 @@
     },
     "labels": {
       "btc_derivation_gap": "BTC derivation gap limit",
-      "chains_to_skip_detection": "EVM Chains for which to skip automatic detection",
       "csv_delimiter": "CSV export delimiter",
       "date_display_format": "Date display format",
       "date_input_format": "Date input format",
@@ -2724,6 +2977,18 @@
       }
     },
     "rpc_node_setting": {
+      "consensus_rpc": {
+        "api_key_message": "You need Beaconcha.in API Key or consensus layer client RPC to be set to see complete ETH staking information.",
+        "beaconchain_only": {
+          "description": "- You can see both current status (validator balances), and history of withdrawals and blocks.",
+          "title": "Beaconcha.in Api Key"
+        },
+        "consensus_rpc_only": {
+          "description": "You can only see current status (validator balances)",
+          "input_rpc": "Input RPC",
+          "title": "Consensus layer RPC"
+        }
+      },
       "subtitle": "Manage and view your RPC node.",
       "title": "RPC node setting"
     },
@@ -2738,7 +3003,8 @@
       "validation": {
         "cannot_be_numeric_character": "The thousand separator cannot be numeric character",
         "cannot_be_the_same": "The thousand separator cannot be the same as the decimal separator",
-        "empty": "The thousand separator cannot be empty"
+        "empty": "The thousand separator cannot be empty",
+        "single_character": "The thousand separator must be a single character"
       }
     },
     "title": "General Settings",
@@ -2782,7 +3048,7 @@
       },
       "decimal_separator": {
         "error": "Error setting decimal separator",
-        "success": "Decimal separator set to {decimalSeparator}"
+        "success": "Decimal separator set to \"{decimalSeparator}\""
       },
       "floating_precision": {
         "error": "Error setting floating precision to {precision}",
@@ -2791,7 +3057,7 @@
       },
       "thousand_separator": {
         "error": "Error setting thousand separator",
-        "success": "Thousand separator set to {thousandSeparator}"
+        "success": "Thousand separator set to \"{thousandSeparator}\""
       },
       "treat_eth2_as_eth": {
         "error": "Error change setting for treat ETH2 (Staked ETH) as ETH"
@@ -2810,6 +3076,7 @@
     }
   },
   "generate": {
+    "all_time": "All Time",
     "custom_selection": "Custom",
     "labels": {
       "end_date": "End Date",
@@ -2855,6 +3122,51 @@
     "github": {
       "subtitle": "Review our code and open issues",
       "title": "Github"
+    },
+    "report_issue": {
+      "dialog": {
+        "description": "Found a bug or have a feature request? Fill out the form below and choose how you'd like to submit it.",
+        "form": {
+          "description": {
+            "hint": "{count}/{max} characters",
+            "label": "Description"
+          },
+          "title": {
+            "hint": "{count}/{max} characters",
+            "label": "Title"
+          }
+        },
+        "submit_options": {
+          "copy_email": "Copy \"{email}\"",
+          "email": "Email",
+          "github": "GitHub",
+          "google_form": "Google Form",
+          "open_gmail": "Open Gmail",
+          "privacy_note": "GitHub and Google Form submissions are public. Use Email for private reports.",
+          "title": "Submit via"
+        },
+        "tips": {
+          "discord": {
+            "action": "Open Discord",
+            "channel": "#support",
+            "description": "Get quick help from our community in the {channel} channel, or you can DM our team.",
+            "title": "Need immediate help?"
+          },
+          "screenshot": {
+            "action": "Open Privacy Settings",
+            "description": "Before taking screenshots, enable privacy or scramble mode to hide sensitive data like balances and addresses.",
+            "enabled_with_mode": "{mode} enabled",
+            "private": "Private mode",
+            "scramble": "Scramble mode",
+            "semi_private": "Semi-private mode",
+            "title": "Taking screenshots?"
+          },
+          "title": "Tips"
+        },
+        "title": "Report an Issue"
+      },
+      "subtitle": "Report bugs or request features",
+      "title": "Report Issue"
     },
     "support": {
       "subtitle": "Join our active community and get support",
@@ -2951,6 +3263,10 @@
         "unmark_title": "Failed to remove token from spam assets list"
       },
       "hint": "The asset is marked as a spam asset. To be able to unignore this asset, you need to remove it from the spam assets list.",
+      "no_items": {
+        "description": "No assets selected to mark as spam",
+        "title": "No assets to mark as spam"
+      },
       "warning": {
         "manual_balances_message": "Cannot mark this asset(s) as spam because they are added as manual balances: {assets}",
         "manual_balances_title": "Some assets can't be marked as spam"
@@ -3286,8 +3602,10 @@
       "create_a_custom_asset": "Create a custom asset",
       "input_manual_price": "Add and use manual price",
       "label": "Label",
-      "price_asset": "Asset Price",
-      "tags": "Tags"
+      "price_asset": "in currency",
+      "price_asset_hint": "(e.g. USD, EUR, ETH)",
+      "tags": "Tags",
+      "use_fetched_price": "Use fetched price"
     },
     "type": {
       "liability": "Liability"
@@ -3395,6 +3713,7 @@
     "accounts_sub": {
       "bitcoin": "Bitcoin @:navigation_menu.accounts",
       "evm": "EVM @:navigation_menu.accounts",
+      "solana": "Solana @:navigation_menu.accounts",
       "substrate": "Substrate @:navigation_menu.accounts"
     },
     "api_keys": "API Keys",
@@ -3412,7 +3731,6 @@
     },
     "calendar": "Calendar",
     "dashboard": "Dashboard",
-    "defi": "DeFi",
     "defi_sub": {
       "airdrops": "Airdrops"
     },
@@ -3447,6 +3765,7 @@
       "account": "Account",
       "accounting": "Accounting",
       "database": "Database",
+      "evm": "EVM",
       "general": "General",
       "interface": "Interface-only",
       "modules": "Modules",
@@ -3478,6 +3797,8 @@
   },
   "nft_gallery": {
     "allow_domain": "Click this button to trust images from domain: ",
+    "api_key_required_message": "To view your NFTs, please configure your {link}.",
+    "api_key_required_title": "OpenSea API Key Required",
     "empty_filter": "No NFTs matching the filter parameters",
     "empty_subtitle": "No NFTs have been detected",
     "empty_title": "No NFTs detected",
@@ -3485,6 +3806,7 @@
     "fill_api_key": "Your NFTs data are being rate limited. Use your own {link} to fix it.",
     "loading": "Loading NFTs",
     "open_sea": "OpenSea Api Key",
+    "opensea_settings_link": "OpenSea API Key",
     "refresh_tooltip": "Reload NFTs",
     "select_account": "Select account",
     "select_collection": "Select collection",
@@ -3546,6 +3868,10 @@
     "backend": {
       "title": "Backend"
     },
+    "beaconchain_rate_limited": {
+      "message": "Beaconcha.in is rate limited{until}. The following query failed:\n{endpoints}\nCheck logs for more details.|Beaconcha.in is rate limited{until}. The following {count} queries failed:\n{endpoints}\n\nCheck logs for more details.",
+      "title": "Beaconcha.in Rate Limited"
+    },
     "binance_pairs_missing": {
       "action": "Configure pairs",
       "message": "Your Binance API key \"{name}\" is missing required market pairs configuration. This may cause rate limiting issues. Please configure the pairs you want to track.",
@@ -3559,18 +3885,25 @@
     },
     "deserialization_error": "We could not deserialize {count} assets for your accounts, please check the application logs for more information.",
     "gnosis_pay_session_key_expired": {
-      "replace_key": "Replace key",
       "title": "Gnosis Pay session key expired"
     },
     "missing_api_key": {
       "action": "Enter key",
+      "beaconchain": {
+        "message": "rotki cannot query ETH staking data because you don't have a Beaconcha.in API key configured. Press @.quote:notification_messages.missing_api_key.get_key to make one or @.quote:notification_messages.missing_api_key.action to add it in the app.",
+        "title": "{service} API key"
+      },
       "etherscan": {
-        "message": "Rotki queries for {location} chain are working slower because you dont have {location} {service} API key configured. Press @.quote:notification_messages.missing_api_key.get_key to make one or @.quote:notification_messages.missing_api_key.action to add it in the app.",
+        "message": "rotki queries for {location} chain are working slower because you don't have {location} {service} API key configured. Press @.quote:notification_messages.missing_api_key.get_key to make one or @.quote:notification_messages.missing_api_key.action to add it in the app.",
         "title": "{location} {service} API key"
       },
       "get_key": "Get API key",
+      "helius": {
+        "message": "Transaction queries for Solana will be slow because you don't have a Helius API key configured. Press @.quote:notification_messages.missing_api_key.get_key to make one or @.quote:notification_messages.missing_api_key.action to add it in the app.",
+        "title": "{service} API key for Solana"
+      },
       "thegraph": {
-        "message": "Rotki cannot query {location} data because you don't have {service} API key configured, or the API key you are using isn't authorized for {location}. Press @.quote:notification_messages.missing_api_key.get_key to make one or @.quote:notification_messages.missing_api_key.action to add it in the app. Read the docs {docs} for more information.",
+        "message": "rotki cannot query {location} data because you don't have {service} API key configured, or the API key you are using isn't authorized for {location}. Press @.quote:notification_messages.missing_api_key.get_key to make one or @.quote:notification_messages.missing_api_key.action to add it in the app. Read the docs {docs} for more information.",
         "title": "{service} API key for {location}"
       }
     },
@@ -3605,6 +3938,11 @@
     "unknown_asset_mapping": {
       "message": "We could not find a mapping for {groupCount} exchange assets",
       "title": "Missing mappings for some exchanges"
+    },
+    "unmatched_asset_movements": {
+      "action": "Review",
+      "message": "{count} asset movement could not be automatically matched with a corresponding on-chain event. Please review and match manually.|{count} asset movements could not be automatically matched with corresponding on-chain events. Please review and match them manually.",
+      "title": "Unmatched Asset Movement|Unmatched Asset Movements"
     }
   },
   "notification_popup": {
@@ -3689,6 +4027,31 @@
   "page_not_found": {
     "back": "Back to dashboard",
     "title": "Oops, the page could not be found."
+  },
+  "password_confirmation_dialog": {
+    "description": "To ensure you remember your password for {username}, please confirm it now. This is required periodically when using auto-login.",
+    "hint_prefix": "(Hint) Password length: ",
+    "password_label": "Password",
+    "title": "Confirm Your Password",
+    "validation": {
+      "incorrect_password": "Incorrect password. Please try again.",
+      "non_empty_password": "Please provide a password"
+    }
+  },
+  "password_confirmation_setting": {
+    "disable_warning": {
+      "confirm": "I understand, disable it",
+      "message": "Your auto-login password is stored only on this device. Please ensure you remember your password or have it stored securely elsewhere before disabling periodic confirmation. If you forget your password, you will lose access to your account.",
+      "title": "Disable Password Confirmation?"
+    },
+    "enable_label": "Enable periodic password confirmation",
+    "hint": "Enter a value between 1 and 14 days",
+    "label": "Password confirmation interval (days)",
+    "subtitle": "Configure how often you need to confirm your password when using auto-login. This helps ensure you remember your password.",
+    "title": "Password Confirmation",
+    "validation": {
+      "range": "Value must be between 1 and 14 days"
+    }
   },
   "percentage_display": {
     "symbol": "%"
@@ -3970,7 +4333,8 @@
       "delete": "Delete Key",
       "replace": "Replace Key",
       "setup": "Setup",
-      "sync": "Allow data sync with rotki Server"
+      "sync": "Allow data sync with rotki Server",
+      "sync_hint": "Your data is encrypted before being synced to the rotki server and cannot be read by anyone except you."
     },
     "chart_limit": {
       "description": "Experience the full potential of rotki with a Premium subscription.",
@@ -3982,8 +4346,12 @@
       "title": "Delete rotki premium keys?"
     },
     "error": {
+      "device_limit": {
+        "learn_more": "Learn more"
+      },
       "removing_failed": "Deleting the keys was not successful",
-      "setting_failed": "Setting the keys was not successful"
+      "setting_failed": "Setting the keys was not successful",
+      "setup_failed_description": "Failed to setup your rotki Premium subscription, reason: {error}"
     },
     "fields": {
       "api_key": "API Key",
@@ -4158,17 +4526,20 @@
       },
       "show_issues": "Show Issues"
     },
+    "binance_markets_alert": "The following Binance exchange(s) do not have market pairs configured: \n{exchanges}.\n\n Please configure market pairs before generating a report.",
     "error": {
       "subtitle": "The report generation was not possible due to an error",
       "title": "Profit and Loss Report Generation"
     },
+    "go_to_exchanges": "Go to Exchange Settings",
+    "go_to_history": "Go to History Events",
     "loading": "Please wait while your PnL report is loading",
     "loading_hint": "Your report generation might take a while depending on the amount of trades and actions you performed during the selected period.",
     "loading_message": "Please wait while your report is generated...",
+    "out_of_sync_alert": "Your history events data is out of sync. Please update your history events before generating a report.",
+    "processing_alert": "History events are currently being processed. Please wait until processing is complete.",
     "report_period": "Report starting from {start} to {end}",
-    "settings_tooltip": "Open the accounting settings",
-    "upgrade": "{processed} total events have been processed starting from {start}.",
-    "upgrade2": "The limit of the free version has been reached. To get the full report please upgrade to {link}"
+    "settings_tooltip": "Open the accounting settings"
   },
   "profit_loss_reports": {
     "columns": {
@@ -4207,7 +4578,8 @@
     "progress": "{progress} %"
   },
   "protocol_icon": {
-    "contains_manual": "Includes manual balance"
+    "contains_manual": "Includes manual balance",
+    "ds_proxy": "DS Proxy:"
   },
   "purge_selector": {
     "centralized_exchange_to_clear": {
@@ -4245,6 +4617,11 @@
   "reports_table": {
     "delete": "Delete report",
     "load": "Load report"
+  },
+  "request_queue": {
+    "loading_active": "Loading ({active} active)",
+    "loading_active_and_queued": "Loading ({active} active, {queued} queued)",
+    "loading_queued": "Loading ({queued} queued)"
   },
   "rounding_settings": {
     "amount_rounding": "Amount Rounding",
@@ -4318,14 +4695,57 @@
       "sort_desc_tooltip": "Change sort to descending"
     }
   },
+  "sponsorship": {
+    "sponsor": "Sponsor our next release!",
+    "sponsored_by": "Sponsored by:",
+    "version": "Version {version}"
+  },
   "staking": {
     "eth2": "ETH",
     "kraken": "Kraken",
+    "lido_csm": "Lido CSM",
     "liquity": "Liquity"
   },
   "staking_page": {
     "dropdown_hint": "Select a location to see more details",
     "dropdown_label": "Select location",
+    "lido_csm": {
+      "description": "Track the node operators you registered in the Lido CSM program so rotki can pull their bond balances directly from the accounting contract.",
+      "form": {
+        "address_hint": "Select the ETH address that collects rewards or posts collateral for the node operator.",
+        "address_label": "Tracked address",
+        "description": "Pair an ETH address with the numeric node operator identifier from Lido.",
+        "node_operator_hint": "Use the numeric ID assigned by Lido.",
+        "node_operator_label": "Node operator ID",
+        "submit": "Add node operator",
+        "title": "Track a node operator",
+        "validation": {
+          "invalid_id": "Use a non-negative whole number"
+        }
+      },
+      "messages": {
+        "add_failed": "Failed to add the node operator: {message}",
+        "delete_failed": "Failed to remove the node operator: {message}",
+        "fetch_failed": "Failed to query the Lido CSM node operators: {message}"
+      },
+      "table": {
+        "actions": "Actions",
+        "address": "Address",
+        "bond_claimable": "Claimable bond",
+        "bond_current": "Current bond",
+        "bond_required": "Required bond",
+        "description": "rotki will use the following pairs to read the stETH staking bond from the accounting contract.",
+        "empty": "No node operators are tracked yet.",
+        "keys_total": "Deposited validators",
+        "node_operator": "Node operator ID",
+        "not_available": "N/A",
+        "operator_type": "Operator type",
+        "refresh_tooltip": "Refresh Lido CSM metrics",
+        "remove": "Remove",
+        "rewards_pending": "Rewards"
+      },
+      "title": "Lido CSM node operators"
+    },
     "page": {
       "description": "Select one of the supported locations to see more information about your staked assets.",
       "title": "Staking Locations"
@@ -4362,6 +4782,7 @@
   "swap_event_form": {
     "add_asset": "Add asset",
     "fee_notes": "Fee notes",
+    "fee_notes_indexed": "Fee notes #{index}",
     "receive_notes": "Receive notes",
     "spend_notes": "Spend notes",
     "unique_id": "Unique Identifier",
@@ -4477,7 +4898,7 @@
     "visible_timeframes": "Visible Timeframes"
   },
   "toggle_location_link": {
-    "disabled": "This functionality is available only for evm chains",
+    "disabled": "This functionality is available only for EVM chains or solana",
     "limited": "Only assets available in {location} will be displayed.",
     "unlimited": "All supported assets will be displayed."
   },
@@ -4573,7 +4994,8 @@
       "add_event_here": "Add new event here",
       "delete_transaction": "Delete transaction & events",
       "redecode_events": "Redecode events",
-      "redecode_page": "Redecode page"
+      "redecode_page": "Redecode page",
+      "redecode_with_options": "Redecode with options"
     },
     "cache_refresh": {
       "refreshing": "Refreshing protocol cache data"
@@ -4583,28 +5005,48 @@
       "delete": {
         "error": {
           "message": "Failed: {message}",
-          "title": "Delete EVM transaction"
+          "title": "Delete transaction"
         },
         "message": "Are you sure you want to delete this transaction and its events? You will have to purge all transactions or add by the transaction hash to restore them.",
         "title": "Delete transaction and events"
       }
     },
     "events": {
+      "accounting_rule": {
+        "different_types_error": "Cannot create an accounting rule for events with different types or subtypes. Please select events with the same event type and subtype combination.",
+        "error": "Accounting Rule Error",
+        "incompatible_selection": "Incompatible Event Selection",
+        "no_events_found": "No events found for the selected IDs."
+      },
       "actions": {
         "delete": "Delete event",
         "edit": "Edit event"
       },
       "confirmation": {
         "delete": {
+          "complete_transaction_multiple": "You have selected all events from {count} complete EVM transactions. Deleting all events will delete the entire transactions.",
+          "complete_transaction_options": "Would you like to delete the transaction(s) or ignore them in accounting?",
+          "complete_transaction_single": "You have selected all events from a complete EVM transaction. Deleting all events will delete the entire transaction.",
+          "complete_transaction_title": "Complete Transaction Selected",
+          "delete_transaction": "Delete Transaction",
           "message": "Are you sure you want to delete the event?",
+          "message_multiple": "Are you sure you want to delete {count} selected events?",
+          "partial_swap_title": "Partial Swap Selection",
+          "partial_swap_warning": "You have selected {selectedCount} out of {totalCount} events from {groupCount} swap group(s). Deleting any event from a swap will delete the entire swap group. All {totalCount} events will be deleted. Do you want to continue?",
           "title": "Delete Event"
         },
         "ignore": {
           "action": "Yes, Ignore the Transaction",
+          "action_short": "Ignore in Accounting",
+          "confirm": "Confirm Ignore",
           "message": "A transaction requires at least 1 event. Do you want to ignore the transaction in accounting instead?",
-          "title": "Cannot Delete Event"
+          "message_multiple": "Are you sure you want to ignore {count} transaction(s) in accounting?",
+          "title": "Ignore Transaction in Accounting"
         },
         "reset": {
+          "custom_events_title": "Custom Events",
+          "indexer_order_hint": "Change the order of indexers used when redecoding this transaction. This does not affect your settings.",
+          "indexer_order_title": "Indexer Order",
           "message": "There are custom events in this transaction",
           "options": {
             "keep_custom_events": "Don't remove my custom events",
@@ -4613,6 +5055,14 @@
         }
       },
       "customized_event": "Customized event",
+      "delete": {
+        "error": {
+          "message": "Failed to delete events",
+          "title": "Delete Failed"
+        },
+        "success": "{count} event deleted successfully | {count} events deleted successfully",
+        "title": "Delete Events"
+      },
       "dialog": {
         "add": {
           "title": "Add Event"
@@ -4734,12 +5184,6 @@
         "notes": {
           "hint": "[Optional] Additional notes to store for the action"
         },
-        "product": {
-          "label": "Product",
-          "validation": {
-            "valid": "The product field is invalid, fill with available products"
-          }
-        },
         "resulting_combination": {
           "label": "Resulting combination",
           "unknown": "The resulting combination is unknown, this event won't be processed correctly."
@@ -4748,6 +5192,12 @@
           "label": "Sequence Index",
           "validation": {
             "non_empty": "The sequence index field cannot be empty."
+          }
+        },
+        "signature": {
+          "validation": {
+            "non_empty": "The signature field cannot be empty.",
+            "valid": "The signature is invalid, fill it with valid signature"
           }
         },
         "tx_hash": {
@@ -4774,19 +5224,39 @@
         }
       },
       "headers": {
-        "asset_movement_event": "{verb} {location} {txHash}",
+        "asset_movement_event": "{verb} {location} {txRef}",
         "asset_movement_event_deposit": "Deposit to",
         "asset_movement_event_withdraw": "Withdraw from",
         "eth_block_event": "Block {blockNumber} produced",
-        "eth_deposit_event": "Deposit events {txHash}",
+        "eth_deposit_event": "Deposit events {txRef}",
         "eth_withdrawal_event": "Withdrawal for validator {validatorIndex}",
         "event_identifier": "Event information",
-        "evm_event": "Transaction {txHash}",
+        "evm_event": "Transaction {txRef}",
         "history_event": "{location} event",
         "swap_event": "Swap on {location}"
       },
+      "ignore": {
+        "error": {
+          "message": "Failed to ignore events in accounting",
+          "title": "Ignore Failed"
+        },
+        "success": "{count} transaction ignored successfully | {count} transactions ignored successfully",
+        "title": "Ignore Transactions"
+      },
       "loading": "Loading events...",
       "no_data": "Events are hidden because they contain ignored assets",
+      "note": {
+        "merchant_code": "Merchant Code: {code}"
+      },
+      "selection_mode": {
+        "create_rule": "Set custom accounting rule",
+        "delete_selected": "Delete selected events",
+        "ignore": "Ignore in accounting",
+        "no_events": "There is no event to select",
+        "selected_count": "{count} selected",
+        "tooltip": "Select multiple events",
+        "unignore": "Unignore in accounting"
+      },
       "show_missing_acquisition": "Showing event for missing acquisition",
       "show_negative_balance": "Showing event that cause negative balance",
       "skipped": {
@@ -4809,6 +5279,16 @@
           }
         }
       },
+      "unsupported": {
+        "description": "This transaction only contains a gas fee with no other events. This typically means the protocol is not yet supported.",
+        "location": "- Location: {location}",
+        "more_detail": "More detail:",
+        "placeholder": "[Add more context here]",
+        "report_action": "Report Transaction",
+        "report_description_intro": "I found a transaction that appears to be unsupported (only gas fee event).",
+        "title": "Unsupported Transaction",
+        "tx_hash": "- Tx Hash: {hash}"
+      },
       "view": {
         "hide": "Hide events",
         "load_more": "Load more events ({length})",
@@ -4826,7 +5306,7 @@
         "true": "All transactions have been processed."
       },
       "decoding": {
-        "all": "Redecoding EVM transactions",
+        "all": "Redecoding transactions",
         "all_done": "Redecoding finished",
         "done": "Decoded {count} transaction | Decoded {count} transactions",
         "eth_block_events": "Redecoding ETH block events",
@@ -4855,11 +5335,10 @@
       "match_exact_filter": "Should match exact filter",
       "match_exact_filter_hint": "If enabled, it will show only the events that match the filter, excluding the other events in the same group.",
       "notes": "filter by notes content",
-      "product": "filter by product",
       "protocol": "filter by the protocol of the events",
       "show_ignored_assets": "Show entries with ignored assets",
       "start_date": "filter by the start date of the transaction period",
-      "tx_hash": "filter by tx hash(es)",
+      "tx_hash": "filter by tx hash(es) or signature(s)",
       "validator_index": "filter by validator index(es)"
     },
     "form": {
@@ -4869,6 +5348,7 @@
           "non_empty": "The account field cannot be empty"
         }
       },
+      "no_accounts": "No accounts to add the transaction. Please add an account first before continuing.",
       "tx_hash": {
         "validation": {
           "non_empty": "The tx hash field cannot be empty.",
@@ -4926,9 +5406,14 @@
     },
     "refresh_tooltip": "Fetch latest events",
     "repulling": {
-      "action": "Re-Pull Transaction",
+      "action": "Re-Pull Events",
+      "add_account_link": "add a blockchain account",
+      "add_exchange_link": "add an exchange",
       "address_hint": "Leave it empty to re-pull transactions from all addresses",
-      "title": "Re-Pulling Transactions"
+      "finished": "Repulling events finished",
+      "no_accounts": "You don't have any blockchain accounts registered. Please {link} first.",
+      "no_exchanges": "You don't have any exchanges connected. Please {link} first.",
+      "repulling": "Repulling events"
     },
     "title": "History Events",
     "unignore": "Unignore events in Accounting"
@@ -4972,9 +5457,13 @@
     "restart": "rotki will restart in a moment to apply the update."
   },
   "upgrade_row": {
-    "events": "Processed {limit} out of {total} {label} from {from} until {to}. To view more please upgrade to {link}",
+    "events": "@:upgrade_row.first_line To view more please upgrade to {link}",
+    "events_premium": "@:upgrade_row.first_line To view more please {link}",
+    "first_line": "Processed {limit} out of {total} {label} from {from} until {to}.",
     "rotki_premium": "rotki Premium",
-    "upgrade": "Displaying {limit} out of {total} {label}. To view more please upgrade to {link}"
+    "upgrade": "Displaying {limit} out of {total} {label}. To view more please upgrade to {link}",
+    "upgrade_premium": "Displaying {limit} out of {total} {label}. To view more please {link}",
+    "upgrade_your_plan": "upgrade your plan"
   },
   "user_dropdown": {
     "change_privacy_mode": {

@@ -1,12 +1,14 @@
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Final
 
+from rotkehlchen.assets.utils import asset_normalized_value
 from rotkehlchen.chain.arbitrum_one.decoding.interfaces import ArbitrumDecoderInterface
 from rotkehlchen.chain.arbitrum_one.modules.umami.constants import (
     CPT_UMAMI,
     UMAMI_STAKING_CONTRACT,
 )
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import (
     DEPOSIT_TOPIC,
     STAKE_TOPIC,
@@ -15,13 +17,11 @@ from rotkehlchen.chain.evm.constants import (
 )
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -29,7 +29,7 @@ from rotkehlchen.types import ChecksumEvmAddress
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -48,7 +48,7 @@ class UmamiDecoder(ArbitrumDecoderInterface):
     def __init__(
             self,
             evm_inquirer: 'ArbitrumOneInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -132,7 +132,7 @@ class UmamiDecoder(ArbitrumDecoderInterface):
             fee_event_type=HistoryEventType.WITHDRAWAL,
         )
 
-    def _decode_umami_vault_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_umami_vault_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode umami vault deposit/withdraw events.
 
         A deposit/withdraw consists of two transactions, a request tx and an execution tx.
@@ -208,7 +208,7 @@ class UmamiDecoder(ArbitrumDecoderInterface):
                 ordered_events=ordered_events,
                 events_list=context.decoded_events,
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if (
             context.tx_log.topics[0] == ERC20_OR_ERC721_TRANSFER and
@@ -219,7 +219,7 @@ class UmamiDecoder(ArbitrumDecoderInterface):
                 amount=int.from_bytes(context.tx_log.data[0:32]),
                 asset=vault_asset,
             )
-            return DecodingOutput(action_items=[ActionItem(
+            return EvmDecodingOutput(action_items=[ActionItem(
                 action='transform',
                 from_event_type=HistoryEventType.RECEIVE,
                 from_event_subtype=HistoryEventSubType.NONE,
@@ -231,9 +231,9 @@ class UmamiDecoder(ArbitrumDecoderInterface):
                 to_notes=f'Receive {receive_amount} {vault_asset.symbol} after a deposit in Umami',
             )])
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_umami_staking_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_umami_staking_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode stake/unstake/reward events."""
         for event in context.decoded_events:
             asset_symbol = event.asset.resolve_to_asset_with_symbol().symbol
@@ -261,7 +261,7 @@ class UmamiDecoder(ArbitrumDecoderInterface):
                     event.counterparty = CPT_UMAMI
                     event.notes = f'Unstake {event.amount} {asset_symbol} from Umami'
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 
@@ -269,7 +269,7 @@ class UmamiDecoder(ArbitrumDecoderInterface):
         return {
             token.evm_address: (self._decode_umami_vault_events,)
             for token in GlobalDBHandler.get_evm_tokens(
-                    chain_id=self.evm_inquirer.chain_id,
+                    chain_id=self.node_inquirer.chain_id,
                     protocol=CPT_UMAMI,
             )
         } | {UMAMI_STAKING_CONTRACT: (self._decode_umami_staking_events,)}

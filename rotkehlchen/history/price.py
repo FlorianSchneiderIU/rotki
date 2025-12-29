@@ -11,18 +11,16 @@ from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.chain.evm.decoding.uniswap.constants import CPT_UNISWAP_V2, CPT_UNISWAP_V3
 from rotkehlchen.chain.evm.decoding.uniswap.v3.utils import get_uniswap_v3_position_price
 from rotkehlchen.chain.evm.utils import lp_price_from_uniswaplike_pool_contract
-from rotkehlchen.chain.polygon_pos.constants import POLYGON_POS_POL_HARDFORK
 from rotkehlchen.constants import HOUR_IN_SECONDS, ONE
 from rotkehlchen.constants.assets import (
     A_ETH,
     A_ETH2,
     A_EUR,
     A_KFEE,
-    A_POL,
-    A_POLYGON_POS_MATIC,
     A_USD,
 )
 from rotkehlchen.constants.prices import ZERO_PRICE
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.price import NoPriceForGivenTimestamp, PriceQueryUnsupportedAsset
@@ -46,26 +44,28 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-def query_usd_price_or_use_default(
+def query_price_or_use_default(
         asset: Asset,
         time: Timestamp,
         default_value: FVal,
         location: str,
 ) -> Price:
+    """Query price in the user's main currency, or use default if unavailable"""
+    main_currency = CachedSettings().main_currency
     try:
-        usd_price = PriceHistorian().query_historical_price(
+        price = PriceHistorian().query_historical_price(
             from_asset=asset,
-            to_asset=A_USD,
+            to_asset=main_currency,
             timestamp=time,
         )
     except (RemoteError, NoPriceForGivenTimestamp):
         log.error(
-            f'Could not query usd price for {asset.identifier} and time {time} '
-            f'when processing {location}. Assuming price of ${default_value!s}',
+            f'Could not query price for {asset.identifier} and time {time} in {main_currency=} '
+            f'when processing {location}. Assuming price of {default_value!s}',
         )
-        usd_price = Price(default_value)
+        price = Price(default_value)
 
-    return usd_price
+    return price
 
 
 class PriceHistorian:
@@ -195,14 +195,6 @@ class PriceHistorian:
                 max_seconds_distance=max_seconds_distance,
             )
             return Price(usd_price * usd_to_target_price) if usd_to_target_price is not None else None  # noqa: E501
-
-        if from_asset == A_POLYGON_POS_MATIC and timestamp > POLYGON_POS_POL_HARDFORK:
-            return PriceHistorian._get_cached_price_or_query(
-                from_asset=A_POL,
-                to_asset=to_asset,
-                timestamp=timestamp,
-                max_seconds_distance=max_seconds_distance,
-            )
 
         if GlobalDBHandler.asset_in_collection(collection_id=240, asset_id=from_asset.identifier):  # part of the EURe collection # noqa: E501  # todo: Super hacky. Figure out a way to generalize
             return PriceHistorian._get_cached_price_or_query(

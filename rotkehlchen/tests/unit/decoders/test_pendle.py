@@ -3,9 +3,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE_V3
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.pendle.constants import CPT_PENDLE
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
@@ -15,6 +15,7 @@ from rotkehlchen.globaldb.cache import globaldb_set_general_cache_values
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import CacheType, Location, TimestampMS, deserialize_evm_tx_hash
 
@@ -54,7 +55,7 @@ def test_lock_pendle(ethereum_inquirer, ethereum_accounts):
     user_address, timestamp, gas_amount, approval_amount, out_amount, locked_amount, lock_timestamp = ethereum_accounts[0], TimestampMS(1742478515000), '0.00118595784570676', '11.106239093069566243', '0.003254870108208791', '1110.62390930695662426', 1747267200  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -66,7 +67,7 @@ def test_lock_pendle(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -79,7 +80,7 @@ def test_lock_pendle(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_PENDLE,
             address=string_to_evm_address('0x4f30A9D41B80ecC5B94306AB4364951AE3170210'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=213,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -93,7 +94,7 @@ def test_lock_pendle(ethereum_inquirer, ethereum_accounts):
             extra_data={'lock_time': 1747267200},
             address=string_to_evm_address('0x4f30A9D41B80ecC5B94306AB4364951AE3170210'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=214,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -117,7 +118,7 @@ def test_unlock_pendle(ethereum_inquirer, ethereum_accounts):
     user_address, timestamp, gas_amount, withdrawn_amount = ethereum_accounts[0], TimestampMS(1742472839000), '0.000059142779024945', '4497.51803084'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -129,7 +130,7 @@ def test_unlock_pendle(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=411,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -157,7 +158,7 @@ def test_buy_pt(ethereum_inquirer, ethereum_accounts):
     user_address, timestamp, gas_amount, approval_amount, out_amount, in_amount, interest_amount = ethereum_accounts[0], TimestampMS(1742355155000), '0.00033753258899598', '50.014942', '5001.535682', '5066.377589', '1.535939'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -169,7 +170,7 @@ def test_buy_pt(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=230,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -181,7 +182,7 @@ def test_buy_pt(ethereum_inquirer, ethereum_accounts):
             notes=f'Set aEthUSDC spending approval of {user_address} by 0x888888888889758F76e7103c6CbF23ABbF58F946 to {approval_amount}',  # noqa: E501
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=231,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -194,7 +195,7 @@ def test_buy_pt(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_AAVE_V3,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=232,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -208,7 +209,7 @@ def test_buy_pt(ethereum_inquirer, ethereum_accounts):
             extra_data={'market': '0x8539B41CA14148d1F7400d399723827a80579414'},
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=233,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -231,7 +232,7 @@ def test_return_pt(ethereum_inquirer, ethereum_accounts, pendle_cache):
     tx_hash = deserialize_evm_tx_hash('0xcdd9f5254bf8d451a924f350e325eae55d4fadba52d277e47d1218ce08108c5b')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1722695627000)),
         location=Location.ETHEREUM,
@@ -243,7 +244,7 @@ def test_return_pt(ethereum_inquirer, ethereum_accounts, pendle_cache):
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=215,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -255,7 +256,7 @@ def test_return_pt(ethereum_inquirer, ethereum_accounts, pendle_cache):
         address=(pendle_router := string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946')),  # noqa: E501
         notes=f'Set PT-pufETH-26SEP2024 spending approval of {user_address} by {pendle_router} to {approve_amount}',  # noqa: E501
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=216,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -268,7 +269,7 @@ def test_return_pt(ethereum_inquirer, ethereum_accounts, pendle_cache):
         counterparty=CPT_PENDLE,
         address=string_to_evm_address('0xA54FC268101c8b97DE19eF3141d34751a11996B2'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=217,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -294,7 +295,7 @@ def test_buy_yt(ethereum_inquirer, ethereum_accounts):
     user_address, timestamp, gas_amount, out_amount, in_amount = ethereum_accounts[0], TimestampMS(1741190135000), '0.000361416310494255', '0.016', '0.11143761'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -306,7 +307,7 @@ def test_buy_yt(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -320,7 +321,7 @@ def test_buy_yt(ethereum_inquirer, ethereum_accounts):
             extra_data={'market': '0x70B70Ac0445C3eF04E314DFdA6caafd825428221'},
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -348,7 +349,7 @@ def test_sell_yt(ethereum_inquirer, ethereum_accounts):
     user_address, timestamp, gas_amount, revoke_amount, out_amount, in_amount = ethereum_accounts[0], TimestampMS(1742901911000), '0.00024787188908118', '0', '5.98230108', '0.00114182'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -360,7 +361,7 @@ def test_sell_yt(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=252,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -372,7 +373,7 @@ def test_sell_yt(ethereum_inquirer, ethereum_accounts):
             notes=f'Revoke YT-LBTC-27MAR2025 spending approval of {user_address} by 0x888888888889758F76e7103c6CbF23ABbF58F946',  # noqa: E501
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=253,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -385,7 +386,7 @@ def test_sell_yt(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_PENDLE,
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=254,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -403,6 +404,7 @@ def test_sell_yt(ethereum_inquirer, ethereum_accounts):
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0xCA9CE67D4E2d19a5aa9C1c3EB5BfDaec71c271C7']])
 def test_add_liquidity(base_inquirer, base_accounts):
     tx_hash = deserialize_evm_tx_hash('0x04ca9cb81658c528c2a026d8aa9df5798b473d3a8be8e0215ed3efd444a89456')  # noqa: E501
@@ -413,7 +415,7 @@ def test_add_liquidity(base_inquirer, base_accounts):
     user_address, timestamp, gas_amount, out_amount, in_amount = base_accounts[0], TimestampMS(1743007437000), '0.000000641175932399', '222', '113.156787685931457114'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -425,7 +427,7 @@ def test_add_liquidity(base_inquirer, base_accounts):
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=797,
             timestamp=timestamp,
             location=Location.BASE,
@@ -438,7 +440,7 @@ def test_add_liquidity(base_inquirer, base_accounts):
             counterparty=CPT_PENDLE,
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=809,
             timestamp=timestamp,
             location=Location.BASE,
@@ -467,7 +469,7 @@ def test_swap_using_kyber(ethereum_inquirer, ethereum_accounts):
     user_address, timestamp, gas_amount, revoke_amount, out_amount, in_amount = ethereum_accounts[0], TimestampMS(1743012491000), '0.00020274888980646', '0', '6.453525486228687704', '7.457926'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -479,7 +481,7 @@ def test_swap_using_kyber(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=958,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -491,7 +493,7 @@ def test_swap_using_kyber(ethereum_inquirer, ethereum_accounts):
             notes=f'Revoke EIGEN spending approval of {user_address} by 0x888888888889758F76e7103c6CbF23ABbF58F946',  # noqa: E501
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmSwapEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=959,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -503,7 +505,7 @@ def test_swap_using_kyber(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_PENDLE,
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmSwapEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=960,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -531,7 +533,7 @@ def test_swap_using_kyber_2(ethereum_inquirer, ethereum_accounts):
     user_address, timestamp, gas_amount, out_amount, in_amount = ethereum_accounts[0], TimestampMS(1743064667000), '0.00010481829185758', '5.634264087233128405', '0.00424279429101785'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -543,7 +545,7 @@ def test_swap_using_kyber_2(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmSwapEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -555,7 +557,7 @@ def test_swap_using_kyber_2(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_PENDLE,
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmSwapEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -582,7 +584,7 @@ def test_swap_using_odos(ethereum_inquirer, ethereum_accounts):
     user_address, timestamp, gas_amount, out_amount, in_amount = ethereum_accounts[0], TimestampMS(1743083231000), '0.000421634677180424', '307.491735', '307.738865329882018479'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -594,7 +596,7 @@ def test_swap_using_odos(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmSwapEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -606,7 +608,7 @@ def test_swap_using_odos(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_PENDLE,
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmSwapEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -629,7 +631,7 @@ def test_mint_pt_yt(ethereum_inquirer, ethereum_accounts):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     user_address, timestamp, gas_amount, token_amount = ethereum_accounts[0], TimestampMS(1743421847000), '0.0002063598850732', '80028.616468026207624921'  # noqa: E501
     expected_events = [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -641,7 +643,7 @@ def test_mint_pt_yt(ethereum_inquirer, ethereum_accounts):
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -654,7 +656,7 @@ def test_mint_pt_yt(ethereum_inquirer, ethereum_accounts):
         counterparty=CPT_PENDLE,
         address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -667,7 +669,7 @@ def test_mint_pt_yt(ethereum_inquirer, ethereum_accounts):
         counterparty=CPT_PENDLE,
         address=ZERO_ADDRESS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=3,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -690,7 +692,7 @@ def test_mint_sy(ethereum_inquirer, ethereum_accounts):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     user_address, timestamp, gas_amount, approval_amount, token_amount = ethereum_accounts[0], TimestampMS(1743431867000), '0.0001158157', '0.631466876977976971', '0.1'  # noqa: E501
     expected_events = [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -702,7 +704,7 @@ def test_mint_sy(ethereum_inquirer, ethereum_accounts):
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=228,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -714,7 +716,7 @@ def test_mint_sy(ethereum_inquirer, ethereum_accounts):
         notes=f'Set USDe spending approval of 0xf7Ae4ec5f1f5813fBA503Dd98fc42633fAff6c2e by 0x888888888889758F76e7103c6CbF23ABbF58F946 to {approval_amount}',  # noqa: E501
         address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=229,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -727,7 +729,7 @@ def test_mint_sy(ethereum_inquirer, ethereum_accounts):
         counterparty=CPT_PENDLE,
         address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=230,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -750,7 +752,7 @@ def test_redeem_sy(ethereum_inquirer, ethereum_accounts):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     user_address, timestamp, gas_amount, approval_amount, out_amount, in_amount = ethereum_accounts[0], TimestampMS(1720253675000), '0.00066537646653504', '0.000067300701529823', '0.006730070152982251', '0.006639128234010705'  # noqa: E501
     expected_events = [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -762,7 +764,7 @@ def test_redeem_sy(ethereum_inquirer, ethereum_accounts):
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -774,7 +776,7 @@ def test_redeem_sy(ethereum_inquirer, ethereum_accounts):
         notes=f'Set SY pufETH spending approval of {user_address} by 0x888888888889758F76e7103c6CbF23ABbF58F946 to {approval_amount}',  # noqa: E501
         address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=3,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -787,7 +789,7 @@ def test_redeem_sy(ethereum_inquirer, ethereum_accounts):
         counterparty=CPT_PENDLE,
         address=string_to_evm_address('0x253008ba4aE2f3E6488DC998a5321D4EB1a0c905'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=4,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -810,7 +812,7 @@ def test_redeem_pt_yt(ethereum_inquirer, ethereum_accounts):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     user_address, timestamp, gas_amount, out_amount, in_amount = ethereum_accounts[0], TimestampMS(1743426959000), '0.00045821389373662', '20000.969967756672130503', '19995.89929'  # noqa: E501
     expected_events = [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -822,7 +824,7 @@ def test_redeem_pt_yt(ethereum_inquirer, ethereum_accounts):
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=148,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -834,7 +836,7 @@ def test_redeem_pt_yt(ethereum_inquirer, ethereum_accounts):
         notes=f'Revoke PT-USR-29MAY2025 spending approval of {user_address} by 0x888888888889758F76e7103c6CbF23ABbF58F946',  # noqa: E501
         address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=150,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -846,7 +848,7 @@ def test_redeem_pt_yt(ethereum_inquirer, ethereum_accounts):
         notes=f'Revoke YT-USR-29MAY2025 spending approval of {user_address} by 0x888888888889758F76e7103c6CbF23ABbF58F946',  # noqa: E501
         address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=151,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -859,7 +861,7 @@ def test_redeem_pt_yt(ethereum_inquirer, ethereum_accounts):
         counterparty=CPT_PENDLE,
         address=string_to_evm_address('0x77DE4Be22Ecc633416D79371eF8e861Fb1d2cC39'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=152,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -872,7 +874,7 @@ def test_redeem_pt_yt(ethereum_inquirer, ethereum_accounts):
         counterparty=CPT_PENDLE,
         address=string_to_evm_address('0x77DE4Be22Ecc633416D79371eF8e861Fb1d2cC39'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=153,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -895,7 +897,7 @@ def test_exit_post_exp_to_token(ethereum_inquirer, ethereum_accounts):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     user_address, timestamp, gas_amount, out_amount, in_amount = ethereum_accounts[0], TimestampMS(1743422567000), '0.00031448812502006', '0.791978947364813871', '0.000834450373694896'  # noqa: E501
     expected_events = [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -907,7 +909,7 @@ def test_exit_post_exp_to_token(ethereum_inquirer, ethereum_accounts):
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=536,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -919,7 +921,7 @@ def test_exit_post_exp_to_token(ethereum_inquirer, ethereum_accounts):
         notes=f'Revoke PENDLE-LPT spending approval of {user_address} by 0x888888888889758F76e7103c6CbF23ABbF58F946',  # noqa: E501
         address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=537,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -932,7 +934,7 @@ def test_exit_post_exp_to_token(ethereum_inquirer, ethereum_accounts):
         counterparty=CPT_PENDLE,
         address=string_to_evm_address('0x00b321D89A8C36B3929f20B7955080baeD706D1B'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=538,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -949,6 +951,7 @@ def test_exit_post_exp_to_token(ethereum_inquirer, ethereum_accounts):
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0xaC28b5A163eD3265c5d76809aF39955Da27B8430']])
 def test_remove_liquidity(base_inquirer, base_accounts, pendle_cache):
     tx_hash = deserialize_evm_tx_hash('0x60ab64b9c8c560ffccd2bfbf5411be2efdd8d241296d3bfe778d905001db663d')  # noqa: E501
@@ -959,7 +962,7 @@ def test_remove_liquidity(base_inquirer, base_accounts, pendle_cache):
     user_address, timestamp, gas_amount, approve_amount, out_amount, in_amount, reward_amount = base_accounts[0], TimestampMS(1743008107000), '0.000000772529310385', '0.501902187294857254', '51.498097812705142746', '101.027879453122635516', '0.038804848288942801'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -971,7 +974,7 @@ def test_remove_liquidity(base_inquirer, base_accounts, pendle_cache):
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=430,
             timestamp=timestamp,
             location=Location.BASE,
@@ -983,7 +986,7 @@ def test_remove_liquidity(base_inquirer, base_accounts, pendle_cache):
             notes=f'Set PENDLE-LPT spending approval of {user_address} by 0x888888888889758F76e7103c6CbF23ABbF58F946 to {approve_amount}',  # noqa: E501
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=433,
             timestamp=timestamp,
             location=Location.BASE,
@@ -996,7 +999,7 @@ def test_remove_liquidity(base_inquirer, base_accounts, pendle_cache):
             counterparty=CPT_PENDLE,
             address=string_to_evm_address('0xE15578523937ed7F08E8F7a1Fa8a021E07025a08'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=444,
             timestamp=timestamp,
             location=Location.BASE,
@@ -1009,7 +1012,7 @@ def test_remove_liquidity(base_inquirer, base_accounts, pendle_cache):
             counterparty=CPT_PENDLE,
             address=string_to_evm_address('0x4665d514e82B2F9c78Fa2B984e450F33d9efc842'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=447,
             timestamp=timestamp,
             location=Location.BASE,
@@ -1037,7 +1040,7 @@ def test_redeem_due_rewards_and_interests(ethereum_inquirer, ethereum_accounts, 
     user_address, timestamp, gas_amount, approve_amount, in_amount, reward_amount = ethereum_accounts[0], TimestampMS(1743612395000), '0.00047191725218462', '0.001409507994839191', '0.140950799483919151', '466.678734752621960369'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -1049,7 +1052,7 @@ def test_redeem_due_rewards_and_interests(ethereum_inquirer, ethereum_accounts, 
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=354,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -1061,7 +1064,7 @@ def test_redeem_due_rewards_and_interests(ethereum_inquirer, ethereum_accounts, 
             notes=f'Set SY-rswETH spending approval of {user_address} by 0x888888888889758F76e7103c6CbF23ABbF58F946 to {approve_amount}',  # noqa: E501
             address=string_to_evm_address('0x888888888889758F76e7103c6CbF23ABbF58F946'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=357,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -1074,7 +1077,7 @@ def test_redeem_due_rewards_and_interests(ethereum_inquirer, ethereum_accounts, 
             counterparty=CPT_PENDLE,
             address=string_to_evm_address('0x7786729eEe8b9d30fE7d91fDFf23A0f1D0C615D9'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=361,
             timestamp=timestamp,
             location=Location.ETHEREUM,

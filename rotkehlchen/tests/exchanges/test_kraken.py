@@ -3,7 +3,7 @@ from contextlib import ExitStack
 from http import HTTPStatus
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
-from unittest.mock import patch
+from unittest.mock import _patch, patch
 from uuid import uuid4
 
 import gevent
@@ -42,7 +42,7 @@ from rotkehlchen.history.events.structures.asset_movement import create_asset_mo
 from rotkehlchen.history.events.structures.base import HistoryBaseEntryType, HistoryEvent
 from rotkehlchen.history.events.structures.swap import SwapEvent, create_swap_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.serialization.deserialize import deserialize_timestamp_from_floatstr
 from rotkehlchen.tests.utils.api import (
     api_url_for,
@@ -81,6 +81,16 @@ def _check_trade_history_events_order(db, expected):
             assert event.event_subtype == expected[event.sequence_index][2]
 
 
+def _patch_ledger(kraken: 'MockKraken', ledger_data: str) -> _patch:
+    kraken.random_trade_data = False
+    kraken.random_ledgers_data = False
+    kraken.cache_ttl_secs = 0
+    return patch(
+        target='rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE',
+        new=ledger_data,
+    )
+
+
 def test_name():
     exchange = Kraken('kraken1', 'a', b'YQ==', object(), object())  # b'YQ==' is base64 for 'a'
     assert exchange.location == Location.KRAKEN
@@ -113,7 +123,7 @@ def test_coverage_of_kraken_balances():
         'FLOWH.S': Asset('FLOW'),
         'FLOWH': Asset('FLOW'),
         'ADA.S': A_ADA,
-        'SOL.S': Asset('SOL-2'),
+        'SOL.S': Asset('SOL'),
         'KSM.P': A_KSM,  # kusama bonded for parachains
         'ALGO.S': Asset('ALGO'),
         'DOT.P': A_DOT,
@@ -136,7 +146,7 @@ def test_coverage_of_kraken_balances():
         'SCRT21.S': Asset('SCRT'),
         'KAVA21.S': Asset('KAVA'),
         'ATOM21.S': Asset('ATOM'),
-        'SOL03.S': Asset('SOL-2'),
+        'SOL03.S': Asset('SOL'),
         'FLOW14.S': Asset('FLOW'),
         'MATIC04.S': strethaddress_to_identifier('0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0'),
         'KSM07.S': A_KSM,
@@ -220,7 +230,7 @@ def test_querying_rate_limit_exhaustion(kraken, database):
         assert len(DBHistoryEvents(database).get_history_events_internal(
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(location=Location.KRAKEN),
-        )) == 3  # spend, receive, and fee
+        )) == 4  # spend, receive, fee, and kfee
         from_ts, to_ts = database.get_used_query_range(cursor, 'kraken_history_events_mockkraken')
 
     assert from_ts == 0
@@ -257,9 +267,9 @@ def test_kraken_query_balances_unknown_asset(kraken):
     assert msg == ''
     assert len(balances) == 2
     assert balances[A_BTC].amount == FVal('5.0')
-    assert balances[A_BTC].usd_value == FVal('7.5')
+    assert balances[A_BTC].value == FVal('7.5')
     assert balances[A_ETH].amount == FVal('10.0')
-    assert balances[A_ETH].usd_value == FVal('15.0')
+    assert balances[A_ETH].value == FVal('15.0')
 
     messages = kraken.msg_aggregator.rotki_notifier.messages
     assert len(messages) == 1
@@ -272,8 +282,6 @@ def test_kraken_query_deposit_withdrawals_unknown_asset(kraken):
     """Test that if a kraken deposits_withdrawals query returns unknown asset
     no exception is raised and a warning is generated and the deposits/withdrawals
     with valid assets are still returned"""
-    kraken.random_ledgers_data = False
-
     input_ledger = """
     {
     "ledger": {
@@ -315,8 +323,7 @@ def test_kraken_query_deposit_withdrawals_unknown_asset(kraken):
     }
     """
 
-    target = 'rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE'
-    with patch(target, new=input_ledger):
+    with _patch_ledger(kraken, input_ledger):
         kraken.query_history_events()
 
     with kraken.db.conn.read_ctx() as cursor:
@@ -335,7 +342,7 @@ def test_kraken_query_deposit_withdrawals_unknown_asset(kraken):
     assert movements[0].amount == ONE
     assert movements[0].event_type == HistoryEventType.WITHDRAWAL
     assert movements[0].event_subtype == HistoryEventSubType.REMOVE_ASSET
-    assert movements[1].event_identifier == movements[0].event_identifier
+    assert movements[1].group_identifier == movements[0].group_identifier
     assert movements[1].sequence_index == 1
     assert movements[1].timestamp == TimestampMS(1439994442000)
     assert movements[1].location == Location.KRAKEN
@@ -354,11 +361,9 @@ def test_kraken_query_deposit_withdrawals_unknown_asset(kraken):
 
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 def test_kraken_trade_with_spend_receive(kraken):
-    """Test that trades based on spend/receive events are correctly processed"""
-    kraken.random_trade_data = False
-    kraken.random_ledgers_data = False
-    kraken.cache_ttl_secs = 0
-
+    """Test that trades based on spend/receive events are correctly processed.
+    Also checks the multiple fees are properly handled.
+    """
     test_trades = """{
         "ledger": {
             "L2": {
@@ -369,7 +374,7 @@ def test_kraken_trade_with_spend_receive(kraken):
                 "aclass": "currency",
                 "asset": "XETH",
                 "amount": "1",
-                "fee": "0.0000000000",
+                "fee": "0.000123",
                 "balance": "1001"
             },
             "L1": {
@@ -387,8 +392,7 @@ def test_kraken_trade_with_spend_receive(kraken):
         "count": 2
     }"""
 
-    target = 'rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE'
-    with patch(target, new=test_trades):
+    with _patch_ledger(kraken, test_trades):
         kraken.query_history_events()
 
     with kraken.db.conn.read_ctx() as cursor:
@@ -397,40 +401,44 @@ def test_kraken_trade_with_spend_receive(kraken):
             filter_query=HistoryEventFilterQuery.make(location=Location.KRAKEN),
         ) == [SwapEvent(
             identifier=1,
-            timestamp=TimestampMS(1636406000865),
+            timestamp=(timestamp := TimestampMS(1636406000855)),
             location=Location.KRAKEN,
             event_subtype=HistoryEventSubType.SPEND,
             asset=A_EUR,
             amount=FVal('100'),
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=(group_identifier := create_group_identifier_from_unique_id(
                 location=Location.KRAKEN,
-                unique_id='11636406000865',
-            ),
+                unique_id='11636406000855',
+            )),
             location_label=kraken.name,
         ), SwapEvent(
             identifier=2,
-            timestamp=TimestampMS(1636406000865),
+            timestamp=timestamp,
             location=Location.KRAKEN,
             event_subtype=HistoryEventSubType.RECEIVE,
             asset=A_ETH,
             amount=FVal('1'),
-            event_identifier=create_event_identifier_from_unique_id(
-                location=Location.KRAKEN,
-                unique_id='11636406000865',
-            ),
+            group_identifier=group_identifier,
             location_label=kraken.name,
         ), SwapEvent(
             identifier=3,
-            timestamp=TimestampMS(1636406000865),
+            timestamp=timestamp,
+            location=Location.KRAKEN,
+            event_subtype=HistoryEventSubType.FEE,
+            asset=A_ETH,
+            amount=FVal('0.000123'),
+            group_identifier=group_identifier,
+            location_label=kraken.name,
+        ), SwapEvent(
+            identifier=4,
+            timestamp=timestamp,
             location=Location.KRAKEN,
             event_subtype=HistoryEventSubType.FEE,
             asset=A_EUR,
             amount=FVal('0.4500'),
-            event_identifier=create_event_identifier_from_unique_id(
-                location=Location.KRAKEN,
-                unique_id='11636406000865',
-            ),
+            group_identifier=group_identifier,
             location_label=kraken.name,
+            sequence_index=3,
         )]
 
     errors = kraken.msg_aggregator.consume_errors()
@@ -442,9 +450,6 @@ def test_kraken_trade_with_spend_receive(kraken):
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 def test_kraken_trade_with_adjustment(kraken):
     """Test that trades based on adjustment events are processed"""
-    kraken.random_trade_data = False
-    kraken.random_ledgers_data = False
-    kraken.cache_ttl_secs = 0
 
     test_trades = """{
         "ledger": {
@@ -474,8 +479,7 @@ def test_kraken_trade_with_adjustment(kraken):
         "count": 2
     }"""
 
-    target = 'rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE'
-    with patch(target, new=test_trades):
+    with _patch_ledger(kraken, test_trades):
         kraken.query_history_events()
 
         with kraken.db.conn.read_ctx() as cursor:
@@ -489,7 +493,7 @@ def test_kraken_trade_with_adjustment(kraken):
                 event_subtype=HistoryEventSubType.SPEND,
                 asset=A_DAO,
                 amount=FVal('0.0008854800'),
-                event_identifier=create_event_identifier_from_unique_id(
+                group_identifier=create_group_identifier_from_unique_id(
                     location=Location.KRAKEN,
                     unique_id='adjustment12',
                 ),
@@ -501,7 +505,7 @@ def test_kraken_trade_with_adjustment(kraken):
                 event_subtype=HistoryEventSubType.RECEIVE,
                 asset=A_ETH,
                 amount=FVal('0.0000088548'),
-                event_identifier=create_event_identifier_from_unique_id(
+                group_identifier=create_group_identifier_from_unique_id(
                     location=Location.KRAKEN,
                     unique_id='adjustment12',
                 ),
@@ -517,13 +521,9 @@ def test_kraken_trade_with_adjustment(kraken):
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 def test_kraken_adjustment(kraken):
     """Test that a plain adjustment event (no associated trade) is handled correctly."""
-    kraken.random_trade_data = False
-    kraken.random_ledgers_data = False
-    kraken.cache_ttl_secs = 0
-
-    with patch(
-        target='rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE',
-        new="""{"count": 1, "ledger": {"L1": {
+    with _patch_ledger(
+        kraken=kraken,
+        ledger_data="""{"count": 1, "ledger": {"L1": {
             "aclass": "currency",
             "amount": "283.79600",
             "asset": "SYRUP",
@@ -543,7 +543,7 @@ def test_kraken_adjustment(kraken):
             filter_query=HistoryEventFilterQuery.make(location=Location.KRAKEN),
         ) == [HistoryEvent(
             identifier=1,
-            event_identifier='xxxx',
+            group_identifier='xxxx',
             sequence_index=0,
             timestamp=TimestampMS(1731508592028),
             location=Location.KRAKEN,
@@ -558,10 +558,6 @@ def test_kraken_adjustment(kraken):
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 def test_kraken_trade_no_counterpart(kraken):
     """Test that trades with no counterpart are processed properly"""
-    kraken.random_trade_data = False
-    kraken.random_ledgers_data = False
-    kraken.cache_ttl_secs = 0
-
     test_trades = """{
         "ledger": {
             "L1": {
@@ -590,8 +586,7 @@ def test_kraken_trade_no_counterpart(kraken):
         "count": 2
     }"""
 
-    target = 'rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE'
-    with patch(target, new=test_trades):
+    with _patch_ledger(kraken, test_trades):
         kraken.query_history_events()
 
         with kraken.db.conn.read_ctx() as cursor:
@@ -605,7 +600,7 @@ def test_kraken_trade_no_counterpart(kraken):
                 event_subtype=HistoryEventSubType.SPEND,
                 asset=A_ETH,
                 amount=FVal('0.000001'),
-                event_identifier=create_event_identifier_from_unique_id(
+                group_identifier=create_group_identifier_from_unique_id(
                     location=Location.KRAKEN,
                     unique_id='11636406000855',
                 ),
@@ -617,7 +612,7 @@ def test_kraken_trade_no_counterpart(kraken):
                 event_subtype=HistoryEventSubType.RECEIVE,
                 asset=A_USD,
                 amount=ZERO,
-                event_identifier=create_event_identifier_from_unique_id(
+                group_identifier=create_group_identifier_from_unique_id(
                     location=Location.KRAKEN,
                     unique_id='11636406000855',
                 ),
@@ -629,7 +624,7 @@ def test_kraken_trade_no_counterpart(kraken):
                 event_subtype=HistoryEventSubType.SPEND,
                 asset=A_USD,
                 amount=ZERO,
-                event_identifier=create_event_identifier_from_unique_id(
+                group_identifier=create_group_identifier_from_unique_id(
                     location=Location.KRAKEN,
                     unique_id='21636406000865',
                 ),
@@ -641,7 +636,7 @@ def test_kraken_trade_no_counterpart(kraken):
                 event_subtype=HistoryEventSubType.RECEIVE,
                 asset=A_BTC,
                 amount=FVal('0.0000001'),
-                event_identifier=create_event_identifier_from_unique_id(
+                group_identifier=create_group_identifier_from_unique_id(
                     location=Location.KRAKEN,
                     unique_id='21636406000865',
                 ),
@@ -657,10 +652,6 @@ def test_kraken_trade_no_counterpart(kraken):
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 def test_kraken_failed_withdrawals(kraken):
     """Test that failed withdrawals are processed properly"""
-    kraken.random_trade_data = False
-    kraken.random_ledgers_data = False
-    kraken.cache_ttl_secs = 0
-
     test_events = """{
         "ledger": {
             "W1": {
@@ -689,8 +680,7 @@ def test_kraken_failed_withdrawals(kraken):
         "count": 2
     }"""
 
-    target = 'rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE'
-    with patch(target, new=test_events):
+    with _patch_ledger(kraken, test_events):
         kraken.query_history_events()
     with kraken.db.conn.read_ctx() as cursor:
         withdrawals = DBHistoryEvents(kraken.db).get_history_events_internal(
@@ -704,10 +694,6 @@ def test_kraken_failed_withdrawals(kraken):
 def test_trade_from_kraken_unexpected_data(kraken):
     """Test that getting unexpected data from kraken leads to skipping the trade
     and does not lead to a crash"""
-    kraken.random_trade_data = False
-    kraken.random_ledgers_data = False
-    kraken.cache_ttl_secs = 0
-
     # Important: Testing with a time floating point that has other than zero after decimal
     test_trades = """{
     "ledger": {
@@ -750,7 +736,7 @@ def test_trade_from_kraken_unexpected_data(kraken):
                 (f'{location}_history_events_%',),
             )
 
-        with patch(target, new=input_trades):
+        with _patch_ledger(kraken, input_trades):
             kraken.query_history_events()
 
         with kraken.db.conn.read_ctx() as cursor:
@@ -772,7 +758,6 @@ def test_trade_from_kraken_unexpected_data(kraken):
         assert len(warnings) == expected_warnings_num
 
     # First a normal trade should have no problems
-    target = 'rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE'
     query_kraken_and_test(test_trades, expected_warnings_num=0, expected_errors_num=0)
 
     # Kraken also uses strings for timestamps, this should also work
@@ -934,10 +919,8 @@ def test_kraken_staking(rotkehlchen_api_server_with_exchanges, start_with_valid_
 
     with rotki.data.db.user_write() as write_cursor:
         rotki.data.db.purge_exchange_data(write_cursor, Location.KRAKEN)
-    target = 'rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE'
     kraken = try_get_first_exchange(rotki.exchange_manager, Location.KRAKEN)
-    kraken.random_ledgers_data = False
-    with patch(target, new=input_ledger):
+    with _patch_ledger(kraken, input_ledger):
         kraken.query_history_events()
 
     response = requests.post(
@@ -968,8 +951,8 @@ def test_kraken_staking(rotkehlchen_api_server_with_exchanges, start_with_valid_
         assert result['entries_limit'] == FREE_HISTORY_EVENTS_LIMIT
     assert result['entries_total'] == 4
     assert result['received'] == [
-        {'asset': 'XTZ', 'amount': '0.0000100000', 'usd_value': '0.000046300000'},
-        {'asset': 'ETH2', 'amount': '0.0000538620', 'usd_value': '0.219353533620'},
+        {'asset': 'XTZ', 'amount': '0.0000100000', 'value': '0.000046300000'},
+        {'asset': 'ETH2', 'amount': '0.0000538620', 'value': '0.219353533620'},
     ]
 
     # test that the correct number of entries is returned with pagination
@@ -1101,60 +1084,6 @@ def test_kraken_staking(rotkehlchen_api_server_with_exchanges, start_with_valid_
     )
 
 
-@pytest.mark.parametrize('have_decoders', [True])
-@pytest.mark.parametrize('added_exchanges', [(Location.KRAKEN,)])
-def test_kraken_informational_fees(rotkehlchen_api_server_with_exchanges: 'APIServer'):
-    """Test that we correctly ignore fees in events that we currently ignore as margin trades"""
-    rotki = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen
-    kraken = cast('MockKraken', try_get_first_exchange(rotki.exchange_manager, Location.KRAKEN))
-    input_ledger = """
-    {
-        "ledger":{
-            "XXX": {
-                "aclass": "currency",
-                "amount": "1.0000",
-                "asset": "ZEUR",
-                "balance": "25.2825",
-                "fee": "0.0710",
-                "refid": "XXXXXXXXXXXX",
-                "time": 1636738550.7562,
-                "type": "margin",
-                "subtype": ""
-            }
-        },
-        "count": 1
-    }
-    """
-
-    target = 'rotkehlchen.tests.utils.kraken.KRAKEN_GENERAL_LEDGER_RESPONSE'
-    kraken.random_ledgers_data = False
-    with patch(target, new=input_ledger):
-        kraken.query_history_events()
-
-    with rotki.data.db.conn.read_ctx() as cursor:
-        events = DBHistoryEvents(rotki.data.db).get_history_events_internal(
-            cursor=cursor,
-            filter_query=HistoryEventFilterQuery.make(),
-            group_by_event_ids=False,
-        )
-
-    assert events == [
-        HistoryEvent(
-            identifier=1,
-            event_identifier='XXXXXXXXXXXX',
-            sequence_index=0,
-            timestamp=TimestampMS(1636738550756),
-            location=Location.KRAKEN,
-            event_type=HistoryEventType.INFORMATIONAL,
-            event_subtype=HistoryEventSubType.NONE,
-            asset=A_EUR,
-            amount=ONE,
-            location_label='mockkraken',
-            notes='margin',
-        ),
-    ]
-
-
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 def test_kraken_event_serialization_with_custom_asset(database):
     """Regression test for https://github.com/rotki/rotki/issues/9200"""
@@ -1171,7 +1100,7 @@ def test_kraken_event_serialization_with_custom_asset(database):
         spend=AssetAmount(asset=custom_asset, amount=ONE),
         receive=AssetAmount(asset=custom_asset, amount=ONE),
         fee=AssetAmount(asset=custom_asset, amount=ONE),
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.KRAKEN,
             unique_id='UNIQUE_ID',
         ),
@@ -1203,7 +1132,7 @@ def test_kraken_event_serialization_with_custom_asset(database):
             (HistoryEventType.STAKING, HistoryEventSubType.FEE, 'Spend 1 Gold Bar as Kraken staking fee'),  # noqa: E501
     ):
         event = HistoryEvent(
-            event_identifier='foo',
+            group_identifier='foo',
             sequence_index=1,
             timestamp=TimestampMS(10000000000),
             location=Location.KRAKEN,
@@ -1214,3 +1143,115 @@ def test_kraken_event_serialization_with_custom_asset(database):
             location_label='my kraken',
         )
         assert event.serialize()['auto_notes'] == expected_notes
+
+
+@pytest.mark.parametrize('have_decoders', [True])
+@pytest.mark.parametrize('added_exchanges', [(Location.KRAKEN,)])
+def test_margin_trading_events(rotkehlchen_api_server_with_exchanges: 'APIServer'):
+    """Test that we correctly handle margin trade events"""
+    rotki = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen
+    with _patch_ledger(
+        kraken=(kraken := cast('MockKraken', try_get_first_exchange(rotki.exchange_manager, Location.KRAKEN))),  # noqa: E501
+        ledger_data="""{"ledger":{"x1": {
+            "aclass": "currency",
+            "amount": "1.0000",
+            "asset": "ZEUR",
+            "balance": "25",
+            "fee": "0.0710",
+            "refid": "xyz1",
+            "time": 1636738100.0000,
+            "type": "margin",
+            "subtype": ""
+        }, "x2": {
+            "aclass": "currency",
+            "amount": "0.0000000000",
+            "asset": "XETH",
+            "balance": "1.2345",
+            "fee": "0.0003987600",
+            "refid": "xyz2",
+            "time": 1636738200.0000,
+            "type": "rollover",
+            "subtype": ""
+        }, "x3": {
+            "aclass": "currency",
+            "amount": "-0.123",
+            "asset": "XETH",
+            "balance": "1.1115",
+            "fee": "0.0710",
+            "refid": "xyz3",
+            "time": 1636738300.0000,
+            "type": "settled",
+            "subtype": ""
+        }},
+        "count": 3}""",
+    ):
+        kraken.query_history_events()
+
+    with rotki.data.db.conn.read_ctx() as cursor:
+        events = DBHistoryEvents(rotki.data.db).get_history_events_internal(
+            cursor=cursor,
+            filter_query=HistoryEventFilterQuery.make(),
+            aggregate_by_group_ids=False,
+        )
+
+    assert events == [HistoryEvent(
+        identifier=1,
+        group_identifier='xyz1',
+        sequence_index=0,
+        timestamp=TimestampMS(1636738100000),
+        location=Location.KRAKEN,
+        event_type=HistoryEventType.MARGIN,
+        event_subtype=HistoryEventSubType.PROFIT,
+        asset=A_EUR,
+        amount=FVal('1.0000'),
+        location_label='mockkraken',
+        notes='Margin trade',
+    ), HistoryEvent(
+        identifier=2,
+        group_identifier='xyz1',
+        sequence_index=1,
+        timestamp=TimestampMS(1636738100000),
+        location=Location.KRAKEN,
+        event_type=HistoryEventType.MARGIN,
+        event_subtype=HistoryEventSubType.FEE,
+        asset=A_EUR,
+        amount=FVal('0.0710'),
+        location_label='mockkraken',
+        notes='Margin trade',
+    ), HistoryEvent(
+        identifier=3,
+        group_identifier='xyz2',
+        sequence_index=1,
+        timestamp=TimestampMS(1636738200000),
+        location=Location.KRAKEN,
+        event_type=HistoryEventType.MARGIN,
+        event_subtype=HistoryEventSubType.FEE,
+        asset=A_ETH,
+        amount=FVal('0.0003987600'),
+        location_label='mockkraken',
+        notes='Margin rollover',
+    ), HistoryEvent(
+        identifier=4,
+        group_identifier='xyz3',
+        sequence_index=0,
+        timestamp=TimestampMS(1636738300000),
+        location=Location.KRAKEN,
+        event_type=HistoryEventType.MARGIN,
+        event_subtype=HistoryEventSubType.LOSS,
+        asset=A_ETH,
+        amount=FVal('0.123'),
+        location_label='mockkraken',
+        notes='Margin settlement',
+    ), HistoryEvent(
+        identifier=5,
+        group_identifier='xyz3',
+        sequence_index=1,
+        timestamp=TimestampMS(1636738300000),
+        location=Location.KRAKEN,
+        event_type=HistoryEventType.MARGIN,
+        event_subtype=HistoryEventSubType.FEE,
+        asset=A_ETH,
+        amount=FVal('0.0710'),
+        location_label='mockkraken',
+        notes='Margin settlement',
+    )]

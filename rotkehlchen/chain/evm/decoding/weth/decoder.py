@@ -3,16 +3,16 @@ from abc import ABC
 from typing import TYPE_CHECKING, Any, Final
 
 from rotkehlchen.assets.asset import CryptoAsset, EvmToken
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import DEPOSIT_TOPIC_V2
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.decoding.weth.constants import CHAIN_ID_TO_WETH_MAPPING, CPT_WETH
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -21,7 +21,7 @@ from rotkehlchen.types import ChecksumEvmAddress
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -32,11 +32,11 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class WethDecoderBase(DecoderInterface, ABC):
+class WethDecoderBase(EvmDecoderInterface, ABC):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             base_asset: CryptoAsset,
             wrapped_token: EvmToken,
@@ -51,15 +51,15 @@ class WethDecoderBase(DecoderInterface, ABC):
         self.wrapped_token = wrapped_token
         self.counterparty = counterparty
 
-    def _decode_wrapper(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_wrapper(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] == DEPOSIT_TOPIC_V2:
             return self._decode_deposit_event(context)
         elif context.tx_log.topics[0] == WETH_WITHDRAW_TOPIC:
             return self._decode_withdrawal_event(context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_deposit_event(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_deposit_event(self, context: DecoderContext) -> EvmDecodingOutput:
         deposited_amount_raw = int.from_bytes(context.tx_log.data[:32])
         deposited_amount = asset_normalized_value(
             amount=deposited_amount_raw,
@@ -81,10 +81,10 @@ class WethDecoderBase(DecoderInterface, ABC):
                 out_event = event
 
         if out_event is None:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         in_event = self.base.make_event_next_index(
-            tx_hash=context.transaction.tx_hash,
+            tx_ref=context.transaction.tx_hash,
             timestamp=context.transaction.timestamp,
             event_type=HistoryEventType.RECEIVE,
             event_subtype=HistoryEventSubType.RECEIVE_WRAPPED,
@@ -99,11 +99,11 @@ class WethDecoderBase(DecoderInterface, ABC):
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events + [in_event],
         )
-        return DecodingOutput(events=[in_event])
+        return EvmDecodingOutput(events=[in_event])
 
-    def _decode_withdrawal_event(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_withdrawal_event(self, context: DecoderContext) -> EvmDecodingOutput:
         if not self.base.is_tracked(withdrawer := bytes_to_address(context.tx_log.topics[1])):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         withdrawn_amount_raw = int.from_bytes(context.tx_log.data[:32])
         withdrawn_amount = asset_normalized_value(
@@ -119,14 +119,16 @@ class WethDecoderBase(DecoderInterface, ABC):
                 event.asset == self.base_asset
             ):
                 in_event = event
+                event.event_type = HistoryEventType.WITHDRAWAL
+                event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
                 event.notes = f'Receive {withdrawn_amount} {self.base_asset.symbol}'
                 event.counterparty = self.counterparty
 
         if in_event is None:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         out_event = self.base.make_event_next_index(
-            tx_hash=context.transaction.tx_hash,
+            tx_ref=context.transaction.tx_hash,
             timestamp=context.transaction.timestamp,
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.RETURN_WRAPPED,
@@ -141,7 +143,7 @@ class WethDecoderBase(DecoderInterface, ABC):
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events + [out_event],
         )
-        return DecodingOutput(events=[out_event])
+        return EvmDecodingOutput(events=[out_event])
 
     # -- DecoderInterface methods
 
@@ -164,7 +166,7 @@ class WethDecoder(WethDecoderBase):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(

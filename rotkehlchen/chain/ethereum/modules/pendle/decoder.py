@@ -1,14 +1,14 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
 from rotkehlchen.chain.evm.decoding.pendle.constants import CPT_PENDLE
 from rotkehlchen.chain.evm.decoding.pendle.decoder import PendleCommonDecoder
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -26,7 +26,7 @@ from .constants import (
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class PendleDecoder(PendleCommonDecoder, CustomizableDateMixin):
     def __init__(
             self,
             evm_inquirer: 'EthereumInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -53,7 +53,7 @@ class PendleDecoder(PendleCommonDecoder, CustomizableDateMixin):
         )
         CustomizableDateMixin.__init__(self, base_tools.database)
 
-    def _decode_ve_pendle_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_ve_pendle_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] == NEW_LOCK_POSITION_TOPIC:
             refund_event = None
             for event in context.decoded_events:
@@ -119,7 +119,7 @@ class PendleDecoder(PendleCommonDecoder, CustomizableDateMixin):
             else:
                 log.error(f'Could not find pendle unlock transfer for transaction {context.transaction}')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         return super().addresses_to_decoders() | {

@@ -2,7 +2,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.assets.asset import EvmToken
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.ethereum.modules.convex.constants import (
     BOOSTER,
     CONVEX_ABRAS_HEX,
@@ -21,32 +22,32 @@ from rotkehlchen.chain.ethereum.modules.convex.convex_cache import (
     query_convex_data,
     read_convex_data_from_cache,
 )
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER, STAKED
-from rotkehlchen.chain.evm.decoding.curve.constants import CPT_CURVE
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface, ReloadableCacheDecoderMixin
+from rotkehlchen.chain.evm.decoding.interfaces import (
+    EvmDecoderInterface,
+    ReloadableCacheDecoderMixin,
+)
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     FAILED_ENRICHMENT_OUTPUT,
     DecoderContext,
-    DecodingOutput,
     EnricherContext,
+    EvmDecodingOutput,
     TransferEnrichmentOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.constants.assets import A_CRV, A_CVX
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.history.events.structures.base import HistoryEventSubType, HistoryEventType
-from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import CacheType, ChecksumEvmAddress, EvmTransaction
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
+    from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
@@ -55,11 +56,11 @@ log = RotkehlchenLogsAdapter(logger)
 REWARD_ADDED = b'\xde\x88\xa9"\xe0\xd3\xb8\x8b$\xe9b>\xfe\xb4d\x91\x9ck\xf9\xf6hW\xa6^+\xfc\xf2\xce\x87\xa9C='  # noqa: E501
 
 
-class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
+class ConvexDecoder(EvmDecoderInterface, ReloadableCacheDecoderMixin):
     def __init__(
             self,
             ethereum_inquirer: 'EthereumInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -81,16 +82,16 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
         assert isinstance(self.cache_data[0], dict), 'ConvexDecoder cache_data[0] is not a dict'
         return self.cache_data[0]
 
-    def _cache_mapping_methods(self) -> tuple[Callable[[DecoderContext], DecodingOutput]]:
+    def _cache_mapping_methods(self) -> tuple[Callable[[DecoderContext], EvmDecodingOutput]]:
         return (self._decode_pool_events,)
 
-    def _decode_pool_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_pool_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] == REWARD_ADDED:
             return self._decode_compound_crv(context=context)
 
         return self._decode_gauge_events(context=context)
 
-    def _decode_compound_crv(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_compound_crv(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode compounding of CRV in convex pools"""
         for event in context.decoded_events:
             if (
@@ -102,9 +103,9 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
                 event.counterparty = CPT_CONVEX
                 event.notes = f'Claim {event.amount} {event.asset.resolve_to_crypto_asset().symbol} after compounding Convex pool'  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_gauge_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_gauge_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """
         Decode events in convex gauges:
         - deposits/withdrawals
@@ -151,16 +152,8 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
                     event.counterparty = CPT_CONVEX
                     if context.tx_log.address in self.pools:
                         event.notes = f'Deposit {event.amount} {crypto_asset.symbol} into convex {self.pools[context.tx_log.address]} pool'  # noqa: E501
-                        event.product = EvmProduct.GAUGE
                     else:
                         event.notes = f'Deposit {event.amount} {crypto_asset.symbol} into convex'
-                        if (
-                            isinstance(crypto_asset, EvmToken) and
-                            crypto_asset.protocol == CPT_CURVE
-                        ):
-                            event.product = EvmProduct.GAUGE
-                        elif crypto_asset == A_CVX:
-                            event.product = EvmProduct.STAKING
 
                     # in this case store information about the gauge in the extra details to use
                     # it during balances queries
@@ -183,14 +176,8 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
                     found_event_modifying_balances = True
                     if context.tx_log.address in self.pools:
                         event.notes = f'Withdraw {event.amount} {crypto_asset.symbol} from convex {self.pools[context.tx_log.address]} pool'  # noqa: E501
-                        event.product = EvmProduct.GAUGE
                     else:
                         event.notes = f'Withdraw {event.amount} {crypto_asset.symbol} from convex'
-                        if (
-                            isinstance(crypto_asset, EvmToken) and
-                            crypto_asset.protocol == CPT_CURVE
-                        ):
-                            event.product = EvmProduct.GAUGE
                 elif context.tx_log.topics[0] in REWARD_TOPICS:
                     event.event_subtype = HistoryEventSubType.REWARD
                     event.counterparty = CPT_CONVEX
@@ -199,7 +186,7 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
                         event.notes = f'Claim {event.amount} {crypto_asset.symbol} reward from convex {self.pools[context.tx_log.address]} pool'  # noqa: E501
                     else:
                         event.notes = f'Claim {event.amount} {crypto_asset.symbol} reward from convex'  # noqa: E501
-        return DecodingOutput(
+        return EvmDecodingOutput(
             refresh_balances=found_event_modifying_balances,
             matched_counterparty=matched_counterparty,
         )
@@ -241,7 +228,7 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
                 if len(amounts_withdrawn) == 0:
                     break  # stop as soon as we have processed all the unlock events
         else:
-            log.error(f'Did not process all the expected CVX unlock withdrawals for {transaction.tx_hash.hex()}')  # noqa: E501
+            log.error(f'Did not process all the expected CVX unlock withdrawals for {transaction.tx_hash!s}')  # noqa: E501
 
         return decoded_events
 
@@ -271,12 +258,6 @@ class ConvexDecoder(DecoderInterface, ReloadableCacheDecoderMixin):
             context.event.counterparty = CPT_CONVEX
             return TransferEnrichmentOutput(matched_counterparty=CPT_CONVEX)
         return FAILED_ENRICHMENT_OUTPUT
-
-    @staticmethod
-    def possible_products() -> dict[str, list[EvmProduct]]:
-        return {
-            CPT_CONVEX: [EvmProduct.GAUGE, EvmProduct.STAKING],
-        }
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         decoder_mappings = {

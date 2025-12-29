@@ -14,7 +14,7 @@ export type WalletMode = typeof WALLET_MODES[keyof typeof WALLET_MODES];
 /**
  * Transaction constants
  */
-export const DEFAULT_GAS_LIMIT = 21000n;
+const DEFAULT_GAS_LIMIT = 21000n;
 
 /**
  * Error messages
@@ -26,9 +26,27 @@ export const WALLET_ERRORS = {
 } as const;
 
 /**
+ * Keywords that indicate a user rejected a wallet action
+ */
+const REJECTED_KEYWORDS = [
+  'ACTION_REJECTED',
+  'User cancelled',
+  'User canceled',
+  'User rejected',
+] as const;
+
+/**
+ * Check if an error indicates user rejection
+ */
+export function isUserRejectedError(error: Error | unknown): boolean {
+  const errorString = error instanceof Error ? error.toString() : String(error);
+  return REJECTED_KEYWORDS.some(keyword => errorString.includes(keyword));
+}
+
+/**
  * Buffer percentages
  */
-export const GAS_PRICE_BUFFER_PERCENTAGE = 10n;
+const GAS_PRICE_BUFFER_PERCENTAGE = 10n;
 
 /**
  * Utility functions

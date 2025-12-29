@@ -1,54 +1,67 @@
-import type { ActionResult } from '@rotki/common';
-import { noRootCamelCaseTransformer, snakeCaseTransformer } from '@/services/axios-transformers';
-import { api } from '@/services/rotkehlchen-api';
-import { handleResponse, validStatus, validWithSessionStatus } from '@/services/utils';
+import { api } from '@/modules/api/rotki-api';
+import { VALID_WITH_SESSION_STATUS } from '@/modules/api/utils';
 import { type Tag, Tags } from '@/types/tags';
 
 interface UseTagsApiReturn {
   queryTags: () => Promise<Tags>;
   queryAddTag: (tag: Tag) => Promise<Tags>;
-  queryEditTag: (tag: Tag) => Promise<Tags>;
+  queryEditTag: (tag: Tag, originalName: string) => Promise<Tags>;
   queryDeleteTag: (tagName: string) => Promise<Tags>;
+}
+
+interface TagEditPayload {
+  name: string;
+  newName?: string;
+  description: string | null;
+  backgroundColor: string;
+  foregroundColor: string;
 }
 
 export function useTagsApi(): UseTagsApiReturn {
   const queryTags = async (): Promise<Tags> => {
-    const response = await api.instance.get<ActionResult<Tags>>('/tags', {
-      validateStatus: validWithSessionStatus,
+    const data = await api.get<Tags>('/tags', {
+      validStatuses: VALID_WITH_SESSION_STATUS,
+      skipRootCamelCase: true,
     });
 
-    const data = handleResponse(response);
-    return Tags.parse(noRootCamelCaseTransformer(data));
+    return Tags.parse(data);
   };
 
   const queryAddTag = async (tag: Tag): Promise<Tags> => {
-    const response = await api.instance.put<ActionResult<Tags>>('/tags', snakeCaseTransformer(tag), {
-      validateStatus: validStatus,
+    const data = await api.put<Tags>('/tags', tag, {
+      skipRootCamelCase: true,
     });
 
-    const data = handleResponse(response);
-    return Tags.parse(noRootCamelCaseTransformer(data));
+    return Tags.parse(data);
   };
 
-  const queryEditTag = async (tag: Tag): Promise<Tags> => {
-    const response = await api.instance.patch<ActionResult<Tags>>('/tags', snakeCaseTransformer(tag), {
-      validateStatus: validStatus,
+  const queryEditTag = async (tag: Tag, originalName: string): Promise<Tags> => {
+    const payload: TagEditPayload = {
+      backgroundColor: tag.backgroundColor,
+      description: tag.description,
+      foregroundColor: tag.foregroundColor,
+      name: originalName,
+    };
+
+    if (originalName !== tag.name)
+      payload.newName = tag.name;
+
+    const data = await api.patch<Tags>('/tags', payload, {
+      skipRootCamelCase: true,
     });
 
-    const data = handleResponse(response);
-    return Tags.parse(noRootCamelCaseTransformer(data));
+    return Tags.parse(data);
   };
 
   const queryDeleteTag = async (tagName: string): Promise<Tags> => {
-    const response = await api.instance.delete<ActionResult<Tags>>('/tags', {
-      data: {
+    const data = await api.delete<Tags>('/tags', {
+      body: {
         name: tagName,
       },
-      validateStatus: validStatus,
+      skipRootCamelCase: true,
     });
 
-    const data = handleResponse(response);
-    return Tags.parse(noRootCamelCaseTransformer(data));
+    return Tags.parse(data);
   };
 
   return {

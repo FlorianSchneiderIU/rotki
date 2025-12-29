@@ -202,7 +202,7 @@ def patch_etherscan_request(etherscan, mock_data: dict[str, Any]):
     )
 
 
-BEACONCHAIN_ETH1_CALL_RE = re.compile(r'https://beaconcha.in/api/v1/validator/eth1/(.*)')
+BEACONCHAIN_ETH1_CALL_RE = re.compile(r'https://beaconcha.in/api/v1/validator/eth1/([^?]*)')
 BEACONCHAIN_VALIDATOR_CALL_RE = re.compile(r'https://beaconcha.in/api/v1/validator')
 BEACONCHAIN_OTHER_CALL_RE = re.compile(r'https://beaconcha.in/api/v1/validator/(.*)/(.*)')
 
@@ -263,13 +263,9 @@ def mock_proxies(stack, mocked_proxies):
     dsr_proxies = mocked_proxies.get('dsr', {})
     liquity_proxies = mocked_proxies.get('liquity', {})
     stack.enter_context(patch(
-        'rotkehlchen.chain.evm.proxies_inquirer.EvmProxiesInquirer.get_account_ds_proxy',
-        lambda _, address: dsr_proxies.get(address),
-    ))
-    stack.enter_context(patch(
         'rotkehlchen.chain.evm.proxies_inquirer.EvmProxiesInquirer.get_or_query_ds_proxy',
         lambda _, addresses: {
-            address: dsr_proxies.get(address)
+            address: {dsr_proxies.get(address)}
             for address in addresses
             if dsr_proxies.get(address) is not None
         },
@@ -277,7 +273,7 @@ def mock_proxies(stack, mocked_proxies):
     stack.enter_context(patch(
         'rotkehlchen.chain.evm.proxies_inquirer.EvmProxiesInquirer.get_or_query_liquity_proxy',
         lambda _, addresses: {
-            address: liquity_proxies.get(address)
+            address: {liquity_proxies.get(address)}
             for address in addresses
             if liquity_proxies.get(address) is not None
         },

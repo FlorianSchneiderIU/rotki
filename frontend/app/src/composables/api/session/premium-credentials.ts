@@ -1,36 +1,35 @@
-import type { ActionResult } from '@rotki/common';
-import { api } from '@/services/rotkehlchen-api';
-import { handleResponse, validAuthorizedStatus, validStatus } from '@/services/utils';
+import { api } from '@/modules/api/rotki-api';
+import { VALID_WITH_PARAMS_SESSION_AND_EXTERNAL_SERVICE } from '@/modules/api/utils';
+import { type PremiumCapabilities, PremiumCapabilities as PremiumCapabilitiesSchema } from '@/types/session';
 
 interface UsePremiumCredentialsApiReturn {
   setPremiumCredentials: (username: string, apiKey: string, apiSecret: string) => Promise<true>;
   deletePremiumCredentials: () => Promise<true>;
+  getPremiumCapabilities: () => Promise<PremiumCapabilities>;
 }
 
 export function usePremiumCredentialsApi(): UsePremiumCredentialsApiReturn {
-  const setPremiumCredentials = async (username: string, apiKey: string, apiSecret: string): Promise<true> => {
-    const response = await api.instance.patch<ActionResult<true>>(
-      `/users/${username}`,
-      {
-        premium_api_key: apiKey,
-        premium_api_secret: apiSecret,
-      },
-      { validateStatus: validAuthorizedStatus },
-    );
+  const setPremiumCredentials = async (username: string, apiKey: string, apiSecret: string): Promise<true> => api.patch<true>(
+    `/users/${username}`,
+    {
+      premiumApiKey: apiKey,
+      premiumApiSecret: apiSecret,
+    },
+  );
 
-    return handleResponse(response);
-  };
+  const deletePremiumCredentials = async (): Promise<true> => api.delete<true>('/premium');
 
-  const deletePremiumCredentials = async (): Promise<true> => {
-    const response = await api.instance.delete<ActionResult<true>>('/premium', {
-      validateStatus: validStatus,
+  const getPremiumCapabilities = async (): Promise<PremiumCapabilities> => {
+    const response = await api.get<PremiumCapabilities>('/premium/capabilities', {
+      validStatuses: VALID_WITH_PARAMS_SESSION_AND_EXTERNAL_SERVICE,
     });
 
-    return handleResponse(response);
+    return PremiumCapabilitiesSchema.parse(response);
   };
 
   return {
     deletePremiumCredentials,
+    getPremiumCapabilities,
     setPremiumCredentials,
   };
 }

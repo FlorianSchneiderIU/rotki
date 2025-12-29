@@ -143,7 +143,6 @@ class MakerdaoVaults(EthereumModule):
         self.msg_aggregator = msg_aggregator
         self.reset_last_query_ts()
         self.lock = Semaphore()
-        self.usd_price: dict[str, FVal] = defaultdict(FVal)
         self.vault_mappings: dict[ChecksumEvmAddress, list[MakerdaoVault]] = defaultdict(list)
         self.ilk_to_stability_fee: dict[bytes, FVal] = {}
 
@@ -197,27 +196,25 @@ class MakerdaoVaults(EthereumModule):
         mat = result[1]
         liquidation_ratio = FVal(mat / RAY)
         price = FVal((spot / RAY) * liquidation_ratio)
-        self.usd_price[asset.identifier] = price
         collateral_value = FVal(price * collateral_amount)
         if debt_value == 0:
             collateralization_ratio = None
         else:
             collateralization_ratio = FVal(collateral_value / debt_value).to_percentage(2)
 
-        collateral_usd_value = price * collateral_amount
         if collateral_amount == 0:
             liquidation_price = None
         else:
             liquidation_price = (debt_value * liquidation_ratio) / collateral_amount
 
-        dai_usd_price = Inquirer.find_usd_price(A_DAI)
+        prices = Inquirer.find_main_currency_prices([asset, A_DAI])
         return MakerdaoVault(
             identifier=identifier,
             owner=owner,
             collateral_type=collateral_type,
             collateral_asset=asset,
-            collateral=Balance(collateral_amount, collateral_usd_value),
-            debt=Balance(debt_value, dai_usd_price * debt_value),
+            collateral=Balance(amount=collateral_amount, value=prices[asset] * collateral_amount),
+            debt=Balance(amount=debt_value, value=prices[A_DAI] * debt_value),
             liquidation_ratio=liquidation_ratio,
             collateralization_ratio=collateralization_ratio,
             liquidation_price=liquidation_price,
@@ -290,10 +287,11 @@ class MakerdaoVaults(EthereumModule):
             self.vault_mappings = defaultdict(list)
             proxy_mappings = self.ethereum.proxies_inquirer.get_accounts_having_proxy(proxy_type=ProxyType.DS)  # noqa: E501
             vaults = []
-            for user_address, proxy in proxy_mappings.items():
-                vaults.extend(
-                    self._get_vaults_of_address(user_address=user_address, proxy_address=proxy),
-                )
+            for user_address, proxies in proxy_mappings.items():
+                for proxy in proxies:
+                    vaults.extend(
+                        self._get_vaults_of_address(user_address=user_address, proxy_address=proxy),  # noqa: E501
+                    )
 
             self.last_vault_mapping_query_ts = ts_now()
             # Returns vaults sorted. Oldest identifier first
@@ -312,8 +310,8 @@ class MakerdaoVaults(EthereumModule):
     # -- Methods following the EthereumModule interface -- #
     def on_account_addition(self, address: ChecksumEvmAddress) -> None:  # pylint: disable=useless-return
         # Check if it has been added to the mapping
-        proxy_address = self.ethereum.proxies_inquirer.address_to_proxy[ProxyType.DS].get(address)
-        if proxy_address:
+        proxy_addresses = self.ethereum.proxies_inquirer.address_to_proxies[ProxyType.DS].get(address, set())  # noqa: E501
+        for proxy_address in proxy_addresses:
             # get any vaults the proxy owns
             self._get_vaults_of_address(user_address=address, proxy_address=proxy_address)
 

@@ -2,16 +2,16 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.uniswap.constants import UNISWAP_SIGNATURES
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.transactions import EvmTransactions
 from rotkehlchen.constants import ZERO
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -22,7 +22,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 from .constants import CPT_ZEROX, METATX_ZEROX
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
     from rotkehlchen.fval import FVal
@@ -33,11 +33,11 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class ZeroxCommonDecoder(DecoderInterface):
+class ZeroxCommonDecoder(EvmDecoderInterface):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             router_address: ChecksumEvmAddress,
             flash_wallet_address: ChecksumEvmAddress,
@@ -47,7 +47,7 @@ class ZeroxCommonDecoder(DecoderInterface):
         flash_wallet_address is a contract that can execute arbitrary calls from 0x router_address.
         Docs: https://0x.org/docs/introduction/0x-cheat-sheet#exchange-proxy-addresses"""
         super().__init__(evm_inquirer, base_tools, msg_aggregator)
-        self.evm_txns = EvmTransactions(self.evm_inquirer, self.base.database)
+        self.evm_txns = EvmTransactions(self.node_inquirer, self.base.database)
         self.router_address = router_address
         self.settler_routers_addresses = settler_routers_addresses
         self.flash_wallet_address = flash_wallet_address
@@ -199,14 +199,14 @@ class ZeroxCommonDecoder(DecoderInterface):
                     receive_event=receive_address_to_events[zero_x_address],
                 )
 
-        for _log in all_logs:
-            send_event = send_address_to_events.get(_log.address)
-            receive_event = receive_address_to_events.get(_log.address)
+        for i_log in all_logs:
+            send_event = send_address_to_events.get(i_log.address)
+            receive_event = receive_address_to_events.get(i_log.address)
             if (
-                _log.topics[0] in UNISWAP_SIGNATURES and
+                i_log.topics[0] in UNISWAP_SIGNATURES and
                 len(used_router_address := self.router_addresses_set & {
-                    bytes_to_address(_log.topics[1]),  # 0x is sender
-                    bytes_to_address(_log.topics[2]),  # 0x is receiver
+                    bytes_to_address(i_log.topics[1]),  # 0x is sender
+                    bytes_to_address(i_log.topics[2]),  # 0x is receiver
                 }) > 0
             ):
                 # Some events are already being decoded as a swap through uniswap,
@@ -223,10 +223,10 @@ class ZeroxCommonDecoder(DecoderInterface):
             if (  # sent_token is transferred from tracked sender to 0x
                 send_event is not None and
                 send_event.asset.is_evm_token() and
-                _log.address == send_event.asset.evm_address and  # type: ignore[attr-defined]  # is EVM token
-                _log.topics[0] == ERC20_OR_ERC721_TRANSFER and
-                bytes_to_address(_log.topics[1]) == send_event.location_label and
-                bytes_to_address(_log.topics[2]) == self.flash_wallet_address
+                i_log.address == send_event.asset.evm_address and  # type: ignore[attr-defined]  # is EVM token
+                i_log.topics[0] == ERC20_OR_ERC721_TRANSFER and
+                bytes_to_address(i_log.topics[1]) == send_event.location_label and
+                bytes_to_address(i_log.topics[2]) == self.flash_wallet_address
             ):
                 self._update_send_receive_fee_events(send_event=send_event)
 
@@ -239,10 +239,10 @@ class ZeroxCommonDecoder(DecoderInterface):
 
         return decoded_events
 
-    def _decode_meta_tx_swap(self, context: 'DecoderContext') -> DecodingOutput:
+    def _decode_meta_tx_swap(self, context: 'DecoderContext') -> EvmDecodingOutput:
         """Decodes the swap event from the 0x router contract via executeMetaTransactionV2."""
         if context.tx_log.topics[0] != METATX_ZEROX or context.tx_log.address != self.router_address:  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         # using [] for cases with multiple dexes, where multiple send/receive events exist
         send_events, receive_events, fee_event = [], [], None
@@ -282,7 +282,7 @@ class ZeroxCommonDecoder(DecoderInterface):
             fee_event=fee_event,
         )
 
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)
 
     # -- DecoderInterface methods
 

@@ -1,15 +1,13 @@
 import logging
 from typing import TYPE_CHECKING
 
+from rotkehlchen.assets.utils import asset_normalized_value, token_normalized_value_decimals
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.ethereum.modules.sky.constants import (
     CPT_SKY,
     MIGRATION_ACTIONS_CONTRACT,
     SUSDS_ASSET,
     SUSDS_CONTRACT,
-)
-from rotkehlchen.chain.ethereum.utils import (
-    asset_normalized_value,
-    token_normalized_value_decimals,
 )
 from rotkehlchen.chain.evm.constants import (
     DEFAULT_TOKEN_DECIMALS,
@@ -19,12 +17,11 @@ from rotkehlchen.chain.evm.constants import (
 from rotkehlchen.chain.evm.decoding.spark.constants import CPT_SPARK
 from rotkehlchen.chain.evm.decoding.spark.savings.decoder import SparksavingsCommonDecoder
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_DAI, A_SDAI
 from rotkehlchen.constants.misc import ZERO
@@ -33,7 +30,7 @@ from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -45,7 +42,7 @@ class SparksavingsDecoder(SparksavingsCommonDecoder):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -60,7 +57,7 @@ class SparksavingsDecoder(SparksavingsCommonDecoder):
         )
         self.sdai = A_SDAI.resolve_to_evm_token()
 
-    def _decode_sky_migration_to_susds(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_sky_migration_to_susds(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes Sky protocol migrations from sDAI/DAI to sUSDS tokens.
 
         This belongs in the Sky decoder but lives here because our address-to-decoder
@@ -72,13 +69,13 @@ class SparksavingsDecoder(SparksavingsCommonDecoder):
             (is_deposit := context.tx_log.topics[0] == DEPOSIT_TOPIC) or
             context.tx_log.topics[0] == WITHDRAW_TOPIC_V3
         ):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if (assets_amount := token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[:32]),
             token_decimals=DEFAULT_TOKEN_DECIMALS,
         )) == ZERO:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         shares_amount = token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[32:64]),
@@ -133,7 +130,7 @@ class SparksavingsDecoder(SparksavingsCommonDecoder):
                     address=MIGRATION_ACTIONS_CONTRACT,
                     extra_data={'underlying_amount': str(underlying_dai_amount)},
                 )
-                return DecodingOutput(action_items=action_items, events=[sdai_event])
+                return EvmDecodingOutput(action_items=action_items, events=[sdai_event])
 
         # If no sDAI withdraw log found, try DAI -> sUSDS migration
         for event in context.decoded_events:
@@ -149,13 +146,13 @@ class SparksavingsDecoder(SparksavingsCommonDecoder):
                 event.address = MIGRATION_ACTIONS_CONTRACT
                 event.notes = f'Migrate {event.amount} DAI to sUSDS'
                 event.counterparty = CPT_SKY
-                return DecodingOutput(action_items=action_items)
+                return EvmDecodingOutput(action_items=action_items)
 
         # If neither sDAI nor DAI event found, log error
         log.error(f'Could not find the deposit sDAI event in {context.transaction}')
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_sdai_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_sdai_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes sDAI deposit and withdrawal events for Spark Savings.
 
         Creates corresponding sDAI events for deposit/withdrawal transactions
@@ -176,7 +173,7 @@ class SparksavingsDecoder(SparksavingsCommonDecoder):
             amount=int.from_bytes(context.tx_log.data[32:64]),
             asset=self.sdai,
         )) == ZERO:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         in_event = out_event = None
         for event in context.decoded_events:
@@ -211,9 +208,9 @@ class SparksavingsDecoder(SparksavingsCommonDecoder):
                 events_list=context.decoded_events,
             )
 
-        return DecodingOutput(events=[transfer])
+        return EvmDecodingOutput(events=[transfer])
 
-    def _decode_spark_tokens_deposit_withdrawal(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_spark_tokens_deposit_withdrawal(self, context: DecoderContext) -> EvmDecodingOutput:  # noqa: E501
         """Decodes deposit and withdrawal events for Spark tokens on Ethereum.
 
         Handles sky migration events specifically for Ethereum and delegates

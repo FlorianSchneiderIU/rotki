@@ -5,6 +5,7 @@ import ServiceKey from '@/components/settings/api-keys/ServiceKey.vue';
 import ServiceKeyCard from '@/components/settings/api-keys/ServiceKeyCard.vue';
 import { useExternalApiKeys, useServiceKeyHandler } from '@/composables/settings/api-keys/external';
 import { useNotificationsStore } from '@/store/notifications';
+import { getPublicServiceImagePath } from '@/utils/file';
 
 const name = 'thegraph';
 const { t } = useI18n({ useScope: 'global' });
@@ -40,10 +41,7 @@ const link = externalLinks.applyTheGraphApiKey;
     :key-set="!!key"
     :title="t('external_services.thegraph.title')"
     :subtitle="t('external_services.thegraph.description')"
-    image-src="./assets/images/services/thegraph.svg"
-    :primary-action="key
-      ? t('external_services.replace_key')
-      : t('external_services.save_key')"
+    :image-src="getPublicServiceImagePath('thegraph.svg')"
     :action-disabled="!serviceKeyRef?.currentValue"
     @confirm="saveHandler()"
   >
@@ -60,7 +58,7 @@ const link = externalLinks.applyTheGraphApiKey;
             size="16"
           />
         </template>
-        {{ t('external_services.delete_key') }}
+        {{ t('external_services.actions.delete_key') }}
       </RuiButton>
     </template>
     <ServiceKey

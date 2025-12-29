@@ -5,7 +5,6 @@ import { HistoryEventEntryType, Zero } from '@rotki/common';
 import useVuelidate from '@vuelidate/core';
 import dayjs from 'dayjs';
 import { isEmpty } from 'es-toolkit/compat';
-import LocationSelector from '@/components/helper/LocationSelector.vue';
 import AmountInput from '@/components/inputs/AmountInput.vue';
 import CounterpartyInput from '@/components/inputs/CounterpartyInput.vue';
 import JsonInput from '@/components/inputs/JsonInput.vue';
@@ -13,9 +12,9 @@ import { useFormStateWatcher } from '@/composables/form';
 import { useEditModeStateTracker } from '@/composables/history/events/edit-mode-state';
 import { useHistoryEventsForm } from '@/composables/history/events/form';
 import { useHistoryEventCounterpartyMappings } from '@/composables/history/events/mapping/counterparty';
-import { useHistoryEventProductMappings } from '@/composables/history/events/mapping/product';
 import { useSupportedChains } from '@/composables/info/chains';
 import { TRADE_LOCATION_EXTERNAL } from '@/data/defaults';
+import EventDateLocation from '@/modules/history/management/forms/common/EventDateLocation.vue';
 import EvmLocation from '@/modules/history/management/forms/common/EvmLocation.vue';
 import HistoryEventAssetPriceForm from '@/modules/history/management/forms/HistoryEventAssetPriceForm.vue';
 import HistoryEventTypeForm from '@/modules/history/management/forms/HistoryEventTypeForm.vue';
@@ -35,15 +34,14 @@ const { t } = useI18n({ useScope: 'global' });
 
 const { data } = toRefs(props);
 
-const { historyEventProductsMapping } = useHistoryEventProductMappings();
 const { counterparties } = useHistoryEventCounterpartyMappings();
 
 const lastLocation = useLocalStorage('rotki.history_event.location', TRADE_LOCATION_EXTERNAL);
 
 const assetPriceForm = useTemplateRef<InstanceType<typeof HistoryEventAssetPriceForm>>('assetPriceForm');
 
-const txHash = ref<string>('');
-const eventIdentifier = ref<string>('');
+const txRef = ref<string>('');
+const groupIdentifier = ref<string>('');
 const sequenceIndex = ref<string>('');
 const timestamp = ref<number>(0);
 const location = ref<string>('');
@@ -55,7 +53,6 @@ const address = ref<string>('');
 const locationLabel = ref<string>('');
 const notes = ref<string>('');
 const counterparty = ref<string>('');
-const product = ref<string>('');
 const extraData = ref<object>({});
 
 const errorMessages = ref<Record<string, string[]>>({});
@@ -65,31 +62,20 @@ const commonRules = createCommonRules();
 
 const isInformationalEvent = computed(() => get(eventType) === 'informational');
 
-const historyEventLimitedProducts = computed<string[]>(() => {
-  const counterpartyVal = get(counterparty);
-  const mapping = get(historyEventProductsMapping);
-
-  if (!counterpartyVal)
-    return [];
-
-  return mapping[counterpartyVal] ?? [];
-});
-
 const rules = {
   address: commonRules.createValidEthAddressRule(),
   amount: commonRules.createRequiredAmountRule(),
   asset: commonRules.createRequiredAssetRule(),
   counterparty: commonRules.createValidCounterpartyRule(counterparties),
-  eventIdentifier: commonRules.createRequiredEventIdentifierRule(() => get(data).type === 'edit'),
   eventSubtype: commonRules.createRequiredEventSubtypeRule(),
   eventType: commonRules.createRequiredEventTypeRule(),
+  groupIdentifier: commonRules.createRequiredGroupIdentifierRule(() => get(data).type === 'edit'),
   location: commonRules.createRequiredLocationRule(),
   locationLabel: commonRules.createExternalValidationRule(),
   notes: commonRules.createExternalValidationRule(),
-  product: commonRules.createValidProductRule(historyEventLimitedProducts),
   sequenceIndex: commonRules.createRequiredSequenceIndexRule(),
   timestamp: commonRules.createExternalValidationRule(),
-  txHash: commonRules.createValidTxHashRule(),
+  txRef: commonRules.createValidTxHashRule(),
 };
 
 const numericAmount = bigNumberifyFromRef(amount);
@@ -103,17 +89,16 @@ const states = {
   amount,
   asset,
   counterparty,
-  eventIdentifier,
   eventSubtype,
   eventType,
   extraData,
+  groupIdentifier,
   location,
   locationLabel,
   notes,
-  product,
   sequenceIndex,
   timestamp,
-  txHash,
+  txRef,
 };
 
 const v$ = useVuelidate(
@@ -128,8 +113,8 @@ useFormStateWatcher(states, stateUpdated);
 
 function reset() {
   set(sequenceIndex, get(data)?.nextSequenceId || '0');
-  set(txHash, '');
-  set(eventIdentifier, null);
+  set(txRef, '');
+  set(groupIdentifier, null);
   set(timestamp, dayjs().valueOf());
   set(location, get(lastLocation));
   set(address, '');
@@ -140,7 +125,6 @@ function reset() {
   set(amount, '0');
   set(notes, '');
   set(counterparty, '');
-  set(product, '');
   set(extraData, {});
   set(errorMessages, {});
 
@@ -149,8 +133,8 @@ function reset() {
 
 function applyEditableData(entry: EvmHistoryEvent) {
   set(sequenceIndex, entry.sequenceIndex?.toString() ?? '');
-  set(txHash, entry.txHash);
-  set(eventIdentifier, entry.eventIdentifier);
+  set(txRef, entry.txRef);
+  set(groupIdentifier, entry.groupIdentifier);
   set(timestamp, entry.timestamp);
   set(location, entry.location);
   set(eventType, entry.eventType);
@@ -161,7 +145,6 @@ function applyEditableData(entry: EvmHistoryEvent) {
   set(locationLabel, entry.locationLabel ?? '');
   set(notes, entry.userNotes ?? '');
   set(counterparty, entry.counterparty ?? '');
-  set(product, entry.product ?? '');
   set(extraData, entry.extraData || {});
 
   // Capture state snapshot for edit mode comparison
@@ -170,11 +153,11 @@ function applyEditableData(entry: EvmHistoryEvent) {
 
 function applyGroupHeaderData(entry: EvmHistoryEvent) {
   set(sequenceIndex, get(data)?.nextSequenceId || '0');
-  set(eventIdentifier, entry.eventIdentifier);
+  set(groupIdentifier, entry.groupIdentifier);
   set(location, entry.location || get(lastLocation));
   set(address, entry.address ?? '');
   set(locationLabel, entry.locationLabel ?? '');
-  set(txHash, entry.txHash);
+  set(txRef, entry.txRef);
   set(timestamp, entry.timestamp);
 }
 
@@ -198,16 +181,15 @@ async function save(): Promise<boolean> {
     asset: get(asset),
     counterparty: get(counterparty) || null,
     entryType: HistoryEventEntryType.EVM_EVENT,
-    eventIdentifier: get(eventIdentifier) ?? null,
     eventSubtype: get(eventSubtype),
     eventType: get(eventType),
     extraData: get(extraData) || null,
+    groupIdentifier: get(groupIdentifier) ?? null,
     location: get(location),
     locationLabel: get(locationLabel) || null,
-    product: get(product) || null,
     sequenceIndex: get(sequenceIndex) || '0',
     timestamp: get(timestamp),
-    txHash: get(txHash),
+    txRef: get(txRef),
     userNotes: userNotes.length > 0 ? userNotes : undefined,
   };
 
@@ -241,57 +223,43 @@ watch(location, (location: string) => {
 
 watch(data, checkPropsData);
 
-watch(historyEventLimitedProducts, (products) => {
-  const selected = get(product);
-  if (!products.includes(selected))
-    set(product, '');
-});
-
 onMounted(() => {
   checkPropsData();
 });
 
 defineExpose({
   save,
+  v$,
 });
 </script>
 
 <template>
   <div>
     <div class="grid md:grid-cols-2 gap-4 mb-4">
-      <RuiDateTimePicker
-        v-model="timestamp"
-        :label="t('common.datetime')"
-        persistent-hint
-        max-date="now"
-        color="primary"
-        variant="outlined"
-        accuracy="millisecond"
-        data-cy="datetime"
-        :hint="t('transactions.events.form.datetime.hint')"
-        :error-messages="toMessages(v$.timestamp)"
-        @blur="v$.timestamp.$touch()"
-      />
-      <LocationSelector
-        v-model="location"
-        :items="txChainsToLocation"
-        :disabled="data.type !== 'add'"
-        data-cy="location"
-        :label="t('common.location')"
-        :error-messages="toMessages(v$.location)"
-        @blur="v$.location.$touch()"
+      <EventDateLocation
+        v-model:timestamp="timestamp"
+        v-model:location="location"
+        class="col-span-2"
+        :location-disabled="data.type !== 'add'"
+        :locations="txChainsToLocation"
+        :error-messages="{
+          location: toMessages(v$.location),
+          timestamp: toMessages(v$.timestamp),
+        }"
+        @blur="v$[$event].$touch()"
       />
     </div>
 
     <RuiTextField
-      v-model="txHash"
+      v-model="txRef"
       variant="outlined"
       color="primary"
       :disabled="data.type !== 'add'"
-      data-cy="tx-hash"
+      data-cy="tx-ref"
       :label="t('common.tx_hash')"
-      :error-messages="toMessages(v$.txHash)"
-      @blur="v$.txHash.$touch()"
+      required
+      :error-messages="toMessages(v$.txRef)"
+      @blur="v$.txRef.$touch()"
     />
 
     <RuiDivider class="mb-6 mt-2" />
@@ -328,13 +296,14 @@ defineExpose({
       @blur="v$[$event].$touch()"
     />
 
-    <div class="grid md:grid-cols-3 gap-4">
+    <div class="grid md:grid-cols-2 gap-4">
       <AmountInput
         v-model="sequenceIndex"
         variant="outlined"
         integer
         data-cy="sequence-index"
         :label="t('transactions.events.form.sequence_index.label')"
+        required
         :error-messages="toMessages(v$.sequenceIndex)"
         @blur="v$.sequenceIndex.$touch()"
       />
@@ -344,18 +313,6 @@ defineExpose({
         data-cy="counterparty"
         :error-messages="toMessages(v$.counterparty)"
         @blur="v$.counterparty.$touch()"
-      />
-      <RuiAutoComplete
-        v-model="product"
-        clearable
-        variant="outlined"
-        auto-select-first
-        :disabled="historyEventLimitedProducts.length === 0"
-        :label="t('transactions.events.form.product.label')"
-        :options="historyEventLimitedProducts"
-        data-cy="product"
-        :error-messages="toMessages(v$.product)"
-        @blur="v$.product.$touch()"
       />
     </div>
 
@@ -389,13 +346,13 @@ defineExpose({
         </template>
         <div class="py-2">
           <RuiTextField
-            v-model="eventIdentifier"
+            v-model="groupIdentifier"
             variant="outlined"
             color="primary"
-            data-cy="eventIdentifier"
+            data-cy="groupIdentifier"
             :label="t('transactions.events.form.event_identifier.label')"
-            :error-messages="toMessages(v$.eventIdentifier)"
-            @blur="v$.eventIdentifier.$touch()"
+            :error-messages="toMessages(v$.groupIdentifier)"
+            @blur="v$.groupIdentifier.$touch()"
           />
 
           <JsonInput

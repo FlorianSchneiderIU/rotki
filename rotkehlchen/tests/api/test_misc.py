@@ -1,3 +1,4 @@
+import logging
 import os
 from http import HTTPStatus
 from pathlib import Path
@@ -8,13 +9,11 @@ import pytest
 import requests
 
 from rotkehlchen.accounting.mixins.event import AccountingEventType
-from rotkehlchen.chain.ethereum.constants import ETHEREUM_ETHERSCAN_NODE_NAME
-from rotkehlchen.chain.ethereum.modules.convex.constants import CPT_CONVEX
-from rotkehlchen.chain.evm.decoding.curve.constants import CPT_CURVE
+from rotkehlchen.chain.decoding.constants import CPT_GAS
+from rotkehlchen.chain.ethereum.constants import EVM_INDEXERS_NODE_NAME
 from rotkehlchen.chain.evm.types import NodeName
 from rotkehlchen.constants.misc import DEFAULT_MAX_LOG_BACKUP_FILES, DEFAULT_SQL_VM_INSTRUCTIONS_CB
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
@@ -173,9 +172,9 @@ def test_manage_nodes(rotkehlchen_api_server: 'APIServer') -> None:
         api_url_for(rotkehlchen_api_server, 'rpcnodesresource', blockchain=blockchain_key),
     )
     result = assert_proper_sync_response_with_result(response)
-    assert len(result) == 4
+    assert len(result) == 7
     for node in result:
-        if node['name'] != ETHEREUM_ETHERSCAN_NODE_NAME:
+        if node['name'] != EVM_INDEXERS_NODE_NAME:
             assert node['endpoint'] != ''
         else:
             assert node['identifier'] == 1
@@ -398,6 +397,32 @@ def test_configuration(rotkehlchen_api_server: 'APIServer') -> None:
     assert result['max_logfiles_num']['value'] == DEFAULT_MAX_LOG_BACKUP_FILES
     assert result['sqlite_instructions']['is_default'] is True
     assert result['sqlite_instructions']['value'] == DEFAULT_SQL_VM_INSTRUCTIONS_CB
+    assert result['loglevel']['value'] == 'DEBUG'
+    assert result['loglevel']['is_default'] is True
+
+
+def test_update_log_level(
+        rotkehlchen_api_server: 'APIServer',
+        caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test updating log level via configuration endpoint"""
+    assert_error_response(  # Test invalid log level
+        response=requests.put(
+            api_url_for(rotkehlchen_api_server, 'configurationsresource'),
+            json={'loglevel': 'invalid'},
+        ),
+        contained_in_msg='Invalid log level',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+
+    assert assert_proper_sync_response_with_result(requests.put(  # Switch to trace level
+        api_url_for(rotkehlchen_api_server, 'configurationsresource'),
+        json={'loglevel': (given_loglevel := 'TRACE')},
+    ))['loglevel']['value'] == given_loglevel
+
+    logger = logging.getLogger('rotkehlchen.test')
+    logger.trace('Test trace message')  # type: ignore[attr-defined]
+    assert 'Test trace message' in caplog.text
 
 
 def test_query_all_chain_ids(rotkehlchen_api_server: 'APIServer') -> None:
@@ -416,7 +441,6 @@ def test_events_mappings(rotkehlchen_api_server_with_exchanges: 'APIServer') -> 
     Test different mappings and information that we provide for rendering events information
     - Test that the structure for types mappings is correctly generated
     - Test that the valid locations are correctly provided to the frontend
-    - Test that the products are correctly returned
     """
     response = requests.get(
         api_url_for(
@@ -457,17 +481,6 @@ def test_events_mappings(rotkehlchen_api_server_with_exchanges: 'APIServer') -> 
     for detail in result['locations'].values():
         assert 'icon' in detail or 'image' in detail
 
-    response = requests.get(
-        api_url_for(
-            rotkehlchen_api_server_with_exchanges,
-            'evmproductsresource',
-        ),
-    )
-    result = assert_proper_sync_response_with_result(response)
-    assert result['mappings'][CPT_CONVEX] == [EvmProduct.GAUGE.serialize(), EvmProduct.STAKING.serialize()]  # noqa: E501
-    assert result['mappings'][CPT_CURVE] == [EvmProduct.GAUGE.serialize(), EvmProduct.BRIBE.serialize()]  # noqa: E501
-    assert result['products'] == [product.serialize() for product in EvmProduct]
-
 
 @pytest.mark.parametrize('have_decoders', [True])
 def test_counterparties(rotkehlchen_api_server_with_exchanges: 'APIServer') -> None:
@@ -475,16 +488,19 @@ def test_counterparties(rotkehlchen_api_server_with_exchanges: 'APIServer') -> N
     response = requests.get(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            'evmcounterpartiesresource',
+            'counterpartiesresource',
         ),
     )
     result = assert_proper_sync_response_with_result(response)
+    assert any(counterparty_details['identifier'] == CPT_GAS for counterparty_details in result)
     for counterparty_details in result:
         assert 'identifier' in counterparty_details
         assert 'label' in counterparty_details
         assert 'icon' in counterparty_details or 'image' in counterparty_details
-        if counterparty_details['identifier'] == 'gas':
+        if counterparty_details['identifier'] == CPT_GAS:
             assert counterparty_details['icon'] == 'lu-flame'
+        elif counterparty_details['identifier'] == 'jupiter':
+            assert counterparty_details['label'] == 'Jupiter'
 
 
 @pytest.mark.parametrize('base_manager_connect_at_start', ['DEFAULT'])
@@ -501,7 +517,7 @@ def test_connecting_to_node(rotkehlchen_api_server: 'APIServer') -> None:
 
     with patched_connection:
         rpc_url = api_url_for(rotkehlchen_api_server, 'rpcnodesresource', blockchain='base')
-        response = requests.post(url=rpc_url, json={'identifier': 19})
+        response = requests.post(url=rpc_url, json={'identifier': 28})
         assert_proper_sync_response_with_result(response)
 
         # check case of a bad identifier
@@ -546,8 +562,8 @@ def test_connecting_to_node(rotkehlchen_api_server: 'APIServer') -> None:
     ):
         # check error during connection
         rpc_url = api_url_for(rotkehlchen_api_server, 'rpcnodesresource', blockchain='base')
-        response = requests.post(url=rpc_url, json={'identifier': 19})
+        response = requests.post(url=rpc_url, json={'identifier': 28})
         assert response.json()['result'] == {
-            'errors': [{'name': 'base BlockPi', 'error': 'Custom error'}],
+            'errors': [{'name': 'dRPC', 'error': 'Custom error'}],
         }
         assert response.status_code == HTTPStatus.OK

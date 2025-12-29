@@ -3,6 +3,8 @@ from typing import Any
 
 import requests
 
+from rotkehlchen.assets.utils import token_normalized_value_decimals
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.ethereum.abi import decode_event_data_abi_str
 from rotkehlchen.chain.ethereum.modules.juicebox.constants import (
     CHARITY_PROJECTS_IDS,
@@ -15,14 +17,12 @@ from rotkehlchen.chain.ethereum.modules.juicebox.constants import (
     PAY_SIGNATURE,
     TERMINAL_3_1_2,
 )
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.misc import RemoteError
@@ -35,12 +35,12 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class JuiceboxDecoder(DecoderInterface):
+class JuiceboxDecoder(EvmDecoderInterface):
 
     def _query_project_name(self, project_id: int) -> tuple[str | None, list[str]]:
         """Query metadata for project id in ipfs"""
         try:
-            ipfs_hash = self.evm_inquirer.call_contract(
+            ipfs_hash = self.node_inquirer.call_contract(
                 contract_address=JUICEBOX_PROJECTS,
                 abi=METADATA_CONTENT_OF_ABI,
                 method_name='metadataContentOf',
@@ -63,19 +63,19 @@ class JuiceboxDecoder(DecoderInterface):
 
         return metadata.get('name'), metadata.get('tags', [])
 
-    def _decode_pay(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_pay(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode pay with rewards in juicebox"""
         if context.tx_log.topics[0] != PAY_SIGNATURE:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         try:
             topic_data, decoded_data = decode_event_data_abi_str(context.tx_log, PAY_ABI)
         except DeserializationError as e:
             log.error(
                 f'Failed to deserialize Juicebox event at '
-                f'{context.transaction.tx_hash.hex()} due to {e}',
+                f'{context.transaction.tx_hash!s} due to {e}',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = token_normalized_value_decimals(
             token_amount=decoded_data[2],
@@ -112,7 +112,7 @@ class JuiceboxDecoder(DecoderInterface):
                 action_verb = 'donating' if is_donation else 'contributing'
                 event.notes = f'Receive an NFT for {action_verb} via Juicebox'
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         return {

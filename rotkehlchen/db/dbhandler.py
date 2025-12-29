@@ -8,7 +8,7 @@ from collections import defaultdict
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Any, Literal, Optional, Unpack, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, Optional, Unpack, cast, overload
 
 from gevent.lock import Semaphore
 from pysqlcipher3 import dbapi2 as sqlcipher
@@ -42,6 +42,7 @@ from rotkehlchen.db.cache import (
     DBCacheDynamic,
     DBCacheStatic,
     ExtraTxArgType,
+    IdentifierArgType,
     IndexArgType,
     LabeledLocationArgsType,
     LabeledLocationIdArgsType,
@@ -53,6 +54,7 @@ from rotkehlchen.db.constants import (
     EXTRAINTERNALTXPREFIX,
     KDF_ITER,
     KRAKEN_ACCOUNT_TYPE_KEY,
+    OKX_LOCATION_KEY,
     USER_CREDENTIAL_MAPPING_KEYS,
 )
 from rotkehlchen.db.drivers.gevent import DBConnection, DBConnectionType, DBCursor
@@ -75,6 +77,7 @@ from rotkehlchen.db.settings import (
     db_settings_from_dict,
     serialize_db_setting,
 )
+from rotkehlchen.db.solanatx import DBSolanaTx
 from rotkehlchen.db.upgrade_manager import DBUpgradeManager
 from rotkehlchen.db.utils import (
     DBAssetBalance,
@@ -110,13 +113,14 @@ from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.constants import SUPPORTED_EXCHANGES
 from rotkehlchen.exchanges.data_structures import MarginPosition
 from rotkehlchen.exchanges.kraken import KrakenAccountType
+from rotkehlchen.exchanges.okx import OkxLocation
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import PremiumCredentials
 from rotkehlchen.serialization.deserialize import deserialize_hex_color_code, deserialize_timestamp
 from rotkehlchen.types import (
-    ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE,
+    ADDRESSBOOK_BLOCKCHAIN_GROUP_PREFIX,
     EVM_CHAINS_WITH_TRANSACTIONS,
     SPAM_PROTOCOL,
     SUPPORTED_BITCOIN_CHAINS,
@@ -127,7 +131,7 @@ from rotkehlchen.types import (
     SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE,
     SUPPORTED_EVMLIKE_CHAINS,
     SUPPORTED_EVMLIKE_CHAINS_TYPE,
-    SUPPORTED_SUBSTRATE_CHAINS,
+    SUPPORTED_SUBSTRATE_CHAINS_TYPE,
     AnyBlockchainAddress,
     ApiKey,
     ApiSecret,
@@ -142,6 +146,7 @@ from rotkehlchen.types import (
     ListOfBlockchainAddresses,
     Location,
     PurgeableModuleName,
+    SolanaAddress,
     SupportedBlockchain,
     Timestamp,
     UserNote,
@@ -150,6 +155,9 @@ from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.hashing import file_md5
 from rotkehlchen.utils.misc import get_chunks, ts_now
 from rotkehlchen.utils.serialization import rlk_jsondumps
+
+if TYPE_CHECKING:
+    from rotkehlchen.history.price import Price
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -206,12 +214,13 @@ class DBHandler:
             'last_data_migration': (int, DEFAULT_LAST_DATA_MIGRATION),
             'non_syncing_exchanges': (lambda data: [ExchangeLocationID.deserialize(x) for x in json.loads(data)], []),  # noqa: E501
             'beacon_rpc_endpoint': (str, None),
+            'btc_mempool_api': (str, None),
             'ask_user_upon_size_discrepancy': (str_to_bool, DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY),  # noqa: E501
         }
         self.conn: DBConnection = None  # type: ignore
         self.conn_transient: DBConnection = None  # type: ignore
         # Lock to make sure that 2 callers of get_or_create_evm_token do not go in at the same time
-        self.get_or_create_evm_token_lock = Semaphore()
+        self.get_or_create_token_lock = Semaphore()
         self.password = password
         self._connect()
         self._check_unfinished_upgrades(resume_from_backup=resume_from_backup)
@@ -422,6 +431,7 @@ class DBHandler:
                 'last_data_migration',
                 'non_syncing_exchanges',
                 'beacon_rpc_endpoint',
+                'btc_mempool_api',
                 'ask_user_upon_size_discrepancy',
             ],
     ) -> int | Timestamp | bool | Asset | list['ExchangeLocationID'] | str | None:
@@ -660,7 +670,10 @@ class DBHandler:
     def get_static_cache(
             self,
             cursor: 'DBCursor',
-            name: Literal[DBCacheStatic.DOCKER_DEVICE_INFO],
+            name: Literal[
+                DBCacheStatic.DOCKER_DEVICE_INFO,
+                DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+            ],
     ) -> str | None:
         ...
 
@@ -686,6 +699,8 @@ class DBHandler:
                 DBCacheStatic.LAST_GNOSISPAY_QUERY_TS,
                 DBCacheStatic.LAST_SPARK_ASSETS_UPDATE,
                 DBCacheStatic.LAST_DB_UPGRADE,
+                DBCacheStatic.STALE_BALANCES_FROM_TS,
+                DBCacheStatic.LAST_HISTORICAL_BALANCE_PROCESSING_TS,
             ],
     ) -> Timestamp | None:
         ...
@@ -710,8 +725,11 @@ class DBHandler:
         ).fetchone()) is None:
             return None
 
-        # Return string for DOCKER_DEVICE_INFO, timestamp for all others
-        if name == DBCacheStatic.DOCKER_DEVICE_INFO:
+        # Return string for DOCKER_DEVICE_INFO & MONERIUM_OAUTH_CREDENTIALS, timestamp for all others  # noqa: E501
+        if name in (
+            DBCacheStatic.DOCKER_DEVICE_INFO,
+            DBCacheStatic.MONERIUM_OAUTH_CREDENTIALS,
+        ):
             return value[0]
 
         return Timestamp(int(value[0]))
@@ -778,6 +796,15 @@ class DBHandler:
     def get_dynamic_cache(
             self,
             cursor: 'DBCursor',
+            name: Literal[DBCacheDynamic.SOLANA_TOKEN_ACCOUNT],
+            **kwargs: Unpack[AddressArgType],
+    ) -> tuple[SolanaAddress, SolanaAddress] | None:
+        ...
+
+    @overload
+    def get_dynamic_cache(
+            self,
+            cursor: 'DBCursor',
             name: Literal[DBCacheDynamic.WITHDRAWALS_TS],
             **kwargs: Unpack[AddressArgType],
     ) -> Timestamp | None:
@@ -819,12 +846,30 @@ class DBHandler:
     ) -> int | None:
         ...
 
+    @overload
+    def get_dynamic_cache(
+            self,
+            cursor: 'DBCursor',
+            name: Literal[DBCacheDynamic.LINEA_AIRDROP_ALLOCATION],
+            **kwargs: Unpack[AddressArgType],
+    ) -> str | None:
+        ...
+
+    @overload
+    def get_dynamic_cache(
+            self,
+            cursor: 'DBCursor',
+            name: Literal[DBCacheDynamic.MATCHED_ASSET_MOVEMENT],
+            **kwargs: Unpack[IdentifierArgType],
+    ) -> int | None:
+        ...
+
     def get_dynamic_cache(
             self,
             cursor: 'DBCursor',
             name: DBCacheDynamic,
             **kwargs: Any,
-    ) -> int | Timestamp | str | ChecksumEvmAddress | None:
+    ) -> int | Timestamp | str | ChecksumEvmAddress | tuple[SolanaAddress, SolanaAddress] | None:
         """Returns the cache value from the `key_value_cache` table of the DB
         according to the given `name` and `kwargs`. Defaults to `None` if not found."""
         value = cursor.execute(
@@ -956,11 +1001,41 @@ class DBHandler:
     ) -> None:
         ...
 
+    @overload
+    def set_dynamic_cache(
+            self,
+            write_cursor: 'DBCursor',
+            name: Literal[DBCacheDynamic.LINEA_AIRDROP_ALLOCATION],
+            value: str,
+            **kwargs: Unpack[AddressArgType],
+    ) -> None:
+        ...
+
+    @overload
+    def set_dynamic_cache(
+            self,
+            write_cursor: 'DBCursor',
+            name: Literal[DBCacheDynamic.SOLANA_TOKEN_ACCOUNT],
+            value: str,
+            **kwargs: Unpack[AddressArgType],
+    ) -> None:
+        ...
+
+    @overload
+    def set_dynamic_cache(
+            self,
+            write_cursor: 'DBCursor',
+            name: Literal[DBCacheDynamic.MATCHED_ASSET_MOVEMENT],
+            value: int,
+            **kwargs: Unpack[IdentifierArgType],
+    ) -> None:
+        ...
+
     def set_dynamic_cache(
             self,
             write_cursor: 'DBCursor',
             name: DBCacheDynamic,
-            value: int | Timestamp | ChecksumEvmAddress | str,
+            value: int | Timestamp | ChecksumEvmAddress | SolanaAddress | str,
             **kwargs: Any,
     ) -> None:
         """Save the name-value pair of the cache with variable name to the `key_value_cache` table."""  # noqa: E501
@@ -1211,8 +1286,11 @@ class DBHandler:
 
     def purge_exchange_data(self, write_cursor: 'DBCursor', location: Location) -> None:
         self.delete_used_query_range_for_exchange(write_cursor=write_cursor, location=location)
-        serialized_location = location.serialize_for_db()
-        write_cursor.execute('DELETE FROM history_events WHERE location = ?;', (serialized_location,))  # noqa: E501
+        DBHistoryEvents(database=self).delete_events_and_track(
+            write_cursor=write_cursor,
+            where_clause='WHERE location = ?',
+            where_bindings=(location.serialize_for_db(),),
+        )
 
     def update_used_query_range(self, write_cursor: 'DBCursor', name: str, start_ts: Timestamp, end_ts: Timestamp) -> None:  # noqa: E501
         write_cursor.execute(
@@ -1364,13 +1442,17 @@ class DBHandler:
             for address in accounts:
                 self.delete_data_for_evm_address(write_cursor, address, blockchain)  # type: ignore
 
-        if blockchain in SUPPORTED_EVMLIKE_CHAINS:
+        elif blockchain in SUPPORTED_EVMLIKE_CHAINS:
             for address in accounts:
                 self.delete_data_for_evmlike_address(write_cursor, address, blockchain)  # type: ignore
 
-        if blockchain in SUPPORTED_BITCOIN_CHAINS:
+        elif blockchain in SUPPORTED_BITCOIN_CHAINS:
             for address in accounts:
                 self.delete_data_for_bitcoin_address(write_cursor, address, blockchain)  # type: ignore  # mypy doesn't understand the blockchain if check
+        elif blockchain == SupportedBlockchain.SOLANA:
+            solana_tx_db = DBSolanaTx(self)
+            for address in accounts:
+                solana_tx_db.delete_data_for_address(write_cursor, address)  # type: ignore
 
         write_cursor.executemany(
             'DELETE FROM tag_mappings WHERE object_reference = ?;',
@@ -1553,7 +1635,7 @@ class DBHandler:
             "LEFT OUTER JOIN tag_mappings AS B ON B.object_reference = A.account "
             "LEFT OUTER JOIN address_book AS C ON C.address = A.account AND (A.blockchain IS C.blockchain OR C.blockchain IS ?) "  # noqa: E501
             "WHERE A.blockchain=? GROUP BY account;",
-            (ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE, blockchain.value),
+            (f'{ADDRESSBOOK_BLOCKCHAIN_GROUP_PREFIX}{blockchain.get_address_chain_group().name}', blockchain.value),  # noqa: E501
         )
 
         data = []
@@ -1587,8 +1669,16 @@ class DBHandler:
     def get_single_blockchain_addresses(
             self,
             cursor: 'DBCursor',
-            blockchain: SUPPORTED_SUBSTRATE_CHAINS,
+            blockchain: SUPPORTED_SUBSTRATE_CHAINS_TYPE,
     ) -> list[SubstrateAddress]:
+        ...
+
+    @overload
+    def get_single_blockchain_addresses(
+            self,
+            cursor: 'DBCursor',
+            blockchain: Literal[SupportedBlockchain.SOLANA],
+    ) -> list[SolanaAddress]:
         ...
 
     def get_single_blockchain_addresses(
@@ -1739,10 +1829,17 @@ class DBHandler:
                 f'manually tracked balance ids that do not exist',
             )
 
-    def save_balances_data(self, write_cursor: 'DBCursor', data: dict[str, Any], timestamp: Timestamp) -> None:  # noqa: E501
+    def save_balances_data(
+            self,
+            write_cursor: 'DBCursor',
+            data: dict[str, Any],
+            timestamp: Timestamp,
+            main_to_usd_rate: 'Price',
+    ) -> None:
         """The keys of the data dictionary can be any kind of asset plus 'location'
-        and 'net_usd'. This gives us the balance data per assets, the balance data
-        per location and finally the total balance
+        and 'net_value'. This gives us the balance data per assets, the balance data
+        per location and finally the total balance. `main_to_usd_rate` is the conversion
+        rate from the main currency to USD.
 
         The balances are saved in the DB at the given timestamp
         """
@@ -1757,7 +1854,7 @@ class DBHandler:
                 time=timestamp,
                 asset=key,
                 amount=val['amount'],
-                usd_value=val['usd_value'],
+                usd_value=val['value'] * main_to_usd_rate,
             ))
 
         for key, val in data['liabilities'].items():
@@ -1768,7 +1865,7 @@ class DBHandler:
                 time=timestamp,
                 asset=key,
                 amount=val['amount'],
-                usd_value=val['usd_value'],
+                usd_value=val['value'] * main_to_usd_rate,
             ))
 
         for key2, val2 in data['location'].items():
@@ -1776,12 +1873,14 @@ class DBHandler:
             val2 = cast('dict', val2)
             location = Location.deserialize(key2).serialize_for_db()
             locations.append(LocationData(
-                time=timestamp, location=location, usd_value=str(val2['usd_value']),
+                time=timestamp,
+                location=location,
+                usd_value=str(val2['value'] * main_to_usd_rate),
             ))
         locations.append(LocationData(
             time=timestamp,
             location=Location.TOTAL.serialize_for_db(),  # pylint: disable=no-member
-            usd_value=str(data['net_usd']),
+            usd_value=str(data['net_value'] * main_to_usd_rate),
         ))
         try:
             self.add_multiple_balances(write_cursor, balances)
@@ -1798,6 +1897,7 @@ class DBHandler:
             passphrase: str | None = None,
             kraken_account_type: KrakenAccountType | None = None,
             binance_selected_trade_pairs: list[str] | None = None,
+            okx_location: OkxLocation | None = None,
     ) -> None:
         if location not in SUPPORTED_EXCHANGES:
             raise InputError(f'Unsupported exchange {location!s}')
@@ -1817,6 +1917,14 @@ class DBHandler:
                     (name, location.serialize_for_db(), KRAKEN_ACCOUNT_TYPE_KEY, kraken_account_type.serialize()),  # noqa: E501
                 )
 
+            if location == Location.OKX and okx_location is not None:
+                cursor.execute(
+                    'INSERT INTO user_credentials_mappings '
+                    '(credential_name, credential_location, setting_name, setting_value) '
+                    'VALUES (?, ?, ?, ?)',
+                    (name, location.serialize_for_db(), OKX_LOCATION_KEY, okx_location.serialize()),  # noqa: E501
+                )
+
             if location in (Location.BINANCE, Location.BINANCEUS) and binance_selected_trade_pairs is not None:  # noqa: E501
                 self.set_binance_pairs(cursor, name=name, pairs=binance_selected_trade_pairs, location=location)  # noqa: E501
 
@@ -1831,6 +1939,7 @@ class DBHandler:
             passphrase: str | None,
             kraken_account_type: Optional['KrakenAccountType'],
             binance_selected_trade_pairs: list[str] | None,
+            okx_location: Optional['OkxLocation'],
     ) -> None:
         """May raise InputError if something is wrong with editing the DB"""
         if location not in SUPPORTED_EXCHANGES:
@@ -1879,6 +1988,22 @@ class DBHandler:
             except sqlcipher.DatabaseError as e:  # pylint: disable=no-member
                 raise InputError(f'Could not update DB user_credentials_mappings due to {e!s}') from e  # noqa: E501
 
+        if location == Location.OKX and okx_location is not None:
+            try:
+                write_cursor.execute(
+                    'INSERT OR REPLACE INTO user_credentials_mappings '
+                    '(credential_name, credential_location, setting_name, setting_value) '
+                    'VALUES (?, ?, ?, ?)',
+                    (
+                        new_name if new_name is not None else name,
+                        location.serialize_for_db(),
+                        OKX_LOCATION_KEY,
+                        okx_location.serialize(),
+                    ),
+                )
+            except sqlcipher.DatabaseError as e:  # pylint: disable=no-member
+                raise InputError(f'Could not update DB user_credentials_mappings due to {e!s}') from e  # noqa: E501
+
         location_is_binance = location in (Location.BINANCE, Location.BINANCEUS)
         if location_is_binance and binance_selected_trade_pairs is not None:
             try:
@@ -1915,9 +2040,12 @@ class DBHandler:
             )
 
             # also update the name of the events related to this exchange
-            write_cursor.execute(
-                'UPDATE history_events SET location_label=? WHERE location=? AND location_label=?',
-                (new_name, location.serialize_for_db(), name),
+            DBHistoryEvents(database=self).update_events_and_track(
+                write_cursor=write_cursor,
+                where_clause='WHERE location=? AND location_label=?',
+                where_bindings=(location.serialize_for_db(), name),
+                set_clause='SET location_label=?',
+                set_bindings=(new_name,),
             )
 
     def remove_exchange(self, write_cursor: 'DBCursor', name: str, location: Location) -> None:
@@ -2016,6 +2144,11 @@ class DBHandler:
                         extras[key] = KrakenAccountType.deserialize(entry[1])
                     except DeserializationError as e:
                         log.error(f'Couldnt deserialize kraken account type from DB. {e!s}')
+                elif key == OKX_LOCATION_KEY:
+                    try:  # type is checked above
+                        extras[key] = OkxLocation.deserialize(entry[1])  # type: ignore
+                    except DeserializationError as e:
+                        log.error(f'Couldnt deserialize okx location from DB. {e!s}')
                 else:  # can only be BINANCE_MARKETS_KEY
                     try:
                         extras[key] = json.loads(entry[1])
@@ -2058,7 +2191,7 @@ class DBHandler:
             tuple_type: DBTupleType,
             query: str,
             tuples: Sequence[tuple[Any, ...]],
-            **kwargs: ChecksumEvmAddress | None,
+            **kwargs: SolanaAddress | ChecksumEvmAddress | None,
     ) -> None:
         """
         Helper function to help write multiple tuples of some kind of entry and
@@ -2112,9 +2245,10 @@ class DBHandler:
             tuple_type: DBTupleType,
             query: str,
             entry: tuple[Any, ...],
-            relevant_address: ChecksumEvmAddress | None,
+            relevant_address: SolanaAddress | ChecksumEvmAddress | None,
     ) -> int | None:
         """Helper to write an entry of a tuple type and handle address mapping"""
+        tx_id = None
         try:
             write_cursor.execute(query, entry)
             if tuple_type == 'evm_transaction':
@@ -2122,15 +2256,24 @@ class DBHandler:
                     'SELECT identifier FROM evm_transactions WHERE tx_hash=? AND chain_id=?',
                     (entry[0], entry[1]),
                 ).fetchone()[0]
+                mapping_table = 'evmtx_address_mappings'
+            elif tuple_type == 'solana_transaction':
+                tx_id = write_cursor.execute(
+                    'SELECT identifier FROM solana_transactions WHERE signature=?',
+                    (entry[4],),  # signature is the 5th element (index 4) in the entry tuple
+                ).fetchone()[0]
+                mapping_table = 'solanatx_address_mappings'
+            elif tuple_type == 'solana_instruction':
+                return write_cursor.lastrowid  # return the auto-generated instruction ID
+            else:
+                return tx_id
 
-                # add address mapping if relevant_address is provided and transaction exists
-                if relevant_address is not None and tx_id is not None:
-                    write_cursor.execute(
-                        'INSERT OR IGNORE INTO evmtx_address_mappings(tx_id, address) VALUES (?, ?)',  # noqa: E501
-                        (tx_id, relevant_address),
-                    )
-
-                return tx_id  # return the transaction id (new or existing)
+            # add address mapping if relevant_address is provided and transaction exists
+            if relevant_address is not None and tx_id is not None:
+                write_cursor.execute(
+                    f'INSERT OR IGNORE INTO {mapping_table}(tx_id, address) VALUES (?, ?)',
+                    (tx_id, relevant_address),
+                )
         except sqlcipher.IntegrityError as e:  # pylint: disable=no-member
             string_repr = db_tuple_to_str(entry, tuple_type)
             log.warning(
@@ -2140,7 +2283,7 @@ class DBHandler:
         except sqlcipher.InterfaceError:  # pylint: disable=no-member
             log.critical(f'Interface error with tuple: {entry}')
 
-        return None
+        return tx_id  # return the transaction id (new or existing or None)
 
     def add_margin_positions(self, write_cursor: 'DBCursor', margin_positions: list[MarginPosition]) -> None:  # noqa: E501
         margin_tuples: list[tuple[Any, ...]] = []
@@ -2309,18 +2452,17 @@ class DBHandler:
             x[0] for x in write_cursor
             if x[1] not in other_addresses and x[2] not in other_addresses  # pylint: disable=unsupported-membership-test
         ]
+        db_history_events = DBHistoryEvents(database=self)
         for hashes_chunk in get_chunks(hashes_to_remove, n=1000):  # limit num of hashes in a query
+            placeholders = ', '.join(['?'] * len(hashes_chunk))
             write_cursor.execute(  # delete transactions themselves
-                f'DELETE FROM zksynclite_transactions WHERE tx_hash IN '
-                f'({",".join("?" * len(hashes_chunk))})',
+                f'DELETE FROM zksynclite_transactions WHERE tx_hash IN ({placeholders})',
                 hashes_chunk,
             )
-            write_cursor.execute(
-                f'DELETE FROM history_events WHERE identifier IN (SELECT H.identifier '
-                f'FROM history_events H INNER JOIN evm_events_info E '
-                f'ON H.identifier=E.identifier AND E.tx_hash IN '
-                f'({", ".join(["?"] * len(hashes_chunk))}) AND H.location=?)',
-                hashes_chunk + [Location.ZKSYNC_LITE.serialize_for_db()],
+            db_history_events.delete_events_and_track(
+                write_cursor=write_cursor,
+                where_clause=f'WHERE identifier IN (SELECT H.identifier FROM history_events H INNER JOIN chain_events_info C ON H.identifier=C.identifier AND C.tx_ref IN ({placeholders}) AND H.location=?)',  # noqa: E501
+                where_bindings=tuple(hashes_chunk) + (Location.ZKSYNC_LITE.serialize_for_db(),),
             )
 
     def delete_data_for_bitcoin_address(
@@ -2951,6 +3093,7 @@ class DBHandler:
             self,
             write_cursor: 'DBCursor',
             name: str,
+            new_name: str | None,
             description: str | None,
             background_color: HexColorCode | None,
             foreground_color: HexColorCode | None,
@@ -2961,8 +3104,52 @@ class DBHandler:
         - TagConstraintError: If the tag name to edit does not exist in the DB
         - InputError: If no field to edit was given.
         """
+        if new_name == name:
+            new_name = None
+
+        if new_name is not None and new_name.lower() != name.lower():  # TODO: Perhaps this can be simplified by changing DB schema to have an int primary key and lose the complicated logic here # noqa: E501
+            write_cursor.execute(  # name editing case. Create new tag, copy old tag & mappings to it, delete old tag  # noqa: E501
+                'SELECT description, background_color, foreground_color FROM tags WHERE name = ?;',
+                (name,),
+            )
+            result = write_cursor.fetchone()
+            if result is None:
+                raise TagConstraintError(
+                    f'Tried to edit tag with name "{name}" which does not exist',
+                )
+
+            updated_description = description if description is not None else result[0]
+            updated_background = background_color if background_color is not None else result[1]
+            updated_foreground = foreground_color if foreground_color is not None else result[2]
+
+            try:
+                write_cursor.execute(
+                    'INSERT INTO tags(name, description, background_color, foreground_color) '
+                    'VALUES (?, ?, ?, ?)',
+                    (new_name, updated_description, updated_background, updated_foreground),
+                )
+            except sqlcipher.DatabaseError as e:  # pylint: disable=no-member
+                msg = str(e)
+                if 'UNIQUE constraint failed: tags.name' in msg:
+                    msg = f'Tag with name {new_name} already exists. Tag name matching is case insensitive.'  # noqa: E501
+                else:
+                    msg = f'Unexpected DB error: {msg} while editing a tag'
+                    log.error(msg)
+
+                raise TagConstraintError(msg) from e
+
+            write_cursor.execute(
+                'UPDATE tag_mappings SET tag_name = ? WHERE tag_name = ? COLLATE NOCASE;',
+                (new_name, name),
+            )
+            write_cursor.execute('DELETE FROM tags WHERE name = ?;', (name,))
+            return
+
         query_values = []
         querystr = 'UPDATE tags SET '
+        if new_name is not None:
+            querystr += 'name = ?,'
+            query_values.append(new_name)
         if description is not None:
             querystr += 'description = ?,'
             query_values.append(description)
@@ -2982,6 +3169,11 @@ class DBHandler:
         if write_cursor.rowcount < 1:
             raise TagConstraintError(
                 f'Tried to edit tag with name "{name}" which does not exist',
+            )
+        if new_name is not None:
+            write_cursor.execute(
+                'UPDATE tag_mappings SET tag_name = ? WHERE tag_name = ? COLLATE NOCASE;',
+                (new_name, name),
             )
 
     def delete_tag(self, write_cursor: 'DBCursor', name: str) -> None:
@@ -3261,6 +3453,23 @@ class DBHandler:
             )
 
         return data
+
+    def get_xpub_derived_addresses(
+            self,
+            cursor: 'DBCursor',
+            xpub_data: XpubData,
+    ) -> list[BTCAddress]:
+        """Get all derived addresses for a specific xpub"""
+        cursor.execute(
+            'SELECT address FROM xpub_mappings WHERE xpub=? AND derivation_path IS ? AND '
+            'blockchain=?',
+            (
+                xpub_data.xpub.xpub,
+                xpub_data.serialize_derivation_path_for_db(),
+                xpub_data.blockchain.value,
+            ),
+        )
+        return [BTCAddress(row[0]) for row in cursor.fetchall()]
 
     def ensure_xpub_mappings_exist(
             self,

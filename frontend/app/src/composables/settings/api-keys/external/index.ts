@@ -1,11 +1,13 @@
 import type { MaybeRef } from '@vueuse/core';
 import type { ComputedRef, Ref } from 'vue';
 import type ServiceKey from '@/components/settings/api-keys/ServiceKey.vue';
-import type ServiceWithAuth from '@/components/settings/api-keys/ServiceWithAuth.vue';
-import type { Auth, ExternalServiceKey, ExternalServiceKeys, ExternalServiceName } from '@/types/user';
+import type { ConfirmationMessage } from '@/modules/history/events/composables/use-deletion-strategies';
+import type { ExternalServiceKey, ExternalServiceKeys, ExternalServiceName } from '@/types/user';
 import { assert, toCapitalCase, transformCase } from '@rotki/common';
 import { useExternalServicesApi } from '@/composables/api/settings/external-services-api';
 import { useConfirmStore } from '@/store/confirm';
+import { useSessionAuthStore } from '@/store/session/auth';
+import { DialogType } from '@/types/dialogs';
 import { logger } from '@/utils/logging';
 
 function getName(name: ExternalServiceName, chain?: string): string {
@@ -27,21 +29,32 @@ interface UseExternalApiKeysReturn {
   loading: Ref<boolean>;
   getName: (name: ExternalServiceName, chain?: string) => string;
   apiKey: (name: MaybeRef<ExternalServiceName>, chain?: MaybeRef<string>) => ComputedRef<string>;
-  credential: (name: MaybeRef<ExternalServiceName>) => ComputedRef<Auth | null>;
   actionStatus: (name: MaybeRef<ExternalServiceName>, chain?: MaybeRef<string>) => ComputedRef<Status | undefined>;
   load: () => Promise<void>;
   save: (payload: ExternalServiceKey, postConfirmAction?: () => Promise<void> | void) => Promise<void>;
-  confirmDelete: (name: string, postConfirmAction?: () => Promise<void> | void) => void;
+  confirmDelete: (name: string, postConfirmAction?: () => Promise<void> | void, confirmation?: Partial<ConfirmationMessage>) => void;
   keys: Ref<ExternalServiceKeys | undefined>;
 }
 
 export const useExternalApiKeys = createSharedComposable((t: ReturnType<typeof useI18n>['t']): UseExternalApiKeysReturn => {
-  const loading = ref(false);
-  const keys = ref<ExternalServiceKeys>();
+  const loading = ref<boolean>(false);
   const status = ref<Record<string, Status>>({});
 
   const { show } = useConfirmStore();
   const { deleteExternalServices, queryExternalServices, setExternalServices } = useExternalServicesApi();
+
+  const { logged } = storeToRefs(useSessionAuthStore());
+
+  const keys: Ref<ExternalServiceKeys | undefined> = asyncComputed<ExternalServiceKeys | undefined>(
+    async () => {
+      if (get(logged))
+        return queryExternalServices();
+
+      return undefined;
+    },
+    undefined,
+    { evaluating: loading },
+  );
 
   const apiKey = (
     name: MaybeRef<ExternalServiceName>,
@@ -74,21 +87,6 @@ export const useExternalApiKeys = createSharedComposable((t: ReturnType<typeof u
     }
 
     return '';
-  });
-
-  const credential = (name: MaybeRef<ExternalServiceName>): ComputedRef<Auth | null> => computed(() => {
-    const items = get(keys);
-    const service = get(name);
-
-    if (!items || service === 'blockscout')
-      return null;
-
-    const itemService = items[service];
-
-    if (itemService && 'username' in itemService)
-      return itemService;
-
-    return null;
   });
 
   const actionStatus = (
@@ -128,7 +126,6 @@ export const useExternalApiKeys = createSharedComposable((t: ReturnType<typeof u
 
   const save = async (payload: ExternalServiceKey, postConfirmAction?: () => Promise<void> | void): Promise<void> => {
     const { name } = payload;
-    const isPayloadWithCredential = 'username' in payload;
     resetStatus(name);
     try {
       set(loading, true);
@@ -137,13 +134,9 @@ export const useExternalApiKeys = createSharedComposable((t: ReturnType<typeof u
       const serviceName = toCapitalCase(name.split('_').join(' '));
 
       setStatus(name, {
-        message: isPayloadWithCredential
-          ? t('external_services.set_credential.success.message', {
-              serviceName,
-            })
-          : t('external_services.set.success.message', {
-              serviceName,
-            }),
+        message: t('external_services.set.success.message', {
+          serviceName,
+        }),
         success: true,
       });
       await postConfirmAction?.();
@@ -151,13 +144,9 @@ export const useExternalApiKeys = createSharedComposable((t: ReturnType<typeof u
     catch (error: any) {
       const errorMessage = error.message;
       setStatus(name, {
-        message: isPayloadWithCredential
-          ? t('external_services.set_credential.error.message', {
-              error: errorMessage,
-            })
-          : t('external_services.set.error.message', {
-              error: errorMessage,
-            }),
+        message: t('external_services.set.error.message', {
+          error: errorMessage,
+        }),
       });
     }
     finally {
@@ -182,13 +171,14 @@ export const useExternalApiKeys = createSharedComposable((t: ReturnType<typeof u
     }
   };
 
-  const confirmDelete = (name: string, postConfirmAction?: () => Promise<void> | void): void => {
+  const confirmDelete = (name: string, postConfirmAction?: () => Promise<void> | void, confirmation: Partial<ConfirmationMessage> = {}): void => {
     resetStatus(name);
     show(
       {
         message: t('external_services.confirmation.message'),
         title: t('external_services.confirmation.title'),
-        type: 'info',
+        ...confirmation,
+        type: DialogType.WARNING,
       },
       async () => {
         await deleteService(name);
@@ -201,7 +191,6 @@ export const useExternalApiKeys = createSharedComposable((t: ReturnType<typeof u
     actionStatus,
     apiKey,
     confirmDelete,
-    credential,
     getName,
     keys,
     load,
@@ -210,12 +199,12 @@ export const useExternalApiKeys = createSharedComposable((t: ReturnType<typeof u
   };
 });
 
-interface UseServiceKeyHandlerReturn<T extends InstanceType<typeof ServiceKey | typeof ServiceWithAuth>> {
+interface UseServiceKeyHandlerReturn<T extends InstanceType<typeof ServiceKey>> {
   serviceKeyRef: Ref<T | undefined>;
   saveHandler: () => void;
 }
 
-export function useServiceKeyHandler<T extends InstanceType<typeof ServiceKey | typeof ServiceWithAuth>>(): UseServiceKeyHandlerReturn<T> {
+export function useServiceKeyHandler<T extends InstanceType<typeof ServiceKey>>(): UseServiceKeyHandlerReturn<T> {
   const serviceKeyRef = ref<T | undefined>();
 
   const saveHandler = (): void => {

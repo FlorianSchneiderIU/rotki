@@ -1,14 +1,14 @@
-import type { ActionResult } from '@rotki/common';
 import type { EvmChainAddress } from '@/types/history/events';
-import type { PendingTask } from '@/types/task';
-import { snakeCaseTransformer } from '@/services/axios-transformers';
-import { api } from '@/services/rotkehlchen-api';
-import { handleResponse, validStatus, validWithoutSessionStatus } from '@/services/utils';
+import { defaultApiUrls } from '@/modules/api/api-urls';
+import { api } from '@/modules/api/rotki-api';
+import { VALID_WITHOUT_SESSION_STATUS } from '@/modules/api/utils';
 import { AssetMap, AssetsWithId } from '@/types/asset';
+import { type PendingTask, PendingTaskSchema } from '@/types/task';
 
 export interface AssetSearchParams {
   value: string;
   evmChain?: string;
+  assetType?: string;
   address?: string;
   limit?: number;
   searchNfts?: boolean;
@@ -23,52 +23,45 @@ interface UseAssetInfoApiReturn {
 
 export function useAssetInfoApi(): UseAssetInfoApiReturn {
   const assetMapping = async (identifiers: string[]): Promise<AssetMap> => {
-    const response = await api.instance.post<ActionResult<AssetMap>>(
+    const response = await api.post<AssetMap>(
       '/assets/mappings',
       { identifiers },
       {
-        validateStatus: validStatus,
+        baseURL: defaultApiUrls.colibriApiUrl,
+        retry: true,
       },
     );
-    return AssetMap.parse(handleResponse(response));
+    return AssetMap.parse(response);
   };
 
   const assetSearch = async (params: AssetSearchParams): Promise<AssetsWithId> => {
     const {
-      address,
-      evmChain,
       limit,
-      searchNfts,
       signal,
-      value,
+      ...payload
     } = params;
-    const response = await api.instance.post<ActionResult<AssetsWithId>>(
+    const response = await api.post<AssetsWithId>(
       '/assets/search/levenshtein',
-      snakeCaseTransformer({
-        address,
-        evmChain,
+      {
         limit: limit || 25,
-        searchNfts,
-        value,
-      }),
+        ...payload,
+      },
       {
         signal,
-        validateStatus: validStatus,
       },
     );
-    return AssetsWithId.parse(handleResponse(response));
+    return AssetsWithId.parse(response);
   };
 
   const erc20details = async (payload: EvmChainAddress): Promise<PendingTask> => {
-    const response = await api.instance.get<ActionResult<PendingTask>>('/blockchains/evm/erc20details', {
-      params: snakeCaseTransformer({
+    const response = await api.get<PendingTask>('/blockchains/evm/erc20details', {
+      query: {
         asyncQuery: true,
         ...payload,
-      }),
-      validateStatus: validWithoutSessionStatus,
+      },
+      validStatuses: VALID_WITHOUT_SESSION_STATUS,
     });
-
-    return handleResponse(response);
+    return PendingTaskSchema.parse(response);
   };
 
   return {

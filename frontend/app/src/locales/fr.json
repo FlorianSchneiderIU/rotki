@@ -36,9 +36,6 @@
       }
     },
     "edit_tooltip": "Modifier le compte",
-    "headers": {
-      "usd_value": "Valeur en {symbol}"
-    },
     "refresh_tooltip": "Actualiser les soldes {blockchain} en ignorant toutes les entrées en cache"
   },
   "account_form": {
@@ -50,7 +47,7 @@
     "labels": {
       "addresses": "Adresses",
       "addresses_entries": "aucune entrée | {count} entrée unique | {count} entrées uniques",
-      "addresses_hint": "Insérer plusieurs adresses séparées par des virgules",
+      "addresses_hint": "Insérez plusieurs adresses séparées par des virgules ou des sauts de ligne",
       "blockchain": "Choisir blockchain | Choisir blockchains",
       "btc": {
         "derivation_path": "Chemin de dérivation",
@@ -795,8 +792,7 @@
     },
     "form": {
       "labels": {
-        "address": "Adresse",
-        "for_all_chain": "Enregistrer ce nom pour toutes les chaînes"
+        "address": "Adresse"
       },
       "no_suggestions_available": "Aucune suggestion disponible",
       "validation": {
@@ -895,8 +891,7 @@
   "asset_locations": {
     "header": {
       "percentage": "Pourcentage",
-      "validator": "Index du validateur | Clé publique",
-      "value": "{symbol} valeur"
+      "validator": "Index du validateur | Clé publique"
     },
     "title": "Localisations d'actifs"
   },
@@ -916,7 +911,6 @@
       "delete_error": "Impossible de supprimer la cartographie : {message}",
       "edit_error": "Impossible de modifier la correspondance : {message}",
       "edit_title": "Modifier le mappage",
-      "exchange": "Échanger",
       "filter_by_exchange": "Filtrer par échange",
       "filter_by_location_symbol": "Filtrer par symbole d'actif",
       "form": {
@@ -1313,6 +1307,7 @@
     "details": "Détails",
     "entry_type": "Type d'entrée",
     "events": "Événements",
+    "exchange": "Plateforme d'Échange",
     "fee": "Frais",
     "filter": {
       "date_hint": "format {format} HH:mm:ss (les secondes sont facultatives)",
@@ -1720,9 +1715,6 @@
     "subtitle": "Ce sont les options de formatage de date prises en charge",
     "title": "Format de date"
   },
-  "date_time_picker": {
-    "limit_now": "Impossible d'utiliser une date future"
-  },
   "docker_warning": {
     "action": "Oui, je comprends",
     "documentation": "documentation",
@@ -1827,7 +1819,6 @@
       "activate_tooltip": "Modifier les clés API pour la plateforme d'échange.",
       "deactivate_tooltip": "Annuler la modification des clés API pour la plateforme d'échange."
     },
-    "exchange": "Plateforme d'Échange",
     "name": {
       "non_empty": "Le champ Nom ne peut être vide."
     }
@@ -1900,10 +1891,6 @@
       "message": "Voulez-vous vraiment supprimer cette clé API ?",
       "title": "Supprimer la Clé API"
     },
-    "credential": {
-      "password": "Mot de Passe",
-      "username": "Nom d'Utilisateur"
-    },
     "cryptocompare": {
       "description": "rotki utilise cryptocompare pour obtenir des informations de prix sur les actifs de votre portefeuille. Une clé API est uniquement nécessaire si vous disposez de nombreux actifs et êtes soumis à une limitation de taux.",
       "hint": "Entrer votre clé API CryptoCompare",
@@ -1926,10 +1913,25 @@
       "title": "Loopring"
     },
     "monerium": {
-      "description": "Utilisé pour afficher correctement les transactions Monerium avec les informations pertinentes.",
+      "access_token": "Jeton d'accès",
+      "auth_failed": "Échec de l'autorisation avec Monerium",
+      "authorizing": "Autorisation auprès de Monerium",
+      "connect": "Connecter",
+      "connected_as": "Connecté en tant que {email}",
+      "description": "Utilisé pour enrichir les transactions Monerium sur rotki avec les informations bancaires correspondantes.",
+      "disconnect": "Déconnecter",
+      "disconnected": "Déconnexion de Monerium effectuée.",
+      "error": "OAuth Monerium",
+      "instructions": "Connectez Monerium pour garder vos données rotki synchronisées avec votre compte.",
+      "opening_browser": "Ouverture du navigateur pour terminer l'autorisation Monerium...",
+      "refresh_token": "Jeton d'actualisation",
+      "submit_token": "Envoyer les jetons",
+      "success": "OAuth Monerium",
       "title": "Monerium",
-      "understand": "Je comprends le risque",
-      "warning": "À l'heure actuelle, Monerium utilise uniquement une authentification de base, il ne s'agit donc pas de données en lecture seule."
+      "token_required": "Les jetons d'accès et d'actualisation sont requis.",
+      "unknown_email": "email inconnu",
+      "warning": "Autorisez Monerium afin que rotki puisse enrichir vos transactions. Les jetons d'accès sont stockés localement et utilisés en lecture seule.",
+      "website_url_missing": "L'URL du site web pour OAuth Monerium n'est pas configurée."
     },
     "opensea": {
       "description": "Utilisé pour interroger les informations et soldes NFT sur Opensea.",
@@ -1942,14 +1944,6 @@
       },
       "success": {
         "message": "Mise à jour réussie de la clé pour {serviceName}"
-      }
-    },
-    "set_credential": {
-      "error": {
-        "message": "Erreur lors de la configuration des informations d'identification du service externe : {error}"
-      },
-      "success": {
-        "message": "Mise à jour réussie des informations d'identification pour {serviceName}"
       }
     },
     "subtitle": "rotki se connecte à divers fournisseurs de services pour obtenir des informations tels que des prix historiques ou des données de blockchain. Dans certains cas, rotki dépend de ces API pour des informations de base, auquel cas vous devrez fournir une clé API."
@@ -2040,7 +2034,6 @@
     },
     "labels": {
       "btc_derivation_gap": "Limite d'écart de dérivation BTC",
-      "chains_to_skip_detection": "Réseaux EVM pour lesquels la détection automatique des jetons doit être ignorée",
       "date_display_format": "Format d'affichage de la date",
       "date_input_format": "Format d'entrée de la date",
       "treat_eth2_as_eth": "Faut-il traiter ETH2 (ETH en jeu) comme ETH"
@@ -2113,7 +2106,7 @@
       },
       "decimal_separator": {
         "error": "Erreur lors de la configuration du séparateur décimal",
-        "success": "Le séparateur décimal est défini sur {decimalSeparator}"
+        "success": "Le séparateur décimal est défini sur \"{decimalSeparator}\""
       },
       "floating_precision": {
         "error": "Erreur lors de la configuration de la précision flottante sur {precision}",
@@ -2122,7 +2115,7 @@
       },
       "thousand_separator": {
         "error": "Erreur lors de la configuration du séparateur de milliers",
-        "success": "Le séparateur de milliers est défini sur {thousandSeparator}"
+        "success": "Le séparateur de milliers est défini sur \"{thousandSeparator}\""
       },
       "treat_eth2_as_eth": {
         "error": "Erreur lors de la modification du paramètre pour traiter ETH2 (Staked ETH) comme ETH"
@@ -2532,7 +2525,6 @@
       "create_a_custom_asset": "Créer un actif personnalisé",
       "input_manual_price": "Ajouter et utiliser un prix manuel",
       "label": "Étiquette",
-      "price_asset": "Prix de l'actif",
       "tags": "Étiquettes"
     },
     "type": {
@@ -2643,7 +2635,6 @@
       "non_fungible_balances": "Soldes NFT"
     },
     "dashboard": "Tableau de bord",
-    "defi": "DeFi",
     "defi_sub": {
       "airdrops": "Airdrops"
     },
@@ -3187,9 +3178,7 @@
     "loading_hint": "La génération de votre rapport peut prendre un certain temps en fonction du nombre d'opérations et d'actions que vous avez effectués pendant la période sélectionnée.",
     "loading_message": "Patientez pendant la génération du rapport...",
     "report_period": "Rapport à partir du {start} au {end}",
-    "settings_tooltip": "Ouvrir les paramètres de comptabilité",
-    "upgrade": "{processed} événements au total ont été traités à partir de {start}.",
-    "upgrade2": "La limite de la version gratuite a été atteinte. Pour obtenir le rapport complet, veuillez passer à {link}"
+    "settings_tooltip": "Ouvrir les paramètres de comptabilité"
   },
   "profit_loss_reports": {
     "columns": {
@@ -3573,12 +3562,6 @@
         "notes": {
           "hint": "[Facultatif] Notes supplémentaires à enregistrer pour l'action"
         },
-        "product": {
-          "label": "Produit",
-          "validation": {
-            "valid": "Le champ produit est invalide, remplissez-le avec des produits disponibles"
-          }
-        },
         "resulting_combination": {
           "label": "Combinaison résultante",
           "unknown": "La combinaison résultante est inconnue, cet événement ne sera pas traité correctement."
@@ -3611,10 +3594,10 @@
       },
       "headers": {
         "eth_block_event": "Bloc {blockNumber} produit",
-        "eth_deposit_event": "Événements de dépôt {txHash}",
+        "eth_deposit_event": "Événements de dépôt {txRef}",
         "eth_withdrawal_event": "Retrait pour le validateur {validatorIndex}",
         "event_identifier": "Information événement",
-        "evm_event": "Transaction {txHash}",
+        "evm_event": "Transaction {txRef}",
         "history_event": "Événement {location}"
       },
       "loading": "Chargement des événements...",
@@ -3677,7 +3660,6 @@
       "event_subtype": "filtrer par sous-type d'événement",
       "event_type": "filtrer par type d'événement",
       "location": "filtrer par emplacement de l'événement",
-      "product": "filtrer par produit",
       "protocol": "filtrer par le protocole des événements",
       "show_ignored_assets": "Afficher les entrées avec des actifs ignorés",
       "start_date": "filtrer par la date de début de la période des transactions",
@@ -3773,9 +3755,13 @@
     "restart": "rotki va redémarrer dans un instant pour appliquer la mise à jour."
   },
   "upgrade_row": {
-    "events": "Traitement de {limit} sur {total} {label} à partir de {from} jusqu'à {to}. Pour en afficher plus, merci de passer à {link}",
+    "events": "@:upgrade_row.first_line Pour en afficher plus, merci de passer à {link}",
+    "events_premium": "@:upgrade_row.first_line Pour en afficher plus, merci de {link}",
+    "first_line": "Traitement de {limit} sur {total} {label} à partir de {from} jusqu'à {to}.",
     "rotki_premium": "rotki Premium",
-    "upgrade": "Affichage de {limit} sur {total} {label}. Pour en afficher plus, merci de passer à {link}"
+    "upgrade": "Affichage de {limit} sur {total} {label}. Pour en afficher plus, merci de passer à {link}",
+    "upgrade_premium": "Affichage de {limit} sur {total} {label}. Pour en afficher plus, merci de {link}",
+    "upgrade_your_plan": "améliorer votre plan"
   },
   "user_dropdown": {
     "change_privacy_mode": {

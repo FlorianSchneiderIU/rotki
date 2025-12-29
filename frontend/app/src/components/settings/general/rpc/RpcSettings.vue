@@ -8,8 +8,11 @@ import LocationDisplay from '@/components/history/LocationDisplay.vue';
 import SettingCategoryHeader from '@/components/settings/SettingCategoryHeader.vue';
 import { useSupportedChains } from '@/composables/info/chains';
 import { isOfEnum } from '@/utils';
+import { getPublicProtocolImagePath, getPublicServiceImagePath } from '@/utils/file';
 
 const { t } = useI18n({ useScope: 'global' });
+
+const route = useRoute();
 
 interface ChainRpcSettingTab {
   chain: Blockchain;
@@ -42,6 +45,13 @@ const evmChainTabs = useArrayMap(txEvmChains, (chain) => {
 const rpcSettingTabs = computed<RpcSettingTab[]>(() => [
   ...get(evmChainTabs),
   {
+    component: defineAsyncComponent(() => import('@/components/settings/general/rpc/simple/SimpleRpcNodeManager.vue')),
+    id: 'btc_mempool_space',
+    image: getPublicServiceImagePath('mempool.png'),
+    name: 'Bitcoin Mempool',
+    setting: 'btcMempoolApi',
+  },
+  {
     // Solana behaves like EVM RPC nodes in UI/API
     chain: Blockchain.SOLANA,
     component: defineAsyncComponent(() => import('@/components/settings/general/rpc/BlockchainRpcNodeManager.vue')),
@@ -59,7 +69,7 @@ const rpcSettingTabs = computed<RpcSettingTab[]>(() => [
   {
     component: defineAsyncComponent(() => import('@/components/settings/general/rpc/simple/SimpleRpcNodeManager.vue')),
     id: 'eth_consensus_layer',
-    image: './assets/images/protocols/ethereum.svg',
+    image: getPublicProtocolImagePath('ethereum.svg'),
     name: 'ETH Beacon Node',
     setting: 'beaconRpcEndpoint',
   },
@@ -75,6 +85,23 @@ function addNodeClick() {
     refElement[0].addNewRpcNode();
   }
 }
+
+onMounted(() => {
+  const tabQuery = get(route).query.tab;
+  if (tabQuery) {
+    const tabs = get(rpcSettingTabs);
+    const tabIndex = tabs.findIndex((tab) => {
+      if ('id' in tab) {
+        return tab.id === tabQuery;
+      }
+      return false;
+    });
+
+    if (tabIndex !== -1) {
+      set(rpcSettingTab, tabIndex);
+    }
+  }
+});
 </script>
 
 <template>

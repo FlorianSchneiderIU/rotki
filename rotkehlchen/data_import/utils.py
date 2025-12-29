@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 ITEMS_PER_DB_WRITE = 400
 MAX_ERROR_PERCENT = 0.2  # max percent of messages to total entries
-MIN_ENTRIES = 50  # mininmum number of entries before checking MAX_ERROR_PERCENT
+MIN_ENTRIES = 50  # minimum number of entries before checking MAX_ERROR_PERCENT
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -218,7 +218,7 @@ def detect_duplicate_event(
     with importer.db.conn.read_ctx() as read_cursor:
         read_cursor.execute(
             f"SELECT COUNT(*) FROM history_events WHERE "
-            f"event_identifier LIKE '{event_prefix}%' "
+            f"group_identifier LIKE '{event_prefix}%' "
             "AND asset=? AND amount=? AND timestamp=? AND location=? "
             "AND type=? AND subtype=?",
             (asset.identifier, str(amount), timestamp_ms, location.serialize_for_db(),

@@ -3,7 +3,7 @@ import pytest
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.arbitrum_one.modules.hyperliquid.constants import BRIDGE_ADDRESS, CPT_HYPER
 from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
@@ -25,7 +25,7 @@ def test_deposit(
     )
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=(timestamp := TimestampMS(1740826458000)),
             location=Location.ARBITRUM_ONE,
@@ -37,7 +37,7 @@ def test_deposit(
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=7,
             timestamp=timestamp,
             location=Location.ARBITRUM_ONE,
@@ -66,7 +66,7 @@ def test_withdrawal(
     )
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=TimestampMS(1740828178000),
             location=Location.ARBITRUM_ONE,

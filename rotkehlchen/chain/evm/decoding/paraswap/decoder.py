@@ -3,16 +3,16 @@ from abc import ABC
 from typing import TYPE_CHECKING
 
 from rotkehlchen.assets.asset import CryptoAsset, EvmToken
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.transactions import EvmTransactions
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -23,7 +23,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 from .constants import CPT_PARASWAP
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
@@ -32,18 +32,18 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class ParaswapCommonDecoder(DecoderInterface, ABC):
+class ParaswapCommonDecoder(EvmDecoderInterface, ABC):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             router_address: ChecksumEvmAddress,
             fee_receiver_address: ChecksumEvmAddress,
     ) -> None:
         super().__init__(evm_inquirer, base_tools, msg_aggregator)
-        self.evm_txns = EvmTransactions(self.evm_inquirer, self.base.database)
+        self.evm_txns = EvmTransactions(self.node_inquirer, self.base.database)
         self.router_address = router_address
         self.fee_receiver_address = fee_receiver_address
 
@@ -52,13 +52,13 @@ class ParaswapCommonDecoder(DecoderInterface, ABC):
             context: DecoderContext,
             sender: ChecksumEvmAddress,
             receiver: ChecksumEvmAddress | None = None,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """This function is used to decode the swap done by paraswap.
         In v6 swaps, receiver is unavailable and is ignored,
         since sender should always be a tracked address.
         """
         if not self.base.any_tracked((sender,) if receiver is None else (sender, receiver)):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         out_event: EvmEvent | None = None
         in_event: EvmEvent | None = None
@@ -91,8 +91,8 @@ class ParaswapCommonDecoder(DecoderInterface, ABC):
                     partial_refund_event = event
 
         if in_event is None or out_event is None:
-            log.error(f'Could not find the corresponding events when decoding {self.evm_inquirer.chain_name} paraswap swap {context.transaction.tx_hash.hex()}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            log.error(f'Could not find the corresponding events when decoding {self.node_inquirer.chain_name} paraswap swap {context.transaction.tx_hash!s}')  # noqa: E501
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if partial_refund_event is not None:  # if some in_asset is returned back.
             # it's assumed in the above for loop, that the second in_event is the partial refund
@@ -131,7 +131,7 @@ class ParaswapCommonDecoder(DecoderInterface, ABC):
                     user_address=sender,
                 )
             except RemoteError as e:
-                log.error(f'Failed to get internal transactions for paraswap {self.evm_inquirer.chain_name} swap {context.transaction.tx_hash.hex()} due to {e!s}')  # noqa: E501
+                log.error(f'Failed to get internal transactions for paraswap {self.node_inquirer.chain_name} swap {context.transaction.tx_hash!s} due to {e!s}')  # noqa: E501
             else:
                 if len(internal_fee_txs) > 0:
                     fee_raw = internal_fee_txs[0].value  # assuming only one tx from router to fee claimer  # noqa: E501
@@ -161,7 +161,7 @@ class ParaswapCommonDecoder(DecoderInterface, ABC):
             ordered_events=[out_event, in_event, fee_event],
             events_list=context.decoded_events,
         )
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)
 
     # -- DecoderInterface methods
 

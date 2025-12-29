@@ -2,6 +2,7 @@
 import ServiceKey from '@/components/settings/api-keys/ServiceKey.vue';
 import ServiceKeyCard from '@/components/settings/api-keys/ServiceKeyCard.vue';
 import { useExternalApiKeys, useServiceKeyHandler } from '@/composables/settings/api-keys/external';
+import { getPublicServiceImagePath } from '@/utils/file';
 
 const name = 'cryptocompare';
 const { t } = useI18n({ useScope: 'global' });
@@ -19,10 +20,7 @@ const status = actionStatus(name);
     data-cy="cryptocompare-api-keys"
     :title="t('external_services.cryptocompare.title')"
     :subtitle="t('external_services.cryptocompare.description')"
-    image-src="./assets/images/services/cryptocompare.svg"
-    :primary-action="key
-      ? t('external_services.replace_key')
-      : t('external_services.save_key')"
+    :image-src="getPublicServiceImagePath('cryptocompare.svg')"
     :action-disabled="!serviceKeyRef?.currentValue"
     @confirm="saveHandler()"
   >
@@ -40,7 +38,7 @@ const status = actionStatus(name);
             size="16"
           />
         </template>
-        {{ t('external_services.delete_key') }}
+        {{ t('external_services.actions.delete_key') }}
       </RuiButton>
     </template>
     <ServiceKey

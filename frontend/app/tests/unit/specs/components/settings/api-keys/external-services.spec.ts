@@ -7,10 +7,9 @@ import flushPromises from 'flush-promises';
 import { type Pinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computed } from 'vue';
-import EvmChainIcon from '@/components/helper/display/icons/EvmChainIcon.vue';
+import ChainIcon from '@/components/helper/display/icons/ChainIcon.vue';
 import ServiceKey from '@/components/settings/api-keys/ServiceKey.vue';
 import ServiceKeyCard from '@/components/settings/api-keys/ServiceKeyCard.vue';
-import ServiceWithAuth from '@/components/settings/api-keys/ServiceWithAuth.vue';
 import { useExternalServicesApi } from '@/composables/api/settings/external-services-api';
 import ExternalServices from '@/pages/api-keys/external/index.vue';
 import { useConfirmStore } from '@/store/confirm';
@@ -78,10 +77,9 @@ describe('/settings/api-keys/external-services', () => {
           Teleport: {
             template: '<span><slot /></span>',
           },
-          EvmChainIcon,
+          ChainIcon,
           ServiceKeyCard,
           ServiceKey,
-          ServiceWithAuth,
         },
       },
     });
@@ -122,7 +120,7 @@ describe('/settings/api-keys/external-services', () => {
         .find('[data-cy="bottom-dialog"] [data-cy=etherscan] [data-cy=service-key__api-key] input')
         .setValue('123');
       await nextTick();
-      await wrapper.find('[data-cy="bottom-dialog"] [data-cy="confirm"]').trigger('click');
+      await wrapper.find('form').trigger('submit');
       await flushPromises();
       const message = wrapper
         .find('[data-cy="bottom-dialog"] [data-cy=etherscan] [data-cy=service-key__content] .details')
@@ -143,7 +141,7 @@ describe('/settings/api-keys/external-services', () => {
         .find('[data-cy="bottom-dialog"] [data-cy=cryptocompare] [data-cy=service-key__api-key] input')
         .setValue('123');
       await nextTick();
-      await wrapper.find('[data-cy="bottom-dialog"] [data-cy="confirm"]').trigger('click');
+      await wrapper.find('form').trigger('submit');
       await flushPromises();
       const message = wrapper
         .find('[data-cy="bottom-dialog"] [data-cy=cryptocompare] [data-cy=service-key__content] .details')
@@ -164,7 +162,7 @@ describe('/settings/api-keys/external-services', () => {
         .find('[data-cy=bottom-dialog] [data-cy=etherscan] [data-cy=service-key__api-key] input')
         .setValue('123');
       await nextTick();
-      await wrapper.find('[data-cy="bottom-dialog"] [data-cy="confirm"]').trigger('click');
+      await wrapper.find('form').trigger('submit');
       await flushPromises();
       const message = wrapper
         .find('[data-cy=bottom-dialog] [data-cy=etherscan] [data-cy=service-key__content] .details')

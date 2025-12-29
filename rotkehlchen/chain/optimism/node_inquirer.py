@@ -9,7 +9,6 @@ from rotkehlchen.chain.evm.l2_with_l1_fees.node_inquirer import (
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
-from rotkehlchen.externalapis.blockscout import Blockscout
 from rotkehlchen.fval import FVal
 from rotkehlchen.greenlets.manager import GreenletManager
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -24,7 +23,9 @@ from .constants import (
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.externalapis.blockscout import Blockscout
     from rotkehlchen.externalapis.etherscan import Etherscan
+    from rotkehlchen.externalapis.routescan import Routescan
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -37,6 +38,8 @@ class OptimismInquirer(DSProxyL2WithL1FeesInquirerWithCacheData):
             greenlet_manager: GreenletManager,
             database: 'DBHandler',
             etherscan: 'Etherscan',
+            blockscout: 'Blockscout',
+            routescan: 'Routescan',
             rpc_timeout: int = DEFAULT_RPC_TIMEOUT,
     ) -> None:
         contracts = EvmContracts[Literal[ChainID.OPTIMISM]](chain_id=ChainID.OPTIMISM)
@@ -44,6 +47,8 @@ class OptimismInquirer(DSProxyL2WithL1FeesInquirerWithCacheData):
             greenlet_manager=greenlet_manager,
             database=database,
             etherscan=etherscan,
+            blockscout=blockscout,
+            routescan=routescan,
             blockchain=SupportedBlockchain.OPTIMISM,
             contracts=contracts,
             rpc_timeout=rpc_timeout,
@@ -51,11 +56,6 @@ class OptimismInquirer(DSProxyL2WithL1FeesInquirerWithCacheData):
             contract_scan=contracts.contract(BALANCE_SCANNER_ADDRESS),
             dsproxy_registry=contracts.contract(string_to_evm_address('0x283Cc5C26e53D66ed2Ea252D986F094B37E6e895')),
             native_token=A_ETH.resolve_to_crypto_asset(),
-            blockscout=Blockscout(
-                blockchain=SupportedBlockchain.OPTIMISM,
-                database=database,
-                msg_aggregator=database.msg_aggregator,
-            ),
         )
 
     # -- Implementation of EvmNodeInquirer base methods --

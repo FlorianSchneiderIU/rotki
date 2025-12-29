@@ -5,7 +5,7 @@ import { type AssetBalanceWithPrice, Zero } from '@rotki/common';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
 import PremiumLock from '@/components/premium/PremiumLock.vue';
-import { useAssetInfoRetrieval } from '@/composables/assets/retrieval';
+import { useAssetSelectInfo } from '@/composables/assets/asset-select-info';
 import { usePremium } from '@/composables/premium';
 import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
@@ -22,13 +22,13 @@ const props = withDefaults(defineProps<PoolDetailsProps>(), {
 });
 
 const sort = ref<DataTableSortData<AssetBalanceWithPrice>>({
-  column: 'usdValue',
+  column: 'value',
   direction: 'desc' as const,
 });
 
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const { assetPrice } = usePriceUtils();
-const { assetInfo } = useAssetInfoRetrieval();
+const { assetInfo } = useAssetSelectInfo();
 const premium = usePremium();
 const { t } = useI18n({ useScope: 'global' });
 
@@ -53,7 +53,7 @@ const cols = computed<DataTableColumn<AssetBalanceWithPrice>[]>(() => [{
 }, {
   align: 'end',
   class: 'text-no-wrap',
-  key: 'usdValue',
+  key: 'value',
   label: t('common.value_in_symbol', {
     symbol: get(currencySymbol),
   }),
@@ -66,8 +66,8 @@ const sorted = computed<AssetBalanceWithPrice[]>(() => {
   const transformed: AssetBalanceWithPrice[] = props.assets.map(item => ({
     amount: item.userBalance.amount,
     asset: item.asset,
-    usdPrice: item.usdPrice ?? get(assetPrice(item.asset)) ?? Zero,
-    usdValue: item.userBalance.usdValue,
+    usdPrice: get(assetPrice(item.asset)) ?? Zero,
+    value: item.userBalance.value,
   }));
 
   return sortAssetBalances(transformed, get(sort), assetInfo);
@@ -103,14 +103,14 @@ const sorted = computed<AssetBalanceWithPrice[]>(() => {
     <template #item.amount="{ row }">
       <AmountDisplay :value="row.amount" />
     </template>
-    <template #item.usdValue="{ row }">
+    <template #item.value="{ row }">
       <AmountDisplay
         show-currency="symbol"
         :amount="row.amount"
         :price-asset="row.asset"
         :price-of-asset="row.usdPrice"
         fiat-currency="USD"
-        :value="row.usdValue"
+        :value="row.value"
       />
     </template>
   </RuiDataTable>

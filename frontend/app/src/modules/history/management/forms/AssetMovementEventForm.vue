@@ -7,10 +7,12 @@ import { requiredIf } from '@vuelidate/validators';
 import dayjs from 'dayjs';
 import { isEqual } from 'es-toolkit';
 import { isEmpty } from 'es-toolkit/compat';
+import ChainSelect from '@/components/accounts/blockchain/ChainSelect.vue';
 import LocationSelector from '@/components/helper/LocationSelector.vue';
 import AmountInput from '@/components/inputs/AmountInput.vue';
 import AssetSelect from '@/components/inputs/AssetSelect.vue';
 import AutoCompleteWithSearchSync from '@/components/inputs/AutoCompleteWithSearchSync.vue';
+import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
 import { useFormStateWatcher } from '@/composables/form';
 import { useEditModeStateTracker } from '@/composables/history/events/edit-mode-state';
 import { useHistoryEventsForm } from '@/composables/history/events/form';
@@ -44,7 +46,7 @@ const historyEventTypesData = [{
 
 const assetPriceForm = useTemplateRef<InstanceType<typeof HistoryEventAssetPriceForm>>('assetPriceForm');
 
-const eventIdentifier = ref<string>('');
+const groupIdentifier = ref<string>('');
 const timestamp = ref<number>(0);
 const location = ref<string>('');
 const locationLabel = ref<string>('');
@@ -56,6 +58,8 @@ const hasFee = ref<boolean>(false);
 const fee = ref<string>('');
 const feeAsset = ref<string>('');
 const uniqueId = ref<string>('');
+const transactionId = ref<string>('');
+const blockchain = ref<string>('');
 
 const errorMessages = ref<Record<string, string[]>>({});
 
@@ -65,14 +69,16 @@ const commonRules = createCommonRules();
 const rules = {
   amount: commonRules.createRequiredAmountRule(),
   asset: commonRules.createRequiredAssetRule(),
-  eventIdentifier: commonRules.createExternalValidationRule(),
+  blockchain: commonRules.createExternalValidationRule(),
   eventType: commonRules.createRequiredEventTypeRule(),
   fee: commonRules.createRequiredFeeRule(requiredIf(logicAnd(hasFee, refIsTruthy(feeAsset)))),
   feeAsset: commonRules.createRequiredFeeAssetRule(requiredIf(logicAnd(hasFee, refIsTruthy(fee)))),
+  groupIdentifier: commonRules.createExternalValidationRule(),
   location: commonRules.createRequiredLocationRule(),
   locationLabel: commonRules.createExternalValidationRule(),
   notes: commonRules.createExternalValidationRule(),
   timestamp: commonRules.createExternalValidationRule(),
+  transactionId: commonRules.createExternalValidationRule(),
   uniqueId: commonRules.createExternalValidationRule(),
 };
 
@@ -84,15 +90,17 @@ const { captureEditModeStateFromRefs, shouldSkipSaveFromRefs } = useEditModeStat
 const states = {
   amount,
   asset,
-  eventIdentifier,
+  blockchain,
   eventType,
   fee,
   feeAsset,
+  groupIdentifier,
   hasFee,
   location,
   locationLabel,
   notes,
   timestamp,
+  transactionId,
   uniqueId,
 };
 
@@ -121,7 +129,7 @@ const locationLabelSuggestions = computed<string[]>(() => {
 });
 
 function reset() {
-  set(eventIdentifier, '');
+  set(groupIdentifier, '');
   set(timestamp, dayjs().valueOf());
   set(location, get(lastLocation));
   set(locationLabel, '');
@@ -131,6 +139,8 @@ function reset() {
   set(notes, ['']);
   set(errorMessages, {});
   set(uniqueId, '');
+  set(blockchain, '');
+  set(transactionId, '');
 
   get(assetPriceForm)?.reset();
 }
@@ -138,7 +148,7 @@ function reset() {
 function applyEditableData(entry: AssetMovementEvent, feeEvent?: AssetMovementEvent) {
   const eventNotes = entry.userNotes ?? '';
 
-  set(eventIdentifier, entry.eventIdentifier);
+  set(groupIdentifier, entry.groupIdentifier);
   set(timestamp, entry.timestamp);
   set(location, entry.location);
   set(locationLabel, entry.locationLabel ?? '');
@@ -161,6 +171,14 @@ function applyEditableData(entry: AssetMovementEvent, feeEvent?: AssetMovementEv
     set(uniqueId, entry.extraData.reference);
   }
 
+  if (entry.extraData?.transactionId) {
+    set(transactionId, entry.extraData.transactionId);
+  }
+
+  if (entry.extraData?.blockchain) {
+    set(blockchain, entry.extraData.blockchain);
+  }
+
   // Capture state snapshot for edit mode comparison
   captureEditModeStateFromRefs(states);
 }
@@ -173,18 +191,23 @@ async function save(): Promise<boolean> {
   const eventData = get(data);
   const editable = eventData.type === 'edit-group' ? eventData.eventsInGroup[0] : undefined;
 
+  // Generate UUID for uniqueId if not present and not in edit mode
+  const generatedUniqueId = !editable && !get(uniqueId) ? crypto.randomUUID() : get(uniqueId);
+
   let payload: NewAssetMovementEventPayload = {
     amount: get(numericAmount).isNaN() ? Zero : get(numericAmount),
     asset: get(asset),
+    blockchain: get(blockchain),
     entryType: HistoryEventEntryType.ASSET_MOVEMENT_EVENT,
-    eventIdentifier: get(eventIdentifier),
     eventType: get(eventType),
     fee: null,
     feeAsset: null,
+    groupIdentifier: get(groupIdentifier),
     location: get(location),
     locationLabel: get(locationLabel),
     timestamp: get(timestamp),
-    uniqueId: get(uniqueId),
+    transactionId: get(transactionId),
+    uniqueId: generatedUniqueId,
     userNotes: get(notes),
   };
 
@@ -247,18 +270,19 @@ watch(errorMessages, (errors) => {
 
 defineExpose({
   save,
+  v$,
 });
 </script>
 
 <template>
   <div>
     <div class="grid md:grid-cols-2 gap-4 mb-4">
-      <RuiDateTimePicker
+      <DateTimePicker
         v-model="timestamp"
         :label="t('common.datetime')"
+        required
         persistent-hint
         max-date="now"
-        color="primary"
         variant="outlined"
         accuracy="millisecond"
         data-cy="datetime"
@@ -271,6 +295,7 @@ defineExpose({
         :disabled="data.type === 'edit-group'"
         data-cy="location"
         :label="t('common.location')"
+        required
         :error-messages="toMessages(v$.location)"
         @blur="v$.location.$touch()"
       />
@@ -290,6 +315,7 @@ defineExpose({
       v-model="eventType"
       variant="outlined"
       :label="t('transactions.events.form.event_type.label')"
+      required
       :options="historyEventTypesData"
       key-attr="identifier"
       text-attr="label"
@@ -308,16 +334,6 @@ defineExpose({
       :location="location"
       :v$="v$"
       :timestamp="timestamp"
-    />
-
-    <RuiDivider class="mb-6 mt-2" />
-
-    <RuiTextField
-      v-model="uniqueId"
-      variant="outlined"
-      data-cy="unique-id"
-      color="primary"
-      :label="t('transactions.events.form.unique_id.label')"
     />
 
     <RuiDivider class="mb-6 mt-2" />
@@ -397,13 +413,44 @@ defineExpose({
         </template>
         <div class="py-2">
           <RuiTextField
-            v-model="eventIdentifier"
+            v-model="groupIdentifier"
             variant="outlined"
             color="primary"
-            data-cy="eventIdentifier"
+            data-cy="groupIdentifier"
             :label="t('transactions.events.form.event_identifier.label')"
-            :error-messages="toMessages(v$.eventIdentifier)"
-            @blur="v$.eventIdentifier.$touch()"
+            :error-messages="toMessages(v$.groupIdentifier)"
+            @blur="v$.groupIdentifier.$touch()"
+          />
+
+          <RuiTextField
+            v-model="uniqueId"
+            variant="outlined"
+            data-cy="unique-id"
+            color="primary"
+            :label="t('transactions.events.form.unique_id.label')"
+            :error-messages="toMessages(v$.uniqueId)"
+            @blur="v$.uniqueId.$touch()"
+          />
+
+          <RuiTextField
+            v-model="transactionId"
+            variant="outlined"
+            color="primary"
+            data-cy="tx-ref"
+            :label="t('common.tx_hash')"
+            :error-messages="toMessages(v$.transactionId)"
+            @blur="v$.transactionId.$touch()"
+          />
+
+          <ChainSelect
+            v-model="blockchain"
+            variant="outlined"
+            data-cy="blockchain-id"
+            color="primary"
+            custom-value
+            :label="t('common.blockchain')"
+            :error-messages="toMessages(v$.blockchain)"
+            @blur="v$.blockchain.$touch()"
           />
         </div>
       </RuiAccordion>

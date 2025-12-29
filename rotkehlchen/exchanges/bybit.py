@@ -23,7 +23,6 @@ from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import MarginPosition
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.exchanges.utils import SignatureGeneratorMixin
-from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.deserialization import deserialize_price
 from rotkehlchen.history.events.structures.asset_movement import (
     AssetMovement,
@@ -36,7 +35,7 @@ from rotkehlchen.history.events.structures.swap import (
     get_swap_spend_receive,
 )
 from rotkehlchen.history.events.structures.types import HistoryEventType
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_fval
@@ -65,17 +64,17 @@ RECEIVE_WINDOW: Final = '10000'
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
+FOUR_LETTER_QUOTE_ASSETS: Final = {'USDT', 'USDC', 'USDE', 'USDQ', 'USDR', 'USD1', 'XUSD'}
+FIVE_LETTER_QUOTE_ASSETS: Final = {'RLUSD'}
 
-def bybit_symbol_to_base_quote(
-        symbol: str,
-        four_letter_assets: set[str],
-) -> tuple[AssetWithOracles, AssetWithOracles]:
+
+def bybit_symbol_to_base_quote(symbol: str) -> tuple[AssetWithOracles, AssetWithOracles]:
     """Turns a bybit symbol product into a base/quote asset tuple
 
     - Can raise UnknownAsset if any of the pair assets are not known to rotki
     """
     # bybit has special pairs with perpetuals/shorts of the tokens
-    split_symbol = None
+    split_symbol = []
     if '2L' in symbol:
         split_symbol = symbol.split('2L')
     elif '2S' in symbol:
@@ -87,15 +86,20 @@ def bybit_symbol_to_base_quote(
     elif '2' in symbol:
         split_symbol = symbol.split('2')
 
-    if split_symbol is not None and len(split_symbol) == 2:
-        base_asset = asset_from_bybit(split_symbol[0])
-        quote_asset = asset_from_bybit(split_symbol[1])
-    elif len(symbol) >= 4 and symbol[-4:] in four_letter_assets:
-        base_asset, quote_asset = asset_from_bybit(symbol[:-4].upper()), asset_from_bybit(symbol[-4:].upper())  # noqa: E501
-    else:
-        base_asset, quote_asset = asset_from_bybit(symbol[:-3].upper()), asset_from_bybit(symbol[-3:].upper())  # noqa: E501
+    if len(split_symbol) == 2 and all(len(x) != 0 for x in split_symbol):
+        return asset_from_bybit(split_symbol[0]), asset_from_bybit(split_symbol[1])
 
-    return base_asset, quote_asset
+    if len(symbol) >= 5 and symbol[-5:] in FIVE_LETTER_QUOTE_ASSETS:
+        quote_asset_offset = -5
+    elif len(symbol) >= 4 and symbol[-4:] in FOUR_LETTER_QUOTE_ASSETS:
+        quote_asset_offset = -4
+    else:
+        quote_asset_offset = -3
+
+    return (
+        asset_from_bybit(symbol[:quote_asset_offset].upper()),
+        asset_from_bybit(symbol[quote_asset_offset:].upper()),
+    )
 
 
 class Bybit(ExchangeInterface, SignatureGeneratorMixin):
@@ -142,14 +146,6 @@ class Bybit(ExchangeInterface, SignatureGeneratorMixin):
         }
         self.is_unified_account = False
         self.history_events_db = DBHistoryEvents(self.db)
-        self.four_letter_assets = {'USDT', 'USDC', 'USDE', 'USDQ', 'USDR', 'USD1'}  # known quote assets  # noqa: E501
-        with GlobalDBHandler().conn.read_ctx() as cursor:
-            cursor.execute(
-                'SELECT exchange_symbol FROM location_asset_mappings WHERE (location IS ? OR location IS NULL) AND LENGTH(exchange_symbol) = 4;',  # noqa: E501
-                (Location.BYBIT.serialize_for_db(),),
-            )
-            for symbol in cursor:
-                self.four_letter_assets.add(symbol[0])
 
     def edit_exchange_credentials(self, credentials: ExchangeAuthCredentials) -> bool:
         changed = super().edit_exchange_credentials(credentials)
@@ -360,10 +356,7 @@ class Bybit(ExchangeInterface, SignatureGeneratorMixin):
                     continue  # api doesn't allow to filter by status in the classic spot
 
                 try:
-                    base_asset, quote_asset = bybit_symbol_to_base_quote(
-                        symbol=raw_trade['symbol'],
-                        four_letter_assets=self.four_letter_assets,
-                    )
+                    base_asset, quote_asset = bybit_symbol_to_base_quote(raw_trade['symbol'])
                 except (UnknownAsset, KeyError):
                     log.error(f'Could not read assets from bybit trade {raw_trade}')
                     continue
@@ -382,7 +375,7 @@ class Bybit(ExchangeInterface, SignatureGeneratorMixin):
                         spend=spend,
                         receive=receive,
                         location_label=self.name,
-                        event_identifier=create_event_identifier_from_unique_id(
+                        group_identifier=create_group_identifier_from_unique_id(
                             location=self.location,
                             unique_id=raw_trade['orderId'],
                         ),
@@ -454,10 +447,8 @@ class Bybit(ExchangeInterface, SignatureGeneratorMixin):
                 )) == ZERO:
                     continue
 
-                if coin_data.get('usdValue', '') != '':
-                    usd_value = deserialize_fval(coin_data['usdValue'], name=f'Bybit usd value for {asset}', location='bybit')  # we don't need to calculate it since it is provided by bybit  # noqa: E501
-                else:
-                    usd_value = Inquirer.find_usd_price(asset=asset) * amount
+                value = amount * Inquirer.find_main_currency_price(asset)
+
             except UnknownAsset as e:
                 self.send_unknown_asset_message(
                     asset_identifier=e.identifier,
@@ -471,7 +462,7 @@ class Bybit(ExchangeInterface, SignatureGeneratorMixin):
                     msg = f'Missing key entry for {msg}.'
                 raise DeserializationError(f'Error processing Bybit balance entry {coin_data}. {msg}') from e  # noqa: E501
 
-            assets_balance[asset] += Balance(amount=amount, usd_value=usd_value)
+            assets_balance[asset] += Balance(amount=amount, value=value)
 
         return assets_balance
 
@@ -626,6 +617,7 @@ class Bybit(ExchangeInterface, SignatureGeneratorMixin):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
+            force_refresh: bool = False,
     ) -> tuple[Sequence['HistoryBaseEntry'], Timestamp]:
         """Query deposits and withdrawals sequentially"""
         events: list[AssetMovement | SwapEvent] = []

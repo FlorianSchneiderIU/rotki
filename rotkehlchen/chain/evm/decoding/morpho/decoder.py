@@ -2,20 +2,21 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache, token_normalized_value
+from rotkehlchen.assets.utils import token_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache
 from rotkehlchen.chain.evm.constants import DEPOSIT_TOPIC, WITHDRAW_TOPIC_V3, ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import REWARD_CLAIMED
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface, ReloadableDecoderMixin
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface, ReloadableDecoderMixin
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.evm.decoding.utils import get_protocol_token_addresses
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
-from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.errors.misc import NotERC20Conformant, NotERC721Conformant
 from rotkehlchen.globaldb.cache import globaldb_get_general_cache_values
 from rotkehlchen.globaldb.handler import GlobalDBHandler
@@ -28,8 +29,8 @@ from .constants import CPT_MORPHO
 from .utils import query_morpho_reward_distributors, query_morpho_vaults
 
 if TYPE_CHECKING:
-    from rotkehlchen.assets.asset import Asset, EvmToken
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.assets.asset import EvmToken
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
     from rotkehlchen.fval import FVal
@@ -40,16 +41,20 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class MorphoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
+class MorphoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             bundlers: set['ChecksumEvmAddress'],
-            weth: 'Asset',
+            adapters: set['ChecksumEvmAddress'],
     ) -> None:
+        """Initialize the Morpho common decoder.
+        For bundler and adapter addresses on each chain see
+        https://docs.morpho.org/get-started/resources/addresses/
+        """
         super().__init__(
             evm_inquirer=evm_inquirer,
             base_tools=base_tools,
@@ -57,46 +62,46 @@ class MorphoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
         )
         self.vaults: set[ChecksumEvmAddress] = set()
         self.bundlers = bundlers
+        self.adapters = adapters
         self.rewards_distributors: list[ChecksumEvmAddress] = []
-        self.weth = weth
 
     def reload_data(self) -> Mapping['ChecksumEvmAddress', tuple[Any, ...]] | None:
         """Check that cache is up to date and refresh cache from db.
         Returns a fresh addresses to decoders mapping.
         """
         updated = False
-        if should_update_protocol_cache(self.base.database, CacheType.MORPHO_VAULTS) is True:
+        if should_update_protocol_cache(
+                userdb=self.base.database,
+                cache_key=CacheType.MORPHO_VAULTS,
+                args=(str(self.node_inquirer.chain_id),),
+        ) is True:
             query_morpho_vaults(
-                database=self.evm_inquirer.database,
-                chain_id=self.evm_inquirer.chain_id,
+                database=self.node_inquirer.database,
+                chain_id=self.node_inquirer.chain_id,
             )
             updated = True
         if should_update_protocol_cache(
                 userdb=self.base.database,
                 cache_key=CacheType.MORPHO_REWARD_DISTRIBUTORS,
-                args=(str(self.evm_inquirer.chain_id),),
+                args=(str(self.node_inquirer.chain_id),),
         ) is True:
-            query_morpho_reward_distributors()
+            query_morpho_reward_distributors(chain_id=self.node_inquirer.chain_id)
             updated = True
         if updated is False and len(self.vaults) != 0 and len(self.rewards_distributors) != 0:
             return None  # we didn't update the globaldb cache, and we have the data already
 
+        self.vaults = get_protocol_token_addresses(
+            protocol=CPT_MORPHO,
+            chain_id=self.node_inquirer.chain_id,
+            existing_tokens=self.vaults,
+        )
         with GlobalDBHandler().conn.read_ctx() as cursor:
-            query_body = 'FROM evm_tokens WHERE protocol=? AND chain=?'
-            bindings = (CPT_MORPHO, self.evm_inquirer.chain_id.serialize_for_db())
-
-            cursor.execute(f'SELECT COUNT(*) {query_body}', bindings)
-            if cursor.fetchone()[0] != len(self.vaults):
-                # we are missing new vaults. Populate the cache
-                cursor.execute(f'SELECT protocol, address {query_body}', bindings)
-                self.vaults = {string_to_evm_address(row[1]) for row in cursor}
-
             self.rewards_distributors = [
                 string_to_evm_address(address) for address in globaldb_get_general_cache_values(
                     cursor=cursor,
                     key_parts=(
                         CacheType.MORPHO_REWARD_DISTRIBUTORS,
-                        str(self.evm_inquirer.chain_id),
+                        str(self.node_inquirer.chain_id),
                     ),
                 )
             ]
@@ -143,18 +148,21 @@ class MorphoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             return [], None
 
         vault_token, underlying_token, shares_amount, assets_amount = tokens_and_amounts
-        spend_events, spent_amount, receive_event, is_weth_vault = [], ZERO, None, False
+        spend_events, spent_amount, receive_event, is_wrapped_native_vault = [], ZERO, None, False
         for event in context.decoded_events:
             if (
                 event.event_type == HistoryEventType.SPEND and
                 event.event_subtype == HistoryEventSubType.NONE and
                 (
                     event.asset == underlying_token or
-                    (is_weth_vault := (event.asset == A_ETH and underlying_token == self.weth))  # WETH vaults can have an ETH send event  # noqa: E501
+                    (is_wrapped_native_vault := (
+                        event.asset == self.node_inquirer.native_token and
+                        underlying_token == self.node_inquirer.wrapped_native_token
+                    ))  # wrapped native vaults can have a native token send event
                 ) and
                 (
                     event.amount == assets_amount or
-                    (is_weth_vault and event.address in self.bundlers)
+                    (is_wrapped_native_vault and event.address in self.bundlers)
                 ) and
                 self.base.is_tracked(bytes_to_address(context.tx_log.topics[2]))  # owner address should be tracked  # noqa: E501
             ):
@@ -177,12 +185,12 @@ class MorphoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
                 event.counterparty = CPT_MORPHO
                 receive_event = event
 
-            if (is_weth_vault is False and len(spend_events) == 1) and receive_event is not None:
+            if (is_wrapped_native_vault is False and len(spend_events) == 1) and receive_event is not None:  # noqa: E501
                 return spend_events, receive_event
 
         if (
             receive_event is not None and
-            (len(spend_events) == 0 or (is_weth_vault and spent_amount != assets_amount))
+            (len(spend_events) == 0 or (is_wrapped_native_vault and spent_amount != assets_amount))
         ):  # Create a deposit event for funds moved from another vault if the spend events don't cover the deposited amount.  # noqa: E501
             deposit_event = self.base.make_event_from_transaction(
                 transaction=context.transaction,
@@ -230,8 +238,10 @@ class MorphoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
                 event.event_type == HistoryEventType.RECEIVE and
                 event.event_subtype == HistoryEventSubType.NONE and
                 (
-                    event.asset == underlying_token or
-                    (event.asset == A_ETH and underlying_token == self.weth)  # WETH vaults can have an ETH receive event  # noqa: E501
+                    event.asset == underlying_token or (
+                        event.asset == self.node_inquirer.native_token and
+                        underlying_token == self.node_inquirer.wrapped_native_token
+                    )  # wrapped native vaults can have a native token send event
                 ) and
                 event.amount == assets_amount
             ):
@@ -261,7 +271,7 @@ class MorphoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
 
         return spend_event, receive_event
 
-    def _decode_vault_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_vault_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode events from Morpho vaults."""
         if context.tx_log.topics[0] == DEPOSIT_TOPIC:
             out_events, in_event = self._decode_deposit(context=context)
@@ -269,22 +279,22 @@ class MorphoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             out_event, in_event = self._decode_withdraw(context=context)
             out_events = [out_event] if out_event is not None else []
         else:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if len(out_events) == 0 or in_event is None:
             log.error(f'Failed to find both out and in events for Morpho vault transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         maybe_reshuffle_events(
             ordered_events=out_events + [in_event],
             events_list=context.decoded_events,
         )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_reward_claim(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_reward_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode Morpho vault reward claim event."""
         if context.tx_log.topics[0] != REWARD_CLAIMED:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         claimed_asset = self.base.get_or_create_evm_asset(
             address=bytes_to_address(context.tx_log.topics[2]),
@@ -303,7 +313,7 @@ class MorphoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
         else:
             log.error(f'Failed to find Morpho reward claim event in {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _remove_unneeded_bundler_events(
             self,
@@ -317,8 +327,10 @@ class MorphoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             event for event in decoded_events if not (
                 event.event_type in {HistoryEventType.SPEND, HistoryEventType.RECEIVE} and
                 event.event_subtype == HistoryEventSubType.NONE and
-                event.address in self.bundlers and
-                event.address == transaction.to_address
+                (
+                    (event.address in self.bundlers and event.address == transaction.to_address) or
+                    event.address in self.adapters
+                )
             )
         ]
 

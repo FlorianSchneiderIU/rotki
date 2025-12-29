@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import LocationSelector from '@/components/helper/LocationSelector.vue';
+import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
 
 const timestamp = defineModel<number>('timestamp', { required: true });
 const location = defineModel<string>('location', { required: true });
@@ -11,9 +12,11 @@ withDefaults(defineProps<{
     timestamp: string[];
     location: string[];
   };
+  locations?: string[];
 }>(), {
   dateDisabled: false,
   locationDisabled: false,
+  locations: () => [],
 });
 
 const emit = defineEmits<{
@@ -25,12 +28,12 @@ const { t } = useI18n({ useScope: 'global' });
 
 <template>
   <div class="grid md:grid-cols-2 gap-4 mb-4">
-    <RuiDateTimePicker
+    <DateTimePicker
       v-model="timestamp"
       :label="t('common.datetime')"
+      required
       persistent-hint
       max-date="now"
-      color="primary"
       variant="outlined"
       accuracy="millisecond"
       :disabled="dateDisabled"
@@ -43,7 +46,9 @@ const { t } = useI18n({ useScope: 'global' });
       v-model="location"
       :disabled="locationDisabled"
       data-cy="location"
+      :items="locations"
       :label="t('common.location')"
+      required
       :error-messages="errorMessages.location"
       @blur="emit('blur', 'location')"
     />

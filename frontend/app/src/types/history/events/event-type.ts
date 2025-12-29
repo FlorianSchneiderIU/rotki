@@ -9,7 +9,7 @@ const RuiIcon = z.string().transform((icon) => {
     return icon satisfies RuiIcons;
 
   console.warn(`${icon} returned from the backend does not match RuiIcons`);
-  return 'lu-circle-help' satisfies RuiIcons;
+  return 'lu-circle-question-mark' satisfies RuiIcons;
 });
 
 const HistoryEventTypeGlobalMapping = z.record(z.string(), z.record(z.string(), z.object({
@@ -49,12 +49,3 @@ export const HistoryEventTypeData = z.object({
 });
 
 export type HistoryEventTypeData = z.infer<typeof HistoryEventTypeData>;
-
-const HistoryEventProductMapping = z.array(z.string());
-
-export const HistoryEventProductData = z.object({
-  mappings: z.record(z.string(), HistoryEventProductMapping),
-  products: HistoryEventProductMapping,
-});
-
-export type HistoryEventProductData = z.infer<typeof HistoryEventProductData>;

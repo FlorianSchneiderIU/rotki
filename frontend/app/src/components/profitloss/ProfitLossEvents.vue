@@ -13,11 +13,10 @@ import CostBasisTable from '@/components/profitloss/CostBasisTable.vue';
 import ProfitLossEventType from '@/components/profitloss/ProfitLossEventType.vue';
 import ReportProfitLossEventAction from '@/components/profitloss/ReportProfitLossEventAction.vue';
 import { useSupportedChains } from '@/composables/info/chains';
-import { usePremium } from '@/composables/premium';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useReportsStore } from '@/store/reports';
-import { getCollectionData } from '@/utils/collection';
+import { getCollectionData, setupEntryLimit } from '@/utils/collection';
 import { isTransactionEvent } from '@/utils/report';
 
 interface GroupLine {
@@ -147,7 +146,8 @@ const tableHeaders = computed<DataTableColumn<PnLItem>[]>(() => [
 
 useRememberTableSorting<PnLItem>(TableId.REPORT_EVENTS, sort, tableHeaders);
 
-const { data } = getCollectionData<ProfitLossEvent>(state);
+const { data, entriesFoundTotal, found, limit, total } = getCollectionData<ProfitLossEvent>(state);
+const { showUpgradeRow } = setupEntryLimit(limit, found, total, entriesFoundTotal);
 
 const items = computed<PnLItem[]>(() => {
   const dataVal = get(data);
@@ -156,13 +156,6 @@ const items = computed<PnLItem[]>(() => {
     groupLine: checkGroupLine(dataVal, index),
     id: index,
   }));
-});
-
-const premium = usePremium();
-
-const showUpgradeMessage = computed(() => {
-  const { processedActions, totalActions } = get(report);
-  return !get(premium) && totalActions > processedActions;
 });
 
 function checkGroupLine(entries: ProfitLossEvents, index: number) {
@@ -218,15 +211,15 @@ onMounted(async () => {
           class="h-full !block"
         >
           <template #activator>
-            <div :class="$style.group">
+            <div class="relative h-full w-2.5 ml-6">
               <div
                 v-if="row.groupLine.top"
-                :class="[$style.group__line, $style['group__line-top']]"
+                class="absolute h-1/2 left-1/2 w-0 transform -translate-x-1/2 border-l-2 border-dashed border-rui-primary top-0"
               />
-              <div :class="$style.group__dot" />
+              <div class="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-rui-primary" />
               <div
                 v-if="row.groupLine.bottom"
-                :class="[$style.group__line, $style['group__line-bottom']]"
+                class="absolute h-1/2 left-1/2 w-0 transform -translate-x-1/2 border-l-2 border-dashed border-rui-primary bottom-0"
               />
             </div>
           </template>
@@ -289,13 +282,14 @@ onMounted(async () => {
         />
       </template>
       <template
-        v-if="showUpgradeMessage"
+        v-if="showUpgradeRow"
         #body.prepend="{ colspan }"
       >
         <UpgradeRow
           events
-          :total="report.totalActions"
-          :limit="report.processedActions"
+          :limit="limit"
+          :total="total"
+          :found="found"
           :time-end="report.lastProcessedTimestamp"
           :time-start="report.firstProcessedTimestamp"
           :colspan="colspan"
@@ -361,25 +355,3 @@ onMounted(async () => {
     </RuiDataTable>
   </RuiCard>
 </template>
-
-<style module lang="scss">
-.group {
-  @apply relative h-full w-2.5 ml-6;
-
-  &__dot {
-    @apply absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-rui-primary;
-  }
-
-  &__line {
-    @apply absolute h-1/2 left-1/2 w-0 transform -translate-x-1/2 border-l-2 border-dashed border-rui-primary;
-
-    &-top {
-      @apply top-0;
-    }
-
-    &-bottom {
-      @apply bottom-0;
-    }
-  }
-}
-</style>

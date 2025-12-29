@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { assert } from '@rotki/common';
+import type { Content, JSONContent, JsonEditor, TextContent } from 'vanilla-jsoneditor';
 import { debounce } from 'es-toolkit';
-import { type Content, createJSONEditor, type JSONContent, type JsonEditor, type TextContent } from 'vanilla-jsoneditor';
 
 const modelValue = defineModel<Record<string, any>>({ required: true });
 
@@ -22,14 +21,18 @@ watch(modelValue, (newValue: any) => {
   deep: true,
 });
 
-onMounted(() => {
+onMounted(async () => {
+  const container = get(jsonEditorContainer);
+  if (!container)
+    return;
+
+  const { createJSONEditor } = await import('vanilla-jsoneditor');
+
   const onChange = debounce((updatedContent: Content) => {
     set(modelValue, (updatedContent as TextContent).text === undefined
       ? (updatedContent as JSONContent).json
       : (updatedContent as TextContent).text);
   }, 100);
-
-  assert(isDefined(jsonEditorContainer));
 
   const newJsonEditor = createJSONEditor({
     props: {
@@ -39,7 +42,7 @@ onMounted(() => {
       navigationBar: false,
       onChange,
     },
-    target: get(jsonEditorContainer),
+    target: container,
   });
 
   set(jsonEditor, newJsonEditor);
@@ -58,31 +61,8 @@ onBeforeUnmount(() => {
     >
       {{ label }}
     </div>
-    <div :class="$style.editor">
+    <div class="json-editor rounded border border-rui-grey-500 dark:border-rui-grey-700">
       <div ref="jsonEditorContainer" />
     </div>
   </div>
 </template>
-
-<style lang="scss" module>
-.editor {
-  @apply rounded border border-rui-grey-500;
-
-  --jse-background-color: transparent;
-  --jse-main-border: none;
-  --jse-theme-color: rgb(var(--rui-light-primary-main));
-}
-
-:global(.dark) {
-  .editor {
-    @apply border-rui-grey-700;
-
-    --jse-theme-color: rgb(var(--rui-dark-primary-main));
-    --jse-delimiter-color: var(--rui-dark-text-secondary);
-    --jse-text-color: var(--rui-dark-text-secondary);
-    --jse-key-color: var(--rui-dark-text-secondary);
-    --jse-tag-color: var(--rui-dark-text-secondary);
-    --jse-tag-background: var(--rui-dark-text-secondary);
-  }
-}
-</style>

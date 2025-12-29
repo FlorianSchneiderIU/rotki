@@ -1,5 +1,4 @@
-import type { AssetInfoWithId } from '@/types/asset';
-import { NumericString } from '@rotki/common';
+import { type AssetInfoWithId, NumericString } from '@rotki/common';
 import { z } from 'zod/v4';
 
 /**
@@ -31,7 +30,7 @@ const Nft = z.object({
   permalink: z.string().nullable(),
   priceAsset: z.string(),
   priceInAsset: NumericString,
-  priceUsd: NumericString,
+  price: NumericString,
   tokenIdentifier: z.string().min(1),
 });
 

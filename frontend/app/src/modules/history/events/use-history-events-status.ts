@@ -10,10 +10,11 @@ import { TaskType } from '@/types/task-type';
 interface UseHistoryEventStatusReturn {
   ethBlockEventsDecoding: ComputedRef<boolean>;
   anyEventsDecoding: ComputedRef<boolean>;
-  evmEventsDecoding: ComputedRef<boolean>;
+  txEventsDecoding: ComputedRef<boolean>;
   processing: ComputedRef<boolean>;
   refreshing: ComputedRef<boolean>;
   sectionLoading: ComputedRef<boolean>;
+  isRepulling: ComputedRef<boolean>;
   shouldFetchEventsRegularly: ComputedRef<boolean>;
 }
 
@@ -25,25 +26,28 @@ export function useHistoryEventsStatus(): UseHistoryEventStatusReturn {
   const { isAllFinished: isQueryingOnlineEventsFinished } = toRefs(useEventsQueryStatusStore());
 
   const sectionLoading = isSectionLoading(Section.HISTORY);
-  const evmEventsDecoding = useIsTaskRunning(TaskType.TRANSACTIONS_DECODING);
+  const txEventsDecoding = useIsTaskRunning(TaskType.TRANSACTIONS_DECODING);
   const ethBlockEventsDecoding = useIsTaskRunning(TaskType.ETH_BLOCK_EVENTS_DECODING);
-  const anyEventsDecoding = logicOr(evmEventsDecoding, ethBlockEventsDecoding);
+  const anyEventsDecoding = logicOr(txEventsDecoding, ethBlockEventsDecoding);
   const protocolCacheUpdatesLoading = useIsTaskRunning(TaskType.REFRESH_GENERAL_CACHE);
   const onlineHistoryEventsLoading = useIsTaskRunning(TaskType.QUERY_ONLINE_EVENTS);
+  const queryExchangeEventsLoading = useIsTaskRunning(TaskType.QUERY_EXCHANGE_EVENTS);
+  const isRepulling = useIsTaskRunning(TaskType.REPULLING_TXS);
   const isTransactionsLoading = useIsTaskRunning(TaskType.TX);
 
-  const refreshing = logicOr(sectionLoading, anyEventsDecoding, onlineHistoryEventsLoading, protocolCacheUpdatesLoading);
+  const refreshing = logicOr(sectionLoading, anyEventsDecoding, queryExchangeEventsLoading, onlineHistoryEventsLoading, protocolCacheUpdatesLoading);
   const querying = not(logicOr(isQueryingTxsFinished, isQueryingOnlineEventsFinished));
   const shouldFetchEventsRegularly = logicOr(querying, refreshing);
-  const processing = logicOr(isTransactionsLoading, querying, refreshing);
+  const processing = logicOr(isTransactionsLoading, isRepulling, refreshing);
 
   return {
     anyEventsDecoding,
     ethBlockEventsDecoding,
-    evmEventsDecoding,
+    isRepulling,
     processing,
     refreshing,
     sectionLoading,
     shouldFetchEventsRegularly,
+    txEventsDecoding,
   };
 }

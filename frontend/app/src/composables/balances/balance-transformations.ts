@@ -36,8 +36,8 @@ type AssetProtocolBalancesWithManual = Record<string, ProtocolBalancesWithManual
 export function manualToAssetProtocolBalances(balances: ManualBalanceWithValue[]): AssetProtocolBalances {
   const protocolBalances: AssetProtocolBalances = {};
 
-  for (const { amount, asset, location, usdValue } of balances) {
-    const balance: Balance = { amount, usdValue };
+  for (const { amount, asset, location, value } of balances) {
+    const balance: Balance = { amount, value };
 
     protocolBalances[asset] ??= {};
 
@@ -161,7 +161,7 @@ function aggregateAddressProtocol(
 /**
  * Helper function to aggregate balance for a protocol
  */
-export function aggregateBalanceForProtocol(
+function aggregateBalanceForProtocol(
   existingBalance: BalanceWithManual | undefined,
   newBalance: Balance,
   isManualSource: boolean,
@@ -226,7 +226,7 @@ export function aggregateSourceBalances(
 /**
  * Gets sorted protocol balances
  */
-export function getSortedProtocolBalances(protocolBalances: ProtocolBalancesWithManual): ProtocolBalanceWithChains[] {
+function getSortedProtocolBalances(protocolBalances: ProtocolBalancesWithManual): ProtocolBalanceWithChains[] {
   return Object.entries(protocolBalances)
     .filter(([, balance]) => balance.amount.gt(0))
     .map(([protocol, balance]) => {
@@ -247,11 +247,11 @@ export function getSortedProtocolBalances(protocolBalances: ProtocolBalancesWith
       return result;
     })
     .sort((a, b) => {
-      const usdValueComparison = sortDesc(a.usdValue, b.usdValue);
-      if (usdValueComparison === 0) {
+      const valueComparison = sortDesc(a.value, b.value);
+      if (valueComparison === 0) {
         return a.protocol.localeCompare(b.protocol);
       }
-      return usdValueComparison;
+      return valueComparison;
     });
 }
 
@@ -272,12 +272,11 @@ export function createAssetBalanceFromAggregated(
   };
 }
 
-// Interface for intermediate group representation
 interface IntermediateGroupRepresentation {
   asset: string;
   isMain?: boolean;
   perProtocol: ProtocolBalancesWithManual;
-  usdValue: BigNumber;
+  value: BigNumber;
   amount: BigNumber;
   usdPrice: BigNumber;
 }
@@ -359,20 +358,18 @@ export function processCollectionGrouping(
       };
     }
 
-    // Find main asset for multi-asset groups
     const main = groupAssets.find(value => value.isMain);
     if (!main) {
       throw new Error('Main asset not found for collection');
     }
 
-    // Calculate group totals and merge chains for address protocol
     let groupAmount = Zero;
-    let groupUsdValue = Zero;
+    let groupValue = Zero;
     const groupProtocolBalances: Record<string, BalanceWithManual> = {};
 
     for (const asset of groupAssets) {
       groupAmount = groupAmount.plus(asset.amount);
-      groupUsdValue = groupUsdValue.plus(asset.usdValue);
+      groupValue = groupValue.plus(asset.value);
 
       for (const [protocol, balance] of Object.entries(asset.perProtocol)) {
         const existing = groupProtocolBalances[protocol];
@@ -393,7 +390,7 @@ export function processCollectionGrouping(
           perProtocol: getSortedProtocolBalances(value.perProtocol),
         })),
       perProtocol: getSortedProtocolBalances(groupProtocolBalances),
-      usdValue: groupUsdValue,
+      value: groupValue,
     };
   });
 }

@@ -35,7 +35,7 @@ jobs:
           persist-credentials: false
 
       - name: Load env
-        uses: rotki/action-env@v2
+        uses: rotki/action-env@v3
         with:
           env_file: .github/.env.ci
 
@@ -84,11 +84,11 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - runner: macos-14
+          - runner: macos-15
             arch: 'arm64'
             target: 11
             platform: macosx-11.0-arm64
-          - runner: macos-13
+          - runner: macos-15-intel
             arch: 'x86_64'
             target: 10.9
             platform: macosx-10.9-x86_64
@@ -113,7 +113,7 @@ jobs:
           persist-credentials: false
 
       - name: Load env
-        uses: rotki/action-env@v2
+        uses: rotki/action-env@v3
         with:
           env_file: .github/.env.ci
 
@@ -195,7 +195,7 @@ jobs:
           persist-credentials: false
 
       - name: Load env
-        uses: rotki/action-env@v2
+        uses: rotki/action-env@v3
         with:
           env_file: .github/.env.ci
 
@@ -378,6 +378,7 @@ jobs:
     if: ${{ always() && (github.repository == 'rotki/rotki' || github.event_name != 'schedule') }}
     needs: [ 'build-linux', 'build-windows', 'build-macos', 'docker-merge' ]
     runs-on: ubuntu-latest
+    environment: nightly_notify
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -388,11 +389,13 @@ jobs:
         run: |
           pip install requests
 
-          data=($(echo "${RESULT}" | sed 's/[][,]//g'))
-          for i in "${data[@]}"
+          data=($(echo "${RESULT}" | sed 's/[][,"]//g'))
+          echo "Processing ${#data[@]} entries"
+          for idx in "${!data[@]}"
           do
-            if [[ $i == "failure" ]]; then
-                ./.github/scripts/notifier.py --webhook ${{ secrets.WEBHOOK }} --run-id ${{ github.run_id }}
+            echo "Processing entry $idx: ${data[$idx]}"
+            if [[ ${data[$idx]} == "failure" ]]; then
+                ./.github/scripts/notifier.py --webhook ${{ secrets.DISCORD_WEBHOOK }} --run-id ${{ github.run_id }}
                 exit 1;
             fi
           done

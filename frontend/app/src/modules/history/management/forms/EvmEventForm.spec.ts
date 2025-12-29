@@ -12,7 +12,6 @@ import { useAssetPricesApi } from '@/composables/api/assets/prices';
 import { useHistoryEvents } from '@/composables/history/events';
 import { useHistoryEventMappings } from '@/composables/history/events/mapping';
 import { useHistoryEventCounterpartyMappings } from '@/composables/history/events/mapping/counterparty';
-import { useHistoryEventProductMappings } from '@/composables/history/events/mapping/product';
 import { useLocations } from '@/composables/locations';
 import EvmEventForm from '@/modules/history/management/forms/EvmEventForm.vue';
 import { setupDayjs } from '@/utils/date';
@@ -60,16 +59,15 @@ describe('forms/EvmEventForm.vue', () => {
     asset: asset.symbol,
     counterparty: null,
     entryType: HistoryEventEntryType.EVM_EVENT,
-    eventIdentifier: '10x4ba949779d936631dc9eb68fa9308c18de51db253aeea919384c728942f95ba9',
     eventSubtype: '',
     eventType: 'receive',
+    groupIdentifier: '10x4ba949779d936631dc9eb68fa9308c18de51db253aeea919384c728942f95ba9',
     identifier: 14344,
     location: 'ethereum',
     locationLabel: '0xfDb7EEc5eBF4c4aC7734748474123aC25C6eDCc8',
-    product: null,
     sequenceIndex: 2411,
     timestamp: 1686495083,
-    txHash: '0x4ba949779d936631dc9eb68fa9308c18de51db253aeea919384c728942f95ba9',
+    txRef: '0x4ba949779d936631dc9eb68fa9308c18de51db253aeea919384c728942f95ba9',
     userNotes:
       'Receive 610 Visit https://rafts.cc to claim rewards. from 0x30a2EBF10f34c6C4874b0bDD5740690fD2f3B70C to 0xfDb7EEc5eBF4c4aC7734748474123aC25C6eDCc8',
   };
@@ -125,12 +123,12 @@ describe('forms/EvmEventForm.vue', () => {
     wrapper = createWrapper();
     await vi.advanceTimersToNextTimerAsync();
 
-    const txHashInput = wrapper.find<HTMLInputElement>('[data-cy=tx-hash] input');
+    const txRefInput = wrapper.find<HTMLInputElement>('[data-cy=tx-ref] input');
     const locationInput = wrapper.find<HTMLInputElement>('[data-cy=location-label] input');
     const addressInput = wrapper.find<HTMLInputElement>('[data-cy=address] input');
     const sequenceIndexInput = wrapper.find<HTMLInputElement>('[data-cy=sequence-index] input');
 
-    expect(txHashInput.element.value).toBe('');
+    expect(txRefInput.element.value).toBe('');
     expect(locationInput.element.value).toBe('');
     expect(addressInput.element.value).toBe('');
     expect(sequenceIndexInput.element.value).toBe('0');
@@ -141,14 +139,14 @@ describe('forms/EvmEventForm.vue', () => {
     await vi.advanceTimersToNextTimerAsync();
     await wrapper.setProps({ data: { group, nextSequenceId: '10', type: 'group-add' } });
 
-    const txHashInput = wrapper.find<HTMLInputElement>('[data-cy=tx-hash] input');
+    const txRefInput = wrapper.find<HTMLInputElement>('[data-cy=tx-ref] input');
     const locationLabelInput = wrapper.find<HTMLInputElement>('[data-cy=location-label] input');
     const addressInput = wrapper.find<HTMLInputElement>('[data-cy=address] input');
     const amountInput = wrapper.find<HTMLInputElement>('[data-cy=amount] input');
     const sequenceIndexInput = wrapper.find<HTMLInputElement>('[data-cy=sequence-index] input');
     const noteTextArea = wrapper.find<HTMLTextAreaElement>('[data-cy=notes] textarea:not([aria-hidden="true"])');
 
-    expect(txHashInput.element.value).toBe(group.txHash);
+    expect(txRefInput.element.value).toBe(group.txRef);
     expect(locationLabelInput.element.value).toBe(group.locationLabel);
     expect(addressInput.element.value).toBe(group.address);
     expect(amountInput.element.value).toBe('0');
@@ -161,14 +159,14 @@ describe('forms/EvmEventForm.vue', () => {
     await vi.advanceTimersToNextTimerAsync();
     await wrapper.setProps({ data: { event: group, nextSequenceId: '10', type: 'edit' } });
 
-    const txHashInput = wrapper.find<HTMLInputElement>('[data-cy=tx-hash] input');
+    const txRefInput = wrapper.find<HTMLInputElement>('[data-cy=tx-ref] input');
     const locationLabelInput = wrapper.find<HTMLInputElement>('[data-cy=location-label] input');
     const addressInput = wrapper.find<HTMLInputElement>('[data-cy=address] input');
     const amountInput = wrapper.find<HTMLInputElement>('[data-cy=amount] input');
     const sequenceIndexInput = wrapper.find<HTMLInputElement>('[data-cy=sequence-index] input');
     const notesTextArea = wrapper.find<HTMLTextAreaElement>('[data-cy=notes] textarea:not([aria-hidden="true"])');
 
-    expect(txHashInput.element.value).toBe(group.txHash);
+    expect(txRefInput.element.value).toBe(group.txRef);
     expect(locationLabelInput.element.value).toBe(group.locationLabel);
     expect(addressInput.element.value).toBe(group.address);
     expect(amountInput.element.value).toBe(group.amount.toString());
@@ -228,39 +226,12 @@ describe('forms/EvmEventForm.vue', () => {
       expect(keysFromGlobalMappings.includes(spans.at(i)!.text())).toBeTruthy();
   });
 
-  it('should show product options, based on selected counterparty', async () => {
-    wrapper = createWrapper({ props: { data: { group, nextSequenceId: '1', type: 'group-add' } } });
-    await vi.advanceTimersToNextTimerAsync();
-
-    expect(wrapper.find('[data-cy=product] input').attributes('disabled')).toBe('');
-
-    // input is still disabled if the counterparty doesn't have mapped products.
-    await wrapper.find('[data-cy=counterparty] input').setValue('1inch');
-    await vi.advanceTimersToNextTimerAsync();
-
-    expect(wrapper.find('[data-cy=product] input').attributes('disabled')).toBe('');
-
-    // the product options should be displayed correctly if the counterparty has mapped products.
-    const selectedCounterparty = 'convex';
-    await wrapper.find('[data-cy=counterparty] input').setValue(selectedCounterparty);
-    await vi.advanceTimersToNextTimerAsync();
-
-    const { historyEventProductsMapping } = useHistoryEventProductMappings();
-
-    const products = get(historyEventProductsMapping)[selectedCounterparty];
-
-    const spans = wrapper.findAll('[data-cy=product] .selections span');
-    expect(spans).toHaveLength(products.length);
-
-    for (let i = 0; i < products.length; i++) expect(products.includes(spans.at(i)!.text())).toBeTruthy();
-  });
-
   it('should add a new evm event when form is submitted', async () => {
     wrapper = createWrapper();
     await nextTick();
     await vi.advanceTimersToNextTimerAsync();
 
-    await wrapper.find('[data-cy=tx-hash] input').setValue(group.txHash);
+    await wrapper.find('[data-cy=tx-ref] input').setValue(group.txRef);
     await wrapper.find('[data-cy=location] input').setValue(group.location);
     await wrapper.find('[data-cy=location-label] input').setValue(group.locationLabel);
     await wrapper.find('[data-cy=eventType] input').setValue(group.eventType);
@@ -273,10 +244,6 @@ describe('forms/EvmEventForm.vue', () => {
 
     if (group.counterparty) {
       await wrapper.find('[data-cy=counterparty] input').setValue(group.counterparty);
-    }
-
-    if (group.product) {
-      await wrapper.find('[data-cy=product] input').setValue(group.product);
     }
 
     if (group.eventSubtype) {
@@ -298,16 +265,15 @@ describe('forms/EvmEventForm.vue', () => {
       asset: group.asset,
       counterparty: group.counterparty,
       entryType: HistoryEventEntryType.EVM_EVENT,
-      eventIdentifier: null,
       eventSubtype: 'none',
       eventType: group.eventType,
       extraData: {},
+      groupIdentifier: null,
       location: group.location,
       locationLabel: group.locationLabel,
-      product: group.product,
       sequenceIndex: group.sequenceIndex.toString(),
       timestamp: group.timestamp,
-      txHash: group.txHash,
+      txRef: group.txRef,
       userNotes: group.userNotes,
     });
   });
@@ -373,17 +339,16 @@ describe('forms/EvmEventForm.vue', () => {
       asset: group.asset,
       counterparty: group.counterparty,
       entryType: HistoryEventEntryType.EVM_EVENT,
-      eventIdentifier: group.eventIdentifier,
       eventSubtype: 'none',
       eventType: group.eventType,
       extraData: {},
+      groupIdentifier: group.groupIdentifier,
       identifier: group.identifier,
       location: group.location,
       locationLabel: group.locationLabel,
-      product: group.product,
       sequenceIndex: '2111',
       timestamp: group.timestamp,
-      txHash: group.txHash,
+      txRef: group.txRef,
       userNotes: 'user note',
     });
   });

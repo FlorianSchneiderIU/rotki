@@ -25,6 +25,7 @@ const { t } = useI18n({ useScope: 'global' });
     :model-value="count > 0"
     color="primary"
     placement="top"
+    size="sm"
     offset-y="14"
     offset-x="-12"
   >
@@ -34,9 +35,7 @@ const { t } = useI18n({ useScope: 'global' });
     >
       <RuiIcon
         v-if="!hasRunningTasks"
-        :class="{
-          [$style.visible]: visible,
-        }"
+        :class="{ '-rotate-[25deg]': visible }"
         name="lu-bell"
       />
       <div
@@ -54,9 +53,3 @@ const { t } = useI18n({ useScope: 'global' });
     </MenuTooltipButton>
   </RuiBadge>
 </template>
-
-<style module lang="scss">
-.visible {
-  transform: rotate(-25deg);
-}
-</style>

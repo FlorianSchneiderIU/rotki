@@ -72,9 +72,6 @@ class DBEth2:
     def get_active_pubkeys_to_ownership(self, cursor: 'DBCursor') -> dict[Eth2PubKey, FVal]:
         return {x[0]: FVal(x[1]) for x in cursor.execute('SELECT public_key, ownership_proportion FROM eth2_validators WHERE exited_timestamp IS NULL')}  # noqa: E501
 
-    def get_index_to_ownership(self, cursor: 'DBCursor') -> dict[int, FVal]:
-        return {x[0]: FVal(x[1]) for x in cursor.execute('SELECT validator_index, ownership_proportion FROM eth2_validators WHERE validator_index IS NOT NULL')}  # noqa: E501
-
     def get_validators(self, cursor: 'DBCursor') -> list[ValidatorDetails]:
         cursor.execute(
             'SELECT validator_index, public_key, validator_type, ownership_proportion, withdrawal_address, '  # noqa: E501
@@ -87,8 +84,8 @@ class DBEth2:
         for all validators that have been consolidated.
         """
         cursor.execute(
-            'SELECT e.extra_data FROM history_events AS e LEFT JOIN evm_events_info ON evm_events_info.identifier=e.identifier '  # noqa: E501
-            'WHERE evm_events_info.counterparty = ? AND e.type = ? AND e.subtype = ? ',
+            'SELECT e.extra_data FROM history_events AS e LEFT JOIN chain_events_info ON chain_events_info.identifier=e.identifier '  # noqa: E501
+            'WHERE chain_events_info.counterparty = ? AND e.type = ? AND e.subtype = ? ',
             (CPT_ETH2, HistoryEventType.INFORMATIONAL.serialize(), HistoryEventSubType.CONSOLIDATE.serialize()),  # noqa: E501
         )
         consolidation_indices = {}
@@ -294,11 +291,16 @@ class DBEth2:
 
             # Delete from the events table, all staking events except for deposits.
             # We keep deposits since they are associated with the address and are EVM transactions
-            cursor.execute(
-                f'DELETE FROM history_events WHERE identifier in (SELECT S.identifier '
-                f'FROM eth_staking_events_info S WHERE S.validator_index IN '
-                f'({",".join(question_marks)})) AND entry_type != ?',
-                (*validator_indices, HistoryBaseEntryType.ETH_DEPOSIT_EVENT.serialize_for_db()),
+            DBHistoryEvents(self.db).delete_events_and_track(
+                write_cursor=cursor,
+                where_clause=(
+                    f'WHERE identifier IN (SELECT S.identifier FROM eth_staking_events_info S '
+                    f'WHERE S.validator_index IN ({",".join(question_marks)})) AND entry_type != ?'
+                ),
+                where_bindings=(
+                    *validator_indices,
+                    HistoryBaseEntryType.ETH_DEPOSIT_EVENT.serialize_for_db(),
+                ),
             )
 
             # Delete cached timestamps
@@ -514,7 +516,9 @@ class DBEth2:
                 v_index = event.validator_index
                 if event.is_exit_or_blocknumber is True:  # Exit withdrawals
                     if from_ts_ms <= event.timestamp <= to_ts_ms:  # only count pnl within the specified range  # noqa: E501
-                        exits_pnl[v_index] = event.amount - validator_balances[v_index]
+                        # For accumulating validators, subtract already counted withdrawals
+                        # from exit PnL to avoid double-counting consensus rewards
+                        exits_pnl[v_index] = event.amount - validator_balances[v_index] - sum(withdrawals_pnl_over_time[v_index].values())  # noqa: E501
                         validator_balances[v_index] = ZERO
                     else:
                         continue
@@ -771,24 +775,29 @@ class DBEth2:
                 (HistoryEventType.STAKING, 'IN'),
                 (HistoryEventType.INFORMATIONAL, 'NOT IN'),
             ):
-                query = (
-                    'UPDATE history_events SET type=? WHERE entry_type=? AND subtype=? '
+                where_clause = (
+                    f"WHERE entry_type=? AND subtype=? "
                     f"AND location_label {operation} ({','.join('?' * len(tracked_addresses))})"
                 )
-                bindings = [
-                    event_type.serialize(),
+                where_bindings: list = [
                     HistoryBaseEntryType.ETH_BLOCK_EVENT.value,
                     HistoryEventSubType.BLOCK_PRODUCTION.serialize(),
                     *tracked_addresses,
                 ]
                 if block_numbers is not None and len(block_numbers) > 0:
-                    query += (
+                    where_clause += (
                         ' AND identifier IN (SELECT identifier FROM eth_staking_events_info '
                         f"WHERE is_exit_or_blocknumber IN ({','.join('?' * len(block_numbers))}))"
                     )
-                    bindings += block_numbers
+                    where_bindings += block_numbers
 
-                write_cursor.execute(query, bindings)
+                DBHistoryEvents(self.db).update_events_and_track(
+                    write_cursor=write_cursor,
+                    where_clause=where_clause,
+                    where_bindings=tuple(where_bindings),
+                    set_clause='SET type=?',
+                    set_bindings=(event_type.serialize(),),
+                )
 
         self.combine_block_with_tx_events(block_numbers=block_numbers)
 
@@ -803,7 +812,7 @@ class DBEth2:
                 history_events A_H JOIN eth_staking_events_info A_S ON A_H.identifier = A_S.identifier
             WHERE A_H.subtype = ?)
             SELECT B_H.identifier, B_T.block_number, B_H.notes, B_T.tx_hash, mev.validator_index FROM evm_transactions B_T
-            JOIN evm_events_info B_E ON B_T.tx_hash = B_E.tx_hash
+            JOIN chain_events_info B_E ON B_T.tx_hash = B_E.tx_ref
             JOIN history_events B_H ON B_E.identifier = B_H.identifier
             LEFT JOIN mev_rewards mev ON mev.is_exit_or_blocknumber = B_T.block_number
             AND mev.location_label = B_H.location_label WHERE B_H.asset = ? AND B_H.type = ?
@@ -828,9 +837,9 @@ class DBEth2:
         with self.db.conn.read_ctx() as cursor:
             changes = [
                 (
-                    (event_identifier := EthBlockEvent.form_event_identifier(entry[1])),
-                    event_identifier,
-                    f'{entry[2]} as mev reward for block {entry[1]} in {(tx_hash := deserialize_evm_tx_hash(entry[3])).hex()}',  # pylint: disable=no-member  # noqa: E501
+                    (group_identifier := EthBlockEvent.form_group_identifier(entry[1])),
+                    group_identifier,
+                    f'{entry[2]} as mev reward for block {entry[1]} in {(tx_hash := deserialize_evm_tx_hash(entry[3]))!s}',  # noqa: E501
                     HistoryEventType.STAKING.serialize(),
                     HistoryEventSubType.MEV_REWARD.serialize(),
                     json.dumps({'validator_index': entry[4]}),  # extra data
@@ -847,8 +856,8 @@ class DBEth2:
         with self.db.user_write() as write_cursor:
             for changes_entry in changes:
                 result = write_cursor.execute(
-                    'SELECT COUNT(*) FROM history_events HE LEFT JOIN evm_events_info EE ON '
-                    'HE.identifier = EE.identifier WHERE HE.event_identifier=? AND EE.tx_hash=?',
+                    'SELECT COUNT(*) FROM history_events HE LEFT JOIN chain_events_info CE ON '
+                    'HE.identifier = CE.identifier WHERE HE.group_identifier=? AND CE.tx_ref=?',
                     (changes_entry[0], changes_entry[7]),
                 ).fetchone()[0]
                 if result == 1:  # Has already been moved.
@@ -859,8 +868,8 @@ class DBEth2:
                 try:
                     write_cursor.execute(
                         'UPDATE history_events '
-                        'SET event_identifier=?, sequence_index=('
-                        'SELECT MAX(sequence_index) FROM history_events E2 WHERE E2.event_identifier=?)+1, '  # noqa: E501
+                        'SET group_identifier=?, sequence_index=('
+                        'SELECT MAX(sequence_index) FROM history_events E2 WHERE E2.group_identifier=?)+1, '  # noqa: E501
                         'notes=?, type=?, subtype=?, extra_data=? WHERE identifier=?',
                         changes_entry[:-1],
                     )

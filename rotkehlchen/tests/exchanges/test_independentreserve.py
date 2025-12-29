@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from rotkehlchen.accounting.structures.balance import Balance
-from rotkehlchen.constants.assets import A_ETC, A_ETH
+from rotkehlchen.constants.assets import A_BTC, A_ETC, A_ETH, A_OMG
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.exchanges.data_structures import Location
 from rotkehlchen.exchanges.independentreserve import (
@@ -14,7 +14,7 @@ from rotkehlchen.exchanges.independentreserve import (
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.tests.utils.constants import A_AUD
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import Timestamp, TimestampMS
@@ -48,6 +48,14 @@ def test_assets_are_known():
                 f'Found unknown secondary asset {currency} in IndependentReserve. '
                 f'Support for it has to be added',
             ))
+
+
+def test_missing_mapping_assets():
+    """Regression test for #10602. TODO: @yabirgb remove in develop
+    https://github.com/orgs/rotki/projects/11/views/3?pane=issue&itemId=128888662
+    """
+    assert independentreserve_asset('Xbt') == A_BTC
+    assert independentreserve_asset('Omg') == A_OMG
 
 
 @pytest.mark.parametrize('should_mock_current_price_queries', [True])
@@ -148,8 +156,8 @@ def test_query_some_balances(
 
     assert msg == ''
     assert balances == {
-        A_AUD: Balance(amount=FVal(2.5), usd_value=FVal(3.75)),
-        A_ETC: Balance(amount=FVal(100), usd_value=FVal(150)),
+        A_AUD: Balance(amount=FVal(2.5), value=FVal(3.75)),
+        A_ETC: Balance(amount=FVal(100), value=FVal(150)),
     }
 
 
@@ -200,7 +208,7 @@ def test_query_trade_history(function_scope_independentreserve):
         asset=A_ETH,
         amount=FVal('0.5'),
         location_label=exchange.name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.INDEPENDENTRESERVE,
             unique_id=(unique_id_1 := 'foo1'),
         ),
@@ -211,7 +219,7 @@ def test_query_trade_history(function_scope_independentreserve):
         asset=A_AUD,
         amount=FVal('301.85'),
         location_label=exchange.name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.INDEPENDENTRESERVE,
             unique_id=unique_id_1,
         ),
@@ -222,7 +230,7 @@ def test_query_trade_history(function_scope_independentreserve):
         asset=A_AUD,
         amount=FVal('679.4419574775'),
         location_label=exchange.name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.INDEPENDENTRESERVE,
             unique_id=(unique_id_2 := 'foo2'),
         ),
@@ -233,7 +241,7 @@ def test_query_trade_history(function_scope_independentreserve):
         asset=A_ETH,
         amount=FVal('2.64117379'),
         location_label=exchange.name,
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.INDEPENDENTRESERVE,
             unique_id=unique_id_2,
         ),

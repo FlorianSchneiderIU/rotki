@@ -4,14 +4,14 @@ from typing import TYPE_CHECKING, Any, Final
 
 from eth_utils import to_checksum_address
 
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ZERO
@@ -29,7 +29,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 from .constants import CPT_EFP
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -39,12 +39,12 @@ log = RotkehlchenLogsAdapter(logger)
 LIST_OP_TOPIC: Final = b"\xb0gc\x0e9\x08\xf1f\x06\x9cwvbP\xc5SAN'E\xe7B\xa5b\xd53\xf2\x97D\xa9\x1as"  # noqa: E501
 
 
-class EfpCommonDecoder(DecoderInterface, ABC):
+class EfpCommonDecoder(EvmDecoderInterface, ABC):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             list_records_contract: 'ChecksumEvmAddress',
     ) -> None:
@@ -61,13 +61,13 @@ class EfpCommonDecoder(DecoderInterface, ABC):
         with GlobalDBHandler().conn.read_ctx() as cursor:
             if (address := globaldb_get_unique_cache_value(
                     cursor=cursor,
-                    key_parts=(CacheType.EFP_SLOT_ADDRESS, (chain := str(self.evm_inquirer.chain_id)), str(slot)),  # noqa: E501
+                    key_parts=(CacheType.EFP_SLOT_ADDRESS, (chain := str(self.node_inquirer.chain_id)), str(slot)),  # noqa: E501
             )) is not None:
                 return string_to_evm_address(address)
 
         try:
-            if (address := to_checksum_address(self.evm_inquirer.contracts.contract(self.list_records_contract).call(  # noqa: E501
-                node_inquirer=self.evm_inquirer,
+            if (address := to_checksum_address(self.node_inquirer.contracts.contract(self.list_records_contract).call(  # noqa: E501
+                node_inquirer=self.node_inquirer,
                 method_name='getListUser',
                 arguments=[slot],
             ))) == ZERO_ADDRESS:
@@ -85,22 +85,22 @@ class EfpCommonDecoder(DecoderInterface, ABC):
             )
         return address
 
-    def _decode_list_op_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_list_op_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode EFP list operation events."""
         if context.tx_log.topics[0] != LIST_OP_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if (address := self._get_address_for_slot(
                 slot=int.from_bytes(context.tx_log.topics[1]),
         )) is None:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if not self.base.is_tracked(address):
             log.debug(
                 f'Skipping EFP list op event for untracked address {address} '
                 f'in transaction {context.transaction}',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         # Decode list operation data. See https://docs.ethfollow.xyz/design/list-ops/
         data = context.tx_log.data[64:]
@@ -114,7 +114,7 @@ class EfpCommonDecoder(DecoderInterface, ABC):
                 f'OpVersion: {op_version}, OpCode: {op_code}, '
                 f'RecordVersion: {record_version}, RecordType: {record_type}',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         followed_address = bytes_to_address(b'\x00' * 12 + data[4:24])
         if op_code == 1:  # Follow
@@ -128,7 +128,7 @@ class EfpCommonDecoder(DecoderInterface, ABC):
             tag = data[24:].rstrip(b'\x00').decode()
             notes = f'Remove {tag} tag from {followed_address} on EFP'
 
-        return DecodingOutput(events=[self.base.make_event_from_transaction(
+        return EvmDecodingOutput(events=[self.base.make_event_from_transaction(
             transaction=context.transaction,
             tx_log=context.tx_log,
             event_type=HistoryEventType.INFORMATIONAL,

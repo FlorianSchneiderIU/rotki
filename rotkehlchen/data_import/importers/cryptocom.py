@@ -126,7 +126,7 @@ class CryptocomImporter(BaseExchangeImporter):
             self.add_history_events(
                 write_cursor=write_cursor,
                 history_events=create_swap_events(
-                    event_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row_without_index(csv_row)}',
+                    group_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row_without_index(csv_row)}',
                     timestamp=timestamp,
                     spend=AssetAmount(asset=quote_asset, amount=abs(quote_amount_sold)),
                     receive=AssetAmount(asset=base_asset, amount=abs(base_amount_bought)),
@@ -163,10 +163,8 @@ class CryptocomImporter(BaseExchangeImporter):
             'airdrop_to_exchange_transfer',
             'mco_stake_reward',
             'crypto_payment_refund',
-            'pay_checkout_reward'
-            'transfer_cashback',
-            'rewards_platform_deposit_credited',
             'pay_checkout_reward',
+            'rewards_platform_deposit_credited',
             'transfer_cashback',
             'supercharger_reward_to_app_credited',
             'referral_card_cashback',
@@ -178,7 +176,7 @@ class CryptocomImporter(BaseExchangeImporter):
             asset = asset_from_cryptocom(csv_row['Currency'])
             amount = deserialize_fval(csv_row['Amount'])
             event = HistoryEvent(
-                event_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row(csv_row)}',
+                group_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row(csv_row)}',
                 sequence_index=0,
                 timestamp=timestamp,
                 location=Location.CRYPTOCOM,
@@ -194,7 +192,7 @@ class CryptocomImporter(BaseExchangeImporter):
             asset = asset_from_cryptocom(csv_row['Currency'])
             amount = abs(deserialize_fval(csv_row['Amount']))
             event = HistoryEvent(
-                event_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row(csv_row)}',
+                group_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row(csv_row)}',
                 sequence_index=0,
                 timestamp=timestamp,
                 location=Location.CRYPTOCOM,
@@ -238,7 +236,7 @@ class CryptocomImporter(BaseExchangeImporter):
                 event_type = HistoryEventType.RECEIVE
 
             event = HistoryEvent(
-                event_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row(csv_row)}',
+                group_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row(csv_row)}',
                 sequence_index=0,
                 timestamp=timestamp,
                 location=Location.CRYPTOCOM,
@@ -443,7 +441,7 @@ class CryptocomImporter(BaseExchangeImporter):
                     self.add_history_events(
                         write_cursor=write_cursor,
                         history_events=create_swap_events(
-                            event_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row_without_index(debited_row)}',
+                            group_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row_without_index(debited_row)}',
                             timestamp=ts_sec_to_ms(timestamp),
                             spend=AssetAmount(asset=quote_asset, amount=abs(quote_amount_sold)),
                             receive=AssetAmount(asset=base_asset, amount=abs(base_amount_bought)),
@@ -507,7 +505,7 @@ class CryptocomImporter(BaseExchangeImporter):
                     if profit >= ZERO:
                         last_date = withdrawal_date
                         event = HistoryEvent(
-                            event_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row_without_index(withdrawal)}',
+                            group_identifier=f'{CRYPTOCOM_PREFIX}{hash_csv_row_without_index(withdrawal)}',
                             sequence_index=0,
                             timestamp=ts_sec_to_ms(withdrawal_date),
                             location=Location.CRYPTOCOM,

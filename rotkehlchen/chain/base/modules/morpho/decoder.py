@@ -2,11 +2,10 @@ from typing import TYPE_CHECKING
 
 from rotkehlchen.chain.evm.decoding.morpho.decoder import MorphoCommonDecoder
 from rotkehlchen.chain.evm.types import string_to_evm_address
-from rotkehlchen.constants.assets import A_WETH_BASE
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.base.node_inquirer import BaseInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.user_messages import MessagesAggregator
 
 
@@ -15,7 +14,7 @@ class MorphoDecoder(MorphoCommonDecoder):
     def __init__(
             self,
             base_inquirer: 'BaseInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -29,5 +28,11 @@ class MorphoDecoder(MorphoCommonDecoder):
                 string_to_evm_address('0x1f8076e2EB6f10b12e6886f30D4909A91969F7dA'),  # CompoundV3MigrationBundlerV2  # noqa: E501
                 string_to_evm_address('0xcAe2929baBc60Be34818EaA5F40bF69265677108'),  # AaveV3MigrationBundlerV2  # noqa: E501
             },
-            weth=A_WETH_BASE,
+            adapters={
+                string_to_evm_address('0xb98c948CFA24072e58935BC004a8A7b376AE746A'),  # GeneralAdapter1  # noqa: E501
+                string_to_evm_address('0xdeEf55F0A7366cC3Baf5E04313269389Fe17E9AE'),  # ERC20WrapperAdapter  # noqa: E501
+                string_to_evm_address('0x6abE8ABd0275E5564ed1336F0243A52C32562F71'),  # ParaswapAdapter  # noqa: E501
+                string_to_evm_address('0x85D4812Ef92c040d4270eD8547b6835e41FbbB70'),  # CompoundV3MigrationAdapter  # noqa: E501
+                string_to_evm_address('0xb27Aa2a964eAd5ed661D86974b37e4fB995b36f5'),  # AaveV3MigrationAdapter  # noqa: E501
+            },
         )

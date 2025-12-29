@@ -34,7 +34,7 @@ from rotkehlchen.history.events.structures.swap import (
     deserialize_trade_type_is_buy,
     get_swap_spend_receive,
 )
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -292,7 +292,7 @@ class Bitpanda(ExchangeWithoutApiSecret):
                 receive=receive,
                 fee=AssetAmount(asset=A_BEST, amount=fee),
                 location_label=self.name,
-                event_identifier=create_event_identifier_from_unique_id(
+                group_identifier=create_group_identifier_from_unique_id(
                     location=self.location,
                     unique_id=str(entry['id']),
                 ),
@@ -489,16 +489,16 @@ class Bitpanda(ExchangeWithoutApiSecret):
                 continue
 
             try:
-                usd_price = Inquirer.find_usd_price(asset=asset)
+                price = Inquirer.find_main_currency_price(asset)
             except RemoteError as e:
                 self.msg_aggregator.add_error(
                     f'Error processing Bitpanda balance entry due to inability to '
-                    f'query USD price: {e!s}. Skipping balance entry',
+                    f'query price: {e!s}. Skipping balance entry',
                 )
                 continue
             assets_balance[asset] += Balance(
                 amount=amount,
-                usd_value=amount * usd_price,
+                value=amount * price,
             )
 
         return dict(assets_balance), ''
@@ -507,6 +507,7 @@ class Bitpanda(ExchangeWithoutApiSecret):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
+            force_refresh: bool = False,
     ) -> tuple[Sequence['HistoryBaseEntry'], Timestamp]:
         self.first_connection()
         # Should probably also query wallets/transactions for crypto deposits/withdrawals

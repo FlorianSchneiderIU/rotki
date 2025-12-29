@@ -37,7 +37,7 @@ from rotkehlchen.history.events.structures.swap import (
     get_swap_spend_receive,
 )
 from rotkehlchen.history.events.structures.types import HistoryEventType
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -529,7 +529,7 @@ class Bitfinex(ExchangeInterface, SignatureGeneratorMixin):
                 amount=abs(deserialize_fval_or_zero(raw_result[9])),
             ),
             location_label=self.name,
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=self.location,
                 unique_id=str(raw_result[0]),
             ),
@@ -879,11 +879,11 @@ class Bitfinex(ExchangeInterface, SignatureGeneratorMixin):
                 continue
 
             try:
-                usd_price = Inquirer.find_usd_price(asset=asset)
+                price = Inquirer.find_main_currency_price(asset)
             except RemoteError as e:
                 self.msg_aggregator.add_error(
                     f'Error processing {self.name} {asset.name} balance result due to inability '
-                    f'to query USD price: {e!s}. Skipping balance result.',
+                    f'to query price: {e!s}. Skipping balance result.',
                 )
                 continue
 
@@ -898,7 +898,7 @@ class Bitfinex(ExchangeInterface, SignatureGeneratorMixin):
 
             assets_balance[asset] += Balance(
                 amount=amount,
-                usd_value=amount * usd_price,
+                value=amount * price,
             )
 
         return dict(assets_balance), ''
@@ -907,6 +907,7 @@ class Bitfinex(ExchangeInterface, SignatureGeneratorMixin):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
+            force_refresh: bool = False,
     ) -> tuple[Sequence['HistoryBaseEntry'], Timestamp]:
         """Return the Bitfinex asset movements and swap events.
 

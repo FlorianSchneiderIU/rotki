@@ -2,18 +2,18 @@ import logging
 from collections.abc import Callable
 from typing import Any, Final
 
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.polygon.constants import CPT_POLYGON, CPT_POLYGON_DETAILS
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.utils import bridge_match_transfer
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -34,9 +34,9 @@ PLASMA_BRIDGE_CHILD_CHAIN: Final = string_to_evm_address('0xD9c7C4ED4B66858301D0
 POL_TOKEN_ADDRESS = string_to_evm_address('0x0000000000000000000000000000000000001010')
 
 
-class PolygonPosBridgeDecoder(DecoderInterface):
+class PolygonPosBridgeDecoder(EvmDecoderInterface):
 
-    def _decode_withdraw(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_withdraw(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes bridge withdraw events.
 
         Ethereum to Polygon bridging uses a state sync mechanism to transfer data from ethereum
@@ -46,7 +46,7 @@ class PolygonPosBridgeDecoder(DecoderInterface):
         withdrawal has been initiated and the corresponding receive event needs to be modified.
         """
         if context.tx_log.topics[0] != STATE_COMMITTED_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         for event in context.decoded_events:
             if (
@@ -71,9 +71,9 @@ class PolygonPosBridgeDecoder(DecoderInterface):
         else:
             log.error(f'Failed to find Polygon bridge withdraw event for {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_plasma_withdraw(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_plasma_withdraw(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes withdrawals from plasma bridge.
         No transfer event is decoded automatically, so the withdrawal event must be created here.
         """
@@ -86,7 +86,7 @@ class PolygonPosBridgeDecoder(DecoderInterface):
                 amount=int.from_bytes(context.tx_log.data[0:32]),
                 asset=asset,
             )
-            return DecodingOutput(events=[self.base.make_event_from_transaction(
+            return EvmDecodingOutput(events=[self.base.make_event_from_transaction(
                 transaction=context.transaction,
                 tx_log=context.tx_log,
                 event_type=HistoryEventType.WITHDRAWAL,
@@ -99,9 +99,9 @@ class PolygonPosBridgeDecoder(DecoderInterface):
                 address=context.tx_log.address,
             )])
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_deposit(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_deposit(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes bridge deposit events.
         The transfer event has not been decoded yet and must be transformed via an action item.
 
@@ -138,9 +138,9 @@ class PolygonPosBridgeDecoder(DecoderInterface):
                 to_counterparty=CPT_POLYGON,
             ))
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_plasma_deposit(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_plasma_deposit(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes deposits to plasma bridge."""
         for event in context.decoded_events:
             if (
@@ -165,7 +165,7 @@ class PolygonPosBridgeDecoder(DecoderInterface):
         else:
             log.error(f'Failed to find Polygon bridge plasma deposit event for {context.transaction}')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

@@ -11,6 +11,7 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.balances.manual import ManuallyTrackedBalanceWithValue
 from rotkehlchen.chain.accounts import BlockchainAccountData, SingleBlockchainAccountData
 from rotkehlchen.chain.bitcoin.xpub import XpubData
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.ethereum.defi.structures import (
     DefiBalance,
     DefiProtocol,
@@ -31,7 +32,6 @@ from rotkehlchen.chain.ethereum.modules.makerdao.vaults import (
 from rotkehlchen.chain.ethereum.modules.nft.structures import NFTResult
 from rotkehlchen.chain.ethereum.modules.pickle_finance.main import DillBalance
 from rotkehlchen.chain.evm.accounting.structures import TxAccountingTreatment
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.types import NodeName, WeightedNode
 from rotkehlchen.db.calendar import CalendarEntry, ReminderEntry
 from rotkehlchen.db.settings import DBSettings
@@ -39,7 +39,6 @@ from rotkehlchen.db.utils import DBAssetBalance, LocationData, SingleDBAssetBala
 from rotkehlchen.exchanges.kraken import KrakenAccountType
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import (
     EventCategory,
     EventCategoryDetails,
@@ -114,7 +113,6 @@ def _process_entry(entry: Any) -> str | (list[Any] | (dict[str, Any] | Any)):
             HistoryEventType |
             HistoryEventSubType |
             EventDirection |
-            EvmProduct |
             DBSettings |
             TxAccountingTreatment |
             EventCategoryDetails |
@@ -147,7 +145,7 @@ def _process_entry(entry: Any) -> str | (list[Any] | (dict[str, Any] | Any)):
     )):
         return process_result(entry._asdict())
     if isinstance(entry, tuple):
-        return list(entry)
+        return [_process_entry(x) for x in entry]
     if isinstance(entry, Asset):
         return entry.identifier
     if isinstance(entry, (

@@ -2,15 +2,15 @@ import abc
 import logging
 from typing import TYPE_CHECKING, Any
 
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.ethereum.decoding.constants import GNOSIS_CPT_DETAILS
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.utils import bridge_match_transfer, bridge_prepare_data
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -19,7 +19,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import Asset
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -27,12 +27,12 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class XdaiBridgeCommonDecoder(DecoderInterface, abc.ABC):
+class XdaiBridgeCommonDecoder(EvmDecoderInterface, abc.ABC):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             deposit_topics: tuple[bytes, ...],
             withdrawal_topic: bytes | None,  # withdrawal is currently unsupported on gnosis
@@ -64,7 +64,7 @@ class XdaiBridgeCommonDecoder(DecoderInterface, abc.ABC):
         self.target_chain = target_chain
         self.peripheral_addresses = peripheral_addresses or ()
 
-    def _decode_bridged_asset(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_bridged_asset(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes a bridging event for the `bridged_asset`, either a deposit or a withdrawal."""
         create_event = False
         if context.tx_log.topics[0] in self.deposit_topics:
@@ -77,7 +77,7 @@ class XdaiBridgeCommonDecoder(DecoderInterface, abc.ABC):
                 create_event = True
 
         else:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = asset_normalized_value(
             amount=int.from_bytes(context.tx_log.data[32:64]),
@@ -117,7 +117,7 @@ class XdaiBridgeCommonDecoder(DecoderInterface, abc.ABC):
                 new_event_type=new_event_type,
                 counterparty=GNOSIS_CPT_DETAILS,
             )
-            return DecodingOutput(events=[event])
+            return EvmDecodingOutput(events=[event])
 
         for event in context.decoded_events:
             if (
@@ -143,9 +143,9 @@ class XdaiBridgeCommonDecoder(DecoderInterface, abc.ABC):
         else:
             log.error(
                 f'Could not find the transfer event for bridging to {to_address}'
-                f' in {self.evm_inquirer.chain_name} transaction {context.transaction.tx_hash.hex()}',  # noqa: E501
+                f' in {self.node_inquirer.chain_name} transaction {context.transaction.tx_hash!s}',
             )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

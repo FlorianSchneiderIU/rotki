@@ -8,6 +8,7 @@ import { toMessages } from '@/utils/validation';
 interface HistoryEventTypeFormProps {
   counterparty?: string | null;
   location?: string | null;
+  disabled?: boolean;
   v$: Validation;
   disableWarning?: boolean;
 }
@@ -71,7 +72,9 @@ const { t } = useI18n({ useScope: 'global' });
       <RuiAutoComplete
         v-model="eventType"
         variant="outlined"
+        :disabled="disabled"
         :label="t('transactions.events.form.event_type.label')"
+        required
         :options="historyEventTypesData"
         key-attr="identifier"
         text-attr="label"
@@ -83,7 +86,9 @@ const { t } = useI18n({ useScope: 'global' });
       <RuiAutoComplete
         v-model="eventSubType"
         variant="outlined"
+        :disabled="disabled"
         :label="t('transactions.events.form.event_subtype.label')"
+        required
         :options="historyEventSubTypeFilteredData"
         key-attr="identifier"
         text-attr="label"

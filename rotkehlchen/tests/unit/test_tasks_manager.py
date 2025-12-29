@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import gevent
-import gevent.lock
 import pytest
 from freezegun import freeze_time
 
@@ -31,7 +30,7 @@ from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.settings import CachedSettings, ModifiableDBSettings
 from rotkehlchen.db.utils import LocationData
-from rotkehlchen.errors.api import PremiumAuthenticationError
+from rotkehlchen.errors.api import PremiumAuthenticationError, PremiumPermissionError
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.globaldb.cache import globaldb_set_general_cache_values
 from rotkehlchen.globaldb.handler import GlobalDBHandler
@@ -72,7 +71,6 @@ from rotkehlchen.types import (
     TokenKind,
     deserialize_evm_tx_hash,
 )
-from rotkehlchen.utils.hexbytes import hexstring_to_bytes
 from rotkehlchen.utils.misc import ts_now
 
 if TYPE_CHECKING:
@@ -221,8 +219,8 @@ def test_maybe_schedule_ethereum_txreceipts(
 
     dbevmtx = DBEvmTx(database)
     timeout = 10
-    tx_hash_1 = hexstring_to_bytes('0x692f9a6083e905bdeca4f0293f3473d7a287260547f8cbccc38c5cb01591fcda')  # noqa: E501
-    tx_hash_2 = hexstring_to_bytes('0x6beab9409a8f3bd11f82081e99e856466a7daf5f04cca173192f79e78ed53a77')  # noqa: E501
+    tx_hash_1 = deserialize_evm_tx_hash('0x692f9a6083e905bdeca4f0293f3473d7a287260547f8cbccc38c5cb01591fcda')  # noqa: E501
+    tx_hash_2 = deserialize_evm_tx_hash('0x6beab9409a8f3bd11f82081e99e856466a7daf5f04cca173192f79e78ed53a77')  # noqa: E501
     receipt_get_patch = patch.object(ethereum_manager.node_inquirer, 'get_transaction_receipt', wraps=ethereum_manager.node_inquirer.get_transaction_receipt)  # noqa: E501
     queried_receipts = set()
     try:
@@ -347,6 +345,33 @@ def test_premium_status_error_conditions(
         assert messages[0].data == {'is_premium_active': False, 'expired': error_case[1]}
 
 
+@pytest.mark.parametrize('max_tasks_num', [1])
+@pytest.mark.parametrize('use_function_scope_msg_aggregator', [True])
+@pytest.mark.parametrize('function_scope_initialize_mock_rotki_notifier', [True])
+def test_premium_device_limit_error(
+        task_manager: TaskManager,
+        rotki_premium_credentials,
+) -> None:
+    """Test that device limit errors send premium_status_update with reason."""
+    task_manager.database.set_rotkehlchen_premium(rotki_premium_credentials)
+    task_manager.potential_tasks = [task_manager._maybe_check_premium_status]
+
+    device_limit_error = PremiumPermissionError('Device limit of 4 exceeded', {'limit_type': 'device'})  # noqa: E501
+    with patch('rotkehlchen.premium.premium.Premium.authenticate_device', side_effect=device_limit_error):  # noqa: E501
+        task_manager.last_premium_status_check = Timestamp(ts_now() - Timestamp(PREMIUM_STATUS_CHECK))  # noqa: E501
+        task_manager.schedule()
+        gevent.joinall(task_manager.running_greenlets)
+
+        messages = task_manager.database.msg_aggregator.rotki_notifier.messages   # type: ignore[union-attr]  # rotki_notifier is MockRotkiNotifier
+        assert len(messages) == 1
+        assert messages[0].message_type == 'premium_status_update'
+        assert messages[0].data == {
+            'is_premium_active': False,
+            'expired': False,
+            'reason': 'Device limit of 4 exceeded',
+        }
+
+
 @pytest.mark.parametrize('max_tasks_num', [5])
 def test_update_snapshot_balances(rotkehlchen_instance: 'Rotkehlchen'):
     database = rotkehlchen_instance.data.db
@@ -365,7 +390,7 @@ def test_update_snapshot_balances(rotkehlchen_instance: 'Rotkehlchen'):
             write_cursor=write_cursor,
             history=[
                 EvmEvent(  # is before last_balance_save
-                    event_identifier='0x15ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791',
+                    group_identifier='0x15ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791',
                     sequence_index=1,
                     timestamp=TimestampMS(1000),
                     location=Location.OPTIMISM,
@@ -374,9 +399,9 @@ def test_update_snapshot_balances(rotkehlchen_instance: 'Rotkehlchen'):
                     asset=A_USDT,
                     amount=ONE,
                     location_label=accounts[0],
-                    tx_hash=make_evm_tx_hash(),
+                    tx_ref=make_evm_tx_hash(),
                 ), EvmEvent(  # USDT was received before last_balance_save
-                    event_identifier='0x25ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791',
+                    group_identifier='0x25ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791',
                     sequence_index=1,
                     timestamp=TimestampMS(2000),
                     location=Location.ETHEREUM,
@@ -385,9 +410,9 @@ def test_update_snapshot_balances(rotkehlchen_instance: 'Rotkehlchen'):
                     asset=A_USDT,
                     amount=ZERO,
                     location_label=accounts[0],
-                    tx_hash=make_evm_tx_hash(),
+                    tx_ref=make_evm_tx_hash(),
                 ), EvmEvent(  # is a new receive event of this token after last_balance_save
-                    event_identifier='0x75ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791',
+                    group_identifier='0x75ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791',
                     sequence_index=1,
                     timestamp=TimestampMS(3000),
                     location=Location.ETHEREUM,
@@ -396,9 +421,9 @@ def test_update_snapshot_balances(rotkehlchen_instance: 'Rotkehlchen'):
                     asset=A_DAI,
                     amount=ONE,
                     location_label=accounts[1],
-                    tx_hash=make_evm_tx_hash(),
+                    tx_ref=make_evm_tx_hash(),
                 ), EvmEvent(  # is a new receive event of this token after last_balance_save
-                    event_identifier='0x35ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791',
+                    group_identifier='0x35ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791',
                     sequence_index=1,
                     timestamp=TimestampMS(4000),
                     location=Location.OPTIMISM,
@@ -407,7 +432,7 @@ def test_update_snapshot_balances(rotkehlchen_instance: 'Rotkehlchen'):
                     asset=A_USDC,
                     amount=ONE,
                     location_label=accounts[2],
-                    tx_hash=make_evm_tx_hash(),
+                    tx_ref=make_evm_tx_hash(),
                 ),
             ],
         )
@@ -637,6 +662,11 @@ def test_maybe_query_ethereum_withdrawals(task_manager, ethereum_accounts):
                 eth2,
                 'detect_exited_validators',
                 side_effect=lambda *args, **kwargs: None,
+            ),
+            patch.object(
+                eth2.ethereum,
+                'maybe_timestamp_to_block_range',
+                return_value=('blocks', 0, 19000000),
             ),
         ):
             task_manager.schedule()
@@ -1328,7 +1358,7 @@ def test_graph_query_query_delegations(
             dbevents.add_history_event(
                 write_cursor=write_cursor,
                 event=EvmEvent(
-                    tx_hash=(tx_hash := make_evm_tx_hash()),
+                    tx_ref=(tx_hash := make_evm_tx_hash()),
                     sequence_index=1,
                     timestamp=TimestampMS(timestamp),
                     location=Location.ETHEREUM,
@@ -1343,7 +1373,7 @@ def test_graph_query_query_delegations(
                 ),
             )
 
-            dbtx.add_evm_transactions(
+            dbtx.add_transactions(
                 write_cursor=write_cursor,
                 evm_transactions=[EvmTransaction(  # fake event used to extract the block number for the query of events  # noqa: E501
                     tx_hash=tx_hash,
@@ -1414,14 +1444,13 @@ def test_morpho_reward_task_repetition(task_manager: TaskManager) -> None:
     task_manager.should_schedule = True
     task_manager.potential_tasks = [task_manager._maybe_update_morpho_cache]
 
-    def update_cache():
+    def update_cache(chain_id):
         with GlobalDBHandler().conn.write_ctx() as write_cursor:
-            for chain_id in {ChainID.ETHEREUM, ChainID.BASE}:
-                globaldb_set_general_cache_values(
-                    write_cursor=write_cursor,
-                    key_parts=(CacheType.MORPHO_REWARD_DISTRIBUTORS, str(chain_id)),
-                    values=['test'],
-                )
+            globaldb_set_general_cache_values(
+                write_cursor=write_cursor,
+                key_parts=(CacheType.MORPHO_REWARD_DISTRIBUTORS, str(chain_id)),
+                values=['test'],
+            )
 
     with (
         gevent.Timeout(5),  # this should not take long. Otherwise a long running task ran
@@ -1432,11 +1461,11 @@ def test_morpho_reward_task_repetition(task_manager: TaskManager) -> None:
             side_effect=update_cache,
         ) as mocked_query_distributors,
     ):
-        for _ in range(2):
-            task_manager.schedule()
-            if len(task_manager.running_greenlets) != 0:
-                gevent.joinall(task_manager.running_greenlets[task_manager._maybe_update_morpho_cache])
-            assert mocked_query_distributors.call_count == 1  # will only get called once
+        task_manager.schedule()
+        if len(task_manager.running_greenlets) != 0:
+            gevent.joinall(task_manager.running_greenlets[task_manager._maybe_update_morpho_cache])
+
+            assert mocked_query_distributors.call_count == 2
 
 
 @pytest.mark.parametrize('max_tasks_num', [1])
@@ -1449,3 +1478,59 @@ def test_query_pendle_yield_tokens_task(task_manager: TaskManager) -> None:
             gevent.joinall(task_manager.running_greenlets[task_manager._maybe_update_pendle_cache])
 
         assert mocked_query_pendle_yield_tokens.call_count == len(PENDLE_SUPPORTED_CHAINS_WITHOUT_ETHEREUM) + 1  # noqa: E501
+
+
+@pytest.mark.parametrize('max_tasks_num', [5])
+def test_maybe_update_morpho_cache_with_chain_ids(task_manager: TaskManager) -> None:
+    """Regression test that _maybe_update_morpho_cache correctly calls vault and
+    reward distributor queries for both supported chains with chain_id parameters."""
+    task_manager.should_schedule = True
+    task_manager.potential_tasks = [task_manager._maybe_update_morpho_cache]
+
+    with (
+        patch.object(target=task_manager, attribute='query_morpho_vaults') as mock_vaults,
+        patch.object(target=task_manager, attribute='query_morpho_reward_distributors') as mock_distributors,  # noqa: E501
+    ):
+        task_manager.schedule()
+        if len(task_manager.running_greenlets) != 0:
+            gevent.joinall(task_manager.running_greenlets[task_manager._maybe_update_morpho_cache])
+
+        for mock_fn in (mock_vaults, mock_distributors):
+            assert mock_fn.call_count == 2
+            assert mock_fn.call_args[1]['chain_id'] in {ChainID.ETHEREUM, ChainID.BASE}
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('max_tasks_num', [1])
+def test_process_events_frequency(
+        task_manager: TaskManager,
+        db_settings: dict[str, Any],
+        freezer,
+) -> None:
+    """Check that the process events task frequency is controlled via the DB setting."""
+    database = task_manager.database
+    # check both the default (1 day) and a custom value of 1 hour
+    for time_delta, processing_frequency, should_run in (
+        (datetime.timedelta(), None, True),
+        (datetime.timedelta(hours=23), None, False),
+        (datetime.timedelta(hours=25), None, True),
+        (datetime.timedelta(minutes=59), HOUR_IN_SECONDS, False),
+        (datetime.timedelta(minutes=61), HOUR_IN_SECONDS, True),
+    ):
+        if processing_frequency is not None:
+            with database.conn.write_ctx() as write_cursor:
+                database.set_settings(
+                    write_cursor=write_cursor,
+                    settings=ModifiableDBSettings(
+                        events_processing_frequency=processing_frequency,
+                    ),
+                )
+
+        freezer.move_to(datetime.datetime.now(tz=datetime.UTC) + time_delta)
+        with patch('rotkehlchen.tasks.events.match_asset_movements') as match_events_mock:
+            task_manager.potential_tasks = [task_manager._maybe_run_events_processing]
+            task_manager.schedule()
+            if len(task_manager.running_greenlets):
+                gevent.joinall(task_manager.running_greenlets[task_manager._maybe_run_events_processing])
+
+        assert match_events_mock.call_count == (1 if should_run else 0)

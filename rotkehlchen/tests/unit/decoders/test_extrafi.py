@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.extrafi.decoder import (
     CPT_EXTRAFI,
     EXTRAFI_FARMING_CONTRACT,
@@ -16,8 +16,9 @@ from rotkehlchen.chain.optimism.modules.extrafi.constants import EXTRAFI_COMMUNI
 from rotkehlchen.constants.assets import A_ETH, A_OP
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
+from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
 
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0x4ba257EC214BA1e6a3b4E46Bd7C4654b9E81CED3']])
 def test_extrafi_deposit_and_stake(
         optimism_inquirer: 'OptimismInquirer',
@@ -38,7 +40,7 @@ def test_extrafi_deposit_and_stake(
     timestamp, fee_amount, deposited_amount = TimestampMS(1724325113000), '0.000000295568286412', '3259.807132247307892938'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -50,7 +52,7 @@ def test_extrafi_deposit_and_stake(
             notes=f'Burn {fee_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=13,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -62,7 +64,7 @@ def test_extrafi_deposit_and_stake(
             notes=f'Set VELO spending approval of 0x4ba257EC214BA1e6a3b4E46Bd7C4654b9E81CED3 by {EXTRAFI_POOL_CONTRACT} to 10180971820322352348298.271714677763401611',  # noqa: E501
             address=EXTRAFI_POOL_CONTRACT,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=14,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -80,6 +82,7 @@ def test_extrafi_deposit_and_stake(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0x92c90a4eA6F205dEe545ac348bBF005C4a019c78']])
 def test_extrafi_unstake_and_withdraw(
         optimism_inquirer: 'OptimismInquirer',
@@ -90,7 +93,7 @@ def test_extrafi_unstake_and_withdraw(
     timestamp, fee_amount, deposited_amount = TimestampMS(1724414161000), '0.00000029164013947', '28996.716869'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -102,7 +105,7 @@ def test_extrafi_unstake_and_withdraw(
             notes=f'Burn {fee_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=19,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -119,6 +122,7 @@ def test_extrafi_unstake_and_withdraw(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0x7C16C022048b25142482CF06AC98064527395290']])
 def test_extrafi_claim_from_pool(
         optimism_inquirer: 'OptimismInquirer',
@@ -129,7 +133,7 @@ def test_extrafi_claim_from_pool(
     timestamp, fee_amount, claimed_extra, claimed_op = TimestampMS(1717599275000), '0.000012215355410845', '42.0693742435086256', '0.162673580112061904'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -141,7 +145,7 @@ def test_extrafi_claim_from_pool(
             notes=f'Burn {fee_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=18,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -154,7 +158,7 @@ def test_extrafi_claim_from_pool(
             counterparty=CPT_EXTRAFI,
             address=EXTRAFI_STAKING_CONTRACT,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=20,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -171,6 +175,7 @@ def test_extrafi_claim_from_pool(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0xfE9182CD69F9fEb2A22C8bB88D03dCBBDfF77f11']])
 def test_extrafi_lock_token(
         optimism_inquirer: 'OptimismInquirer',
@@ -181,7 +186,7 @@ def test_extrafi_lock_token(
     timestamp, fee_amount, locked_amount = TimestampMS(1724678695000), '0.000002162513212219', '10077.656075837376207314'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -193,7 +198,7 @@ def test_extrafi_lock_token(
             notes=f'Burn {fee_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=12,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -205,7 +210,7 @@ def test_extrafi_lock_token(
             notes=f'Revoke EXTRA spending approval of 0xfE9182CD69F9fEb2A22C8bB88D03dCBBDfF77f11 by {VOTE_ESCROW}',  # noqa: E501
             address=VOTE_ESCROW,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=13,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -217,12 +222,12 @@ def test_extrafi_lock_token(
             notes=f'Lock {locked_amount} EXTRA until 21/08/2025 00:00:00',
             counterparty=CPT_EXTRAFI,
             address=VOTE_ESCROW,
-            product=EvmProduct.STAKING,
         ),
     ]
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0x4003eeb8e27D300c8420ecDeDfB96C4dE7a46E7E']])
 def test_extrafi_repay(
         optimism_inquirer: 'OptimismInquirer',
@@ -233,7 +238,7 @@ def test_extrafi_repay(
     timestamp, fee_amount, repaid_amount, refund_amount = TimestampMS(1722746575000), '0.000001297692870133', '0.001369169723826962', '0.000000000000000002'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -245,7 +250,7 @@ def test_extrafi_repay(
             notes=f'Burn {fee_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -258,7 +263,7 @@ def test_extrafi_repay(
             address=EXTRAFI_FARMING_CONTRACT,
             counterparty=CPT_EXTRAFI,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -275,6 +280,7 @@ def test_extrafi_repay(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0x225170393fCD06F3295aDa2bF33002C8ec94b8E4']])
 def test_extrafi_repay_with_token(
         optimism_inquirer: 'OptimismInquirer',
@@ -285,7 +291,7 @@ def test_extrafi_repay_with_token(
     timestamp, fee_amount, repaid_amount, refund_amount = TimestampMS(1721340039000), '0.000076904200008685', '1589.9698', '0.000002'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -297,7 +303,7 @@ def test_extrafi_repay_with_token(
             notes=f'Burn {fee_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=44,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -309,7 +315,7 @@ def test_extrafi_repay_with_token(
             notes=f'Set USDC.e spending approval of {optimism_accounts[0]} by 0xf9cFB8a62f50e10AdDE5Aa888B44cF01C5957055 to 115792089237316195423570985008687907853269984665640564039457584007873814.838605',  # noqa: E501
             address=EXTRAFI_FARMING_CONTRACT,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=45,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -322,7 +328,7 @@ def test_extrafi_repay_with_token(
             address=string_to_evm_address('0x5f88d6f7beD0538Ca825404Baf20C846b4073e5D'),
             counterparty=CPT_EXTRAFI,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=46,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -339,6 +345,7 @@ def test_extrafi_repay_with_token(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0x4003eeb8e27D300c8420ecDeDfB96C4dE7a46E7E']])
 def test_close_position(
         optimism_inquirer: 'OptimismInquirer',
@@ -349,7 +356,7 @@ def test_close_position(
     timestamp, fee_amount, withdrawn_amount = TimestampMS(1722759379000), '0.000001936939279642', '6.195522513842170302'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -361,7 +368,7 @@ def test_close_position(
             notes=f'Burn {fee_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=96,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -378,6 +385,7 @@ def test_close_position(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0x4003eeb8e27D300c8420ecDeDfB96C4dE7a46E7E']])
 def test_farm_investment(
         optimism_inquirer: 'OptimismInquirer',
@@ -388,7 +396,7 @@ def test_farm_investment(
     timestamp, fee_amount, deposited_amount, borrow_amount = TimestampMS(1722792861000), '0.000027486262250944', '8.230157245731733013', '0.002920375680424896'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -400,7 +408,7 @@ def test_farm_investment(
             notes=f'Burn {fee_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=48,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -412,7 +420,7 @@ def test_farm_investment(
             notes=f'Set EXA spending approval of 0x4003eeb8e27D300c8420ecDeDfB96C4dE7a46E7E by {EXTRAFI_FARMING_CONTRACT} to 2',  # noqa: E501
             address=EXTRAFI_FARMING_CONTRACT,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=49,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -426,7 +434,7 @@ def test_farm_investment(
             extra_data={'vault_id': 70, 'vault_position': 511},
             address=string_to_evm_address('0x9558FF42E95dcA076A8DEB67c8FF8B86f52b2f8C'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=50,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -439,7 +447,7 @@ def test_farm_investment(
             counterparty=CPT_EXTRAFI,
             address=string_to_evm_address('0xf9cFB8a62f50e10AdDE5Aa888B44cF01C5957055'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=51,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -456,14 +464,15 @@ def test_farm_investment(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0x007183900fBbe3e7815b278074a49B8C7319EDba']])
 def test_new_farm_borrow_position_on_base(base_inquirer, base_accounts):
-    evmhash = deserialize_evm_tx_hash('0xb9479f2e21100ddbba10395d76abb2fb4e151b2142ba90c91151a10fcb5cfbc7')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=evmhash)
+    tx_hash = deserialize_evm_tx_hash('0xb9479f2e21100ddbba10395d76abb2fb4e151b2142ba90c91151a10fcb5cfbc7')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=tx_hash)
     timestamp, borrow_amount, gas_fees = TimestampMS(1725972969000), '4025.689364', '0.000006907473477667'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -475,7 +484,7 @@ def test_new_farm_borrow_position_on_base(base_inquirer, base_accounts):
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.BASE,
@@ -488,7 +497,7 @@ def test_new_farm_borrow_position_on_base(base_inquirer, base_accounts):
             counterparty=CPT_EXTRAFI,
             address=EXTRAFI_FARMING_CONTRACT,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.BASE,
@@ -505,14 +514,15 @@ def test_new_farm_borrow_position_on_base(base_inquirer, base_accounts):
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0x007183900fBbe3e7815b278074a49B8C7319EDba']])
 def test_new_farm_position_on_base(base_inquirer, base_accounts):
-    evmhash = deserialize_evm_tx_hash('0xf0458b2c208fa7362669b6430277808a2bda527fcbe5dd3514a5879c445311cc')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=evmhash)
+    tx_hash = deserialize_evm_tx_hash('0xf0458b2c208fa7362669b6430277808a2bda527fcbe5dd3514a5879c445311cc')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=tx_hash)
     timestamp, deposit_amount, gas_fees = TimestampMS(1725309783000), '5042.114438', '0.000003258939143014'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -524,7 +534,7 @@ def test_new_farm_position_on_base(base_inquirer, base_accounts):
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=390,
             timestamp=timestamp,
             location=Location.BASE,
@@ -542,14 +552,15 @@ def test_new_farm_position_on_base(base_inquirer, base_accounts):
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0xDbA7bB7Ee25d259e0a14880Ef107A7c5106A716d']])
 def test_vested_extra_base(base_inquirer, base_accounts):
-    evmhash = deserialize_evm_tx_hash('0x560a5e279a7f1b9c89dca3d7f93da11c9418037c0362f01b443d50967a719d5d')  # noqa: E501
-    events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=evmhash)
+    tx_hash = deserialize_evm_tx_hash('0x560a5e279a7f1b9c89dca3d7f93da11c9418037c0362f01b443d50967a719d5d')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=tx_hash)
     timestamp, locked_amount, gas_fees = TimestampMS(1722581379000), '8.004925206880061111', '0.000002859618316575'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -561,7 +572,7 @@ def test_vested_extra_base(base_inquirer, base_accounts):
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=53,
             timestamp=timestamp,
             location=Location.BASE,
@@ -573,7 +584,7 @@ def test_vested_extra_base(base_inquirer, base_accounts):
             notes=f'Revoke EXTRA spending approval of {base_accounts[0]} by 0xe0BeC4F45aEF64CeC9dCB9010d4beFfB13e91466',  # noqa: E501
             address=VOTE_ESCROW,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=54,
             timestamp=timestamp,
             location=Location.BASE,
@@ -585,12 +596,12 @@ def test_vested_extra_base(base_inquirer, base_accounts):
             notes=f'Lock {locked_amount} EXTRA until 08/08/2024 00:00:00',
             counterparty=CPT_EXTRAFI,
             address=VOTE_ESCROW,
-            product=EvmProduct.STAKING,
         ),
     ]
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('load_global_caches', [[CPT_EXTRAFI]])
 @pytest.mark.parametrize('optimism_accounts', [['0x35d527C6aF6621DFc46f7CcCE92948d49CF1Fe27']])
 def test_extrafi_claim_lending(
@@ -607,7 +618,7 @@ def test_extrafi_claim_lending(
     timestamp, fee_amount, claimed_extra, claimed_op = TimestampMS(1727429719000), '0.000000266809434775', '8.888980847307437249', '0.137614520893025687'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -619,7 +630,7 @@ def test_extrafi_claim_lending(
             notes=f'Burn {fee_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=41,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -632,7 +643,7 @@ def test_extrafi_claim_lending(
             counterparty=CPT_EXTRAFI,
             address=string_to_evm_address('0x5DC1a8Fa98508e342FA8CFf0c49ab57138d53337'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=43,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -649,6 +660,7 @@ def test_extrafi_claim_lending(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('load_global_caches', [[CPT_EXTRAFI]])
 @pytest.mark.parametrize('base_accounts', [['0x8887a050A8c6873c9cA7553e3F7Bfb0e9b36AEE1']])
 def test_extrafi_claim_lending_base(
@@ -665,7 +677,7 @@ def test_extrafi_claim_lending_base(
     timestamp, fee_amount, claimed_extra = TimestampMS(1721419937000), '0.000001803922832983', '6.970955942301511307'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -677,7 +689,7 @@ def test_extrafi_claim_lending_base(
             notes=f'Burn {fee_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=284,
             timestamp=timestamp,
             location=Location.BASE,
@@ -694,6 +706,7 @@ def test_extrafi_claim_lending_base(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0x0EdB39ada48BDF162C09983e0005825c4ce3E5B4']])
 def test_op_incentive_rewards(
         optimism_inquirer: 'OptimismInquirer',
@@ -707,7 +720,7 @@ def test_op_incentive_rewards(
     timestamp, amount = TimestampMS(1737018755000), '0.769886891'
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=58,
             timestamp=timestamp,
             location=Location.OPTIMISM,

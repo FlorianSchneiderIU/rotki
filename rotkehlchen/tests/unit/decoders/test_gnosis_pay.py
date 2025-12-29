@@ -2,19 +2,23 @@ from unittest.mock import patch
 
 import pytest
 
+from rotkehlchen.chain.gnosis.decoding.decoder import GnosisTransactionDecoder
 from rotkehlchen.chain.gnosis.modules.gnosis_pay.constants import (
     CPT_GNOSIS_PAY,
     GNOSIS_PAY_CASHBACK_ADDRESS,
     GNOSIS_PAY_REFERRAL_ADDRESS,
     GNOSIS_PAY_SPENDING_COLLECTOR,
 )
+from rotkehlchen.chain.gnosis.transactions import GnosisTransactions
 from rotkehlchen.constants.assets import Asset
 from rotkehlchen.db.filtering import EvmEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
+from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
+from rotkehlchen.tests.utils.factories import make_evm_tx_hash
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import (
     ApiKey,
@@ -24,6 +28,7 @@ from rotkehlchen.types import (
     TimestampMS,
     deserialize_evm_tx_hash,
 )
+from rotkehlchen.utils.misc import ts_ms_to_sec
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -46,7 +51,7 @@ def test_gnosis_pay_cashback(gnosis_inquirer, gnosis_accounts):
             amount=FVal(amount),
             location_label=gnosis_accounts[0],
             notes=f'Receive cashback of {amount} GNO from Gnosis Pay',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GNOSIS_PAY,
             address=GNOSIS_PAY_CASHBACK_ADDRESS,
         ),
@@ -75,7 +80,7 @@ def test_gnosis_pay_referral(gnosis_inquirer, gnosis_accounts):
             amount=FVal(amount),
             location_label=gnosis_accounts[0],
             notes=f'Receive referral reward of {amount} EURe from Gnosis Pay',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GNOSIS_PAY,
             address=GNOSIS_PAY_REFERRAL_ADDRESS,
         ),
@@ -106,7 +111,7 @@ def test_gnosis_pay_spend(gnosis_inquirer, gnosis_accounts, rotki_premium_object
             amount=FVal(amount),
             location_label=gnosis_accounts[0],
             notes=f'Spend {amount} EURe via Gnosis Pay',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GNOSIS_PAY,
             address=GNOSIS_PAY_SPENDING_COLLECTOR,
         ),
@@ -120,8 +125,8 @@ def test_gnosis_pay_spend(gnosis_inquirer, gnosis_accounts, rotki_premium_object
         )
     gnosispay_decoder.reload_data()
 
-    def mock_gnosispay_api(url, **kwargs):  # pylint: disable=unused-argument
-        return MockResponse(200, """[{
+    responses = iter([
+        MockResponse(200, """{"results" :[{
         "createdAt": "2024-09-17T16:32:25.0000Z",
         "transactionAmount": "850",
         "transactionCurrency": {
@@ -165,7 +170,15 @@ def test_gnosis_pay_spend(gnosis_inquirer, gnosis_accounts, rotki_premium_object
         ],
         "kind": "Payment",
         "status": "Approved"
-        }]""")
+        }]}"""),
+        MockResponse(200, """{"results": []}"""),
+    ])
+
+    def mock_gnosispay_api(url, **kwargs):  # pylint: disable=unused-argument
+        try:
+            return next(responses)
+        except StopIteration as e:
+            raise AssertionError('Unexpected extra Gnosis Pay API call during test') from e
 
     with patch.object(
             gnosis_txs_decoder,  # do not reload data since this overwrites the api object
@@ -174,7 +187,7 @@ def test_gnosis_pay_spend(gnosis_inquirer, gnosis_accounts, rotki_premium_object
     ), patch.object(
             gnosispay_decoder.gnosispay_api.session,  # mock api response
             'get',
-            wraps=mock_gnosispay_api,
+            side_effect=mock_gnosispay_api,
     ):
         events = gnosis_txs_decoder.decode_and_get_transaction_hashes(ignore_cache=True, tx_hashes=[tx_hash])  # noqa: E501
 
@@ -185,7 +198,7 @@ def test_gnosis_pay_spend(gnosis_inquirer, gnosis_accounts, rotki_premium_object
         )
 
         expected_events[0].identifier = 1
-        expected_events[0].notes = 'Pay 8.5 EUR to Lidl sagt Danke in Berlin :country:DE:'
+        expected_events[0].notes = 'Pay 8.5 EUR to :merchant_code:5411: Lidl sagt Danke in Berlin :country:DE:'  # noqa: E501
     assert refreshed_events == expected_events
 
 
@@ -213,7 +226,7 @@ def test_gnosis_pay_refund(gnosis_inquirer, gnosis_accounts):
             amount=FVal(amount),
             location_label=gnosis_accounts[0],
             notes=f'Receive refund of {amount} EURe from Gnosis Pay',
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             counterparty=CPT_GNOSIS_PAY,
             address=GNOSIS_PAY_SPENDING_COLLECTOR,
         ),
@@ -241,15 +254,106 @@ def test_gnosis_pay_refund(gnosis_inquirer, gnosis_accounts):
                 'EUR', '2.35',
             ),
         )
-        identifier = write_cursor.lastrowid
 
     # do not reload data since this overwrites the api object
     with patch.object(gnosis_txs_decoder, 'reload_data', lambda x: None):
         events = gnosis_txs_decoder.decode_and_get_transaction_hashes(ignore_cache=True, tx_hashes=[tx_hash])  # noqa: E501
 
-    expected_events[0].notes = 'Receive refund of 2.35 EUR from Acme Inc. in Sevilla :country:ES:'
+    expected_events[0].notes = 'Receive refund of 2.35 EUR from :merchant_code:6666: Acme Inc. in Sevilla :country:ES:'  # noqa: E501
     assert events == expected_events
 
-    with gnosis_inquirer.database.conn.read_ctx() as cursor:  # also check refund tx hash updated
-        cursor.execute('SELECT reversal_tx_hash FROM gnosispay_data WHERE identifier=?', (identifier,))  # noqa: E501
-        assert deserialize_evm_tx_hash(cursor.fetchone()[0]) == tx_hash
+
+@pytest.mark.parametrize('gnosis_accounts', [[
+    '0xc746598C9dD7FC62EF8775445F2F375aCbaCa7AE',
+]])
+@pytest.mark.freeze_time('2023-11-14 22:30:00 GMT')
+def test_backfill_missing_gnosis_pay_events(gnosis_inquirer, gnosis_accounts):
+    tx_hash, second_tx_hash = make_evm_tx_hash(), make_evm_tx_hash()
+    second_note = 'Pay 1.4 EUR to :merchant_code:4784: AUTOPISTA R4 SEITT -2 in MADRID :country:ES:'  # noqa: E501
+    gnosis_transactions = GnosisTransactions(
+        gnosis_inquirer=gnosis_inquirer,
+        database=gnosis_inquirer.database,
+    )
+    gnosis_decoder = GnosisTransactionDecoder(
+        database=gnosis_inquirer.database,
+        gnosis_inquirer=gnosis_inquirer,
+        transactions=gnosis_transactions,
+    )
+
+    gnosispay_decoder = gnosis_decoder.decoders.get('GnosisPay')
+    assert gnosispay_decoder is not None
+
+    with gnosis_inquirer.database.user_write() as write_cursor:
+        gnosis_inquirer.database.add_external_service_credentials(
+            write_cursor=write_cursor,
+            credentials=[ExternalServiceApiCredentials(service=ExternalService.GNOSIS_PAY, api_key=ApiKey('foo'))],  # noqa: E501
+        )
+
+    gnosispay_decoder.reload_data()
+    assert gnosispay_decoder.gnosispay_api is not None
+
+    timestamp_ms = TimestampMS(1700000000000)
+    with gnosis_inquirer.database.user_write() as write_cursor:
+        write_cursor.executemany(
+            'INSERT INTO history_events('
+            'identifier, entry_type, group_identifier, sequence_index, notes, timestamp, '
+            'location, asset, amount, type, subtype, ignored'
+            ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)',
+            [
+                (
+                    None,
+                    HistoryBaseEntryType.HISTORY_EVENT.value,
+                    'evm-gnosis-1',
+                    0,
+                    'Spend 1 EURe via Gnosis Pay',
+                    timestamp_ms,
+                    Location.GNOSIS.serialize_for_db(),
+                    'ETH',
+                    '1',
+                    HistoryEventType.RECEIVE.serialize(),
+                    HistoryEventSubType.NONE.serialize(),
+                ),
+                (
+                    None,
+                    HistoryBaseEntryType.HISTORY_EVENT.value,
+                    'evm-gnosis-2',
+                    1,
+                    second_note,
+                    timestamp_ms,
+                    Location.GNOSIS.serialize_for_db(),
+                    'eip155:100/erc20:0x420CA0f9B9b604cE0fd9C18EF134C705e5Fa3430',
+                    '1.4',
+                    HistoryEventType.SPEND.serialize(),
+                    HistoryEventSubType.NONE.serialize(),
+                ),
+            ],
+        )
+        write_cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            ('evm-gnosis-1',),
+        )
+        identifier = write_cursor.fetchone()[0]
+        write_cursor.execute(
+            'INSERT INTO chain_events_info(identifier, tx_ref, counterparty) VALUES (?, ?, ?)',
+            (identifier, tx_hash, CPT_GNOSIS_PAY),
+        )
+        write_cursor.execute(
+            'SELECT identifier FROM history_events WHERE group_identifier=?',
+            ('evm-gnosis-2',),
+        )
+        second_identifier = write_cursor.fetchone()[0]
+        write_cursor.execute(
+            'INSERT INTO chain_events_info(identifier, tx_ref, counterparty) VALUES (?, ?, ?)',
+            (second_identifier, second_tx_hash, CPT_GNOSIS_PAY),
+        )
+
+    with patch.object(
+            gnosispay_decoder.gnosispay_api,
+            'update_events',
+    ) as update_mock:
+        gnosispay_decoder.gnosispay_api.backfill_missing_events()
+
+    update_mock.assert_called_once_with(tx_timestamps={tx_hash: ts_ms_to_sec(timestamp_ms)})
+    with gnosis_inquirer.database.conn.read_ctx() as cursor:
+        cursor.execute('SELECT notes FROM history_events WHERE identifier=?', (second_identifier,))
+        assert cursor.fetchone()[0] == second_note

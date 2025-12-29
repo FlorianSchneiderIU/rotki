@@ -5,7 +5,7 @@ import PrioritizedList from '@/components/helper/PrioritizedList.vue';
 import PrioritizedListEntry from '@/components/helper/PrioritizedListEntry.vue';
 import { AddressNamePriority } from '@/types/settings/address-name-priorities';
 import { PrioritizedListData } from '@/types/settings/prioritized-list-data';
-import '../../../i18n';
+import '@test/i18n';
 
 describe('prioritizedList.vue', () => {
   let wrapper: VueWrapper<InstanceType<typeof PrioritizedList>>;
@@ -19,8 +19,8 @@ describe('prioritizedList.vue', () => {
   };
 
   const emittedInputEventItems = (): string[] => {
-    expect(wrapper.emitted()['update:model-value'].length).toBe(1);
-    const emitted = wrapper.emitted()['update:model-value'][0] as string[][];
+    expect(wrapper.emitted()['update:modelValue'].length).toBe(1);
+    const emitted = wrapper.emitted()['update:modelValue'][0] as string[][];
     return emitted[0];
   };
 

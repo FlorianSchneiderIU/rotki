@@ -70,7 +70,7 @@ def assert_csv_export_response(
         'fiat_value',
         'identifier',
         'entry_type',
-        'event_identifier',
+        'group_identifier',
         'sequence_index',
         'direction',
         'extra_data',
@@ -78,9 +78,8 @@ def assert_csv_export_response(
 
     extra_headers = (
         # evm event
-        'tx_hash',
+        'tx_ref',
         'counterparty',
-        'product',
         'address',
 
         # eth staking events
@@ -170,7 +169,7 @@ def test_history_export_download_csv(
     assert_csv_export_response(response, temp_csv_file, is_download=True)
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['api_key'])
 @pytest.mark.parametrize('db_settings', [{'csv_export_delimiter': ';'}])
 @pytest.mark.freeze_time('2025-04-30')
 def test_history_export_csv_custom_delimiter(
@@ -256,10 +255,10 @@ def test_history_export_csv_free_limit(
     """Test that the free history events limit is respected."""
     database = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen.data.db
     history_events = DBHistoryEvents(database=database)
-    event_identifiers = [make_evm_tx_hash().hex() for _ in range(3)]  # pylint: disable=no-member
+    group_identifiers = [str(make_evm_tx_hash()) for _ in range(3)]
     dummy_events = (
         HistoryEvent(
-            event_identifier=event_identifiers[0],
+            group_identifier=group_identifiers[0],
             sequence_index=0,
             timestamp=TimestampMS(1700000000000),
             location=Location.OPTIMISM,
@@ -268,7 +267,7 @@ def test_history_export_csv_free_limit(
             asset=A_ETH,
             amount=ONE,
         ), HistoryEvent(
-            event_identifier=event_identifiers[1],
+            group_identifier=group_identifiers[1],
             sequence_index=0,
             timestamp=TimestampMS(1710000000000),
             location=Location.OPTIMISM,
@@ -277,7 +276,7 @@ def test_history_export_csv_free_limit(
             asset=A_ETH,
             amount=FVal(2),
         ), HistoryEvent(
-            event_identifier=event_identifiers[2],
+            group_identifier=group_identifiers[2],
             sequence_index=0,
             timestamp=TimestampMS(1720000000000),
             location=Location.OPTIMISM,

@@ -2,6 +2,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from rotkehlchen.assets.utils import asset_normalized_value
 from rotkehlchen.chain.base.modules.echo.constants import (
     CPT_ECHO,
     DEAL_ABI,
@@ -13,15 +14,14 @@ from rotkehlchen.chain.base.modules.echo.constants import (
     FUNDING_CONDUIT,
     POOL_REFUNDED,
 )
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress, EvmTransaction
@@ -35,21 +35,21 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class EchoDecoder(DecoderInterface):
+class EchoDecoder(EvmDecoderInterface):
 
-    def _decode_fee_paid(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_fee_paid(self, context: DecoderContext) -> EvmDecodingOutput:
         """Transform transfer event to Echo fee event if Echo charged on-chain fee"""
         if (
             context.tx_log.topics[0] != FEE_PAID or
             not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[1]))
         ):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if fee_amount_from_input := int.from_bytes(context.transaction.input_data[36:68]) == 0:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         deal_address = bytes_to_address(context.transaction.input_data[68:100])
-        raw_token_address = self.evm_inquirer.call_contract(
+        raw_token_address = self.node_inquirer.call_contract(
                 contract_address=deal_address,
                 abi=DEAL_ABI,
                 method_name='token',
@@ -76,17 +76,16 @@ class EchoDecoder(DecoderInterface):
                     amount=fee_amount,
                     location_label=user_address,
                     to_event_subtype=HistoryEventSubType.FEE,
-                    address=FUNDING_CONDUIT,
                     to_counterparty=CPT_ECHO,
                     to_notes=f'Paid {fee_amount} USDC as part of funding an Echo deal',
                 ))
                 break
         else:
-            log.error(f'Could not find fee event for {self.evm_inquirer.chain_name} for Echo funding tx {context.transaction}')  # noqa:E501
+            log.error(f'Could not find fee event for {self.node_inquirer.chain_name} for Echo funding tx {context.transaction}')  # noqa:E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _transform_refund(self, context: DecoderContext) -> DecodingOutput:
+    def _transform_refund(self, context: DecoderContext) -> EvmDecodingOutput:
         """Transform transfer event from echo full refund
            This will not track partial refund as it does not emit deregistered event
            Only 3 instance of those have happened https://dune.com/queries/4605517
@@ -96,14 +95,14 @@ class EchoDecoder(DecoderInterface):
             context.tx_log.topics[0] != FUNDER_DEREGISTERED or
             not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[2]))
         ):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         for tx_log in context.all_logs:
             if (
                 tx_log.topics[0] == POOL_REFUNDED and
                 user_address == bytes_to_address(tx_log.topics[2])
             ):
-                raw_token_address = self.evm_inquirer.call_contract(
+                raw_token_address = self.node_inquirer.call_contract(
                     contract_address=tx_log.address,
                     abi=DEAL_ABI,
                     method_name='token',
@@ -123,15 +122,14 @@ class EchoDecoder(DecoderInterface):
                     asset=token,
                     amount=amount,
                     location_label=user_address,
-                    address=tx_log.address,
                     to_counterparty=CPT_ECHO,
                     to_notes=f'Refund {amount} USDC from {tx_log.address} on Echo',
                 ))
                 break
         else:
-            log.error(f'Could not find refund event for {self.evm_inquirer.chain_name} for Echo refund {context.transaction}')  # noqa:E501
+            log.error(f'Could not find refund event for {self.node_inquirer.chain_name} for Echo refund {context.transaction}')  # noqa:E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _process_funding(
             self,
@@ -150,7 +148,7 @@ class EchoDecoder(DecoderInterface):
                 deal_address = tx_log.address
                 break
         else:
-            log.error(f'Could not find deal funded event for {self.evm_inquirer.chain_name} for Echo fund {transaction.tx_hash.hex()}')  # noqa:E501
+            log.error(f'Could not find deal funded event for {self.node_inquirer.chain_name} for Echo fund {transaction.tx_hash!s}')  # noqa:E501
             return decoded_events
 
         for event in decoded_events:
@@ -170,7 +168,7 @@ class EchoDecoder(DecoderInterface):
                 event.notes = f'Fund {event.amount} {event.asset.symbol_or_name()} to {deal_address} on Echo'  # noqa:E501
                 break
         else:
-            log.error(f'Could not find funding event for {self.evm_inquirer.chain_name} for Echo funding {transaction.tx_hash.hex()}')  # noqa:E501
+            log.error(f'Could not find funding event for {self.node_inquirer.chain_name} for Echo funding {transaction.tx_hash!s}')  # noqa:E501
 
         return decoded_events
 

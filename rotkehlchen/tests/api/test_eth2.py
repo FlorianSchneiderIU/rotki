@@ -40,7 +40,11 @@ from rotkehlchen.tests.utils.api import (
     assert_simple_ok_response,
 )
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
-from rotkehlchen.tests.utils.factories import make_evm_address, make_evm_tx_hash
+from rotkehlchen.tests.utils.factories import (
+    make_eth2_deposit_event,
+    make_evm_address,
+    make_evm_tx_hash,
+)
 from rotkehlchen.tests.utils.rotkehlchen import setup_balances
 from rotkehlchen.types import (
     ChainID,
@@ -112,17 +116,26 @@ def test_staking_performance(
         rotkehlchen_api_server: 'APIServer',
         ethereum_accounts: list['ChecksumEvmAddress'],
 ) -> None:
-    validator_index = 1187604
+    # Create deposit event to link depositor address with validator
+    with (db := rotkehlchen_api_server.rest_api.rotkehlchen.data.db).conn.write_ctx() as write_cursor:  # noqa: E501
+        DBHistoryEvents(db).add_history_event(
+            write_cursor=write_cursor,
+            event=make_eth2_deposit_event(
+                pubkey=(pubkey := Eth2PubKey('0xa2de832511231af4bf98083e68c67aa6429c8c2b08920302d1d6953298f3720c8d5ca22c08a54fffa2efab782e25dba8')),  # noqa: E501
+                depositor=(depositor := string_to_evm_address('0xf93eba7D7a8C5c5c663d776e8890CB37fF5525ef')),  # noqa: E501
+            ),
+        )
+
     response = requests.put(api_url_for(  # track the depositor address
         rotkehlchen_api_server,
         'blockchainsaccountsresource',
         blockchain='ETH',
-    ), json={'accounts': [{'address': '0xf93eba7D7a8C5c5c663d776e8890CB37fF5525ef'}]})
+    ), json={'accounts': [{'address': depositor}]})
     assert_proper_sync_response_with_result(response)
     detected_validator = ValidatorDetailsWithStatus(
         activation_timestamp=Timestamp(1707319895),
-        validator_index=validator_index,
-        public_key=Eth2PubKey('0xa2de832511231af4bf98083e68c67aa6429c8c2b08920302d1d6953298f3720c8d5ca22c08a54fffa2efab782e25dba8'),
+        validator_index=(validator_index := 1187604),
+        public_key=pubkey,
         withdrawal_address=ethereum_accounts[0],
         status=ValidatorStatus.ACTIVE,
         validator_type=ValidatorType.DISTRIBUTING,
@@ -220,6 +233,16 @@ def test_staking_performance_filtering_pagination(
         '0x53DeB4aF24c7c8D04832B43C2B21fa75e50A145d',  # depositor of normal validator
         '0x7aF51C7e6ebcbb4cCC39e4C5061cb5CBfBC1F74A',  # depositor of exited validator
     ]
+    # Create deposit events to link depositor addresses with validators
+    with (db := rotkehlchen_api_server.rest_api.rotkehlchen.data.db).conn.write_ctx() as write_cursor:  # noqa: E501
+        DBHistoryEvents(db).add_history_events(
+            write_cursor=write_cursor,
+            history=[make_eth2_deposit_event(
+                pubkey=Eth2PubKey(f'0xa2de832511231af4bf98083e68c67aa6429c8c2b08920302d1d6953298f3720c8d5ca22c08a54fffa2efab782e25dba{idx}'),
+                depositor=string_to_evm_address(address),
+            ) for idx, address in enumerate(addresses)],
+        )
+
     data = {'accounts': [{'address': x} for x in addresses], 'async_query': False}
     response = requests.put(api_url_for(  # track the depositor address
         rotkehlchen_api_server,
@@ -492,7 +515,7 @@ def test_add_get_edit_delete_eth2_validators(
     events = [
         EthDepositEvent(
             identifier=1,
-            tx_hash=make_evm_tx_hash(),
+            tx_ref=make_evm_tx_hash(),
             validator_index=validators[0].validator_index,  # type: ignore[arg-type]  # validator indexes are defined above and will not be None
             sequence_index=1,
             timestamp=TimestampMS(1601379127000),
@@ -620,6 +643,7 @@ def test_add_get_edit_delete_eth2_validators(
     assert result == {'entries': [validator.serialize() for validator in custom_percentage_validators], 'entries_limit': -1, 'entries_found': 2}  # noqa: E501
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_modules', [['eth2']])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 @pytest.mark.parametrize('method', ['PUT', 'DELETE'])
@@ -925,30 +949,30 @@ def test_query_combined_mev_reward_and_block_production_events(rotkehlchen_api_s
             rotkehlchen_api_server,
             'historyeventresource',
         ),
-        json={'group_by_event_ids': True},
+        json={'aggregate_by_group_ids': True},
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result['entries']) == result['entries_found'] == 23
     assert result['entries_total'] == 23
-    event_identifier = None
+    group_identifier = None
     for entry in result['entries']:
-        entry_block_number = entry['entry']['event_identifier'][4:]
+        entry_block_number = entry['entry']['group_identifier'][4:]
         if entry_block_number == str(block_number):
             assert entry['grouped_events_num'] == 3
-            event_identifier = entry['entry']['event_identifier']
+            group_identifier = entry['entry']['group_identifier']
         elif entry_block_number in {17055026, 16589592, 15938405}:
             assert entry['grouped_events_num'] == 2
         elif entry_block_number in {16135531, 15849710, 15798693}:
             assert entry['grouped_events_num'] == 1
 
     # now query the events of the combined group
-    assert event_identifier is not None
+    assert group_identifier is not None
     response = requests.post(
         api_url_for(
             rotkehlchen_api_server,
             'historyeventresource',
         ),
-        json={'group_by_event_ids': False, 'event_identifiers': [event_identifier]},
+        json={'aggregate_by_group_ids': False, 'group_identifiers': [group_identifier]},
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result['entries']) == result['entries_found'] == 3
@@ -956,30 +980,30 @@ def test_query_combined_mev_reward_and_block_production_events(rotkehlchen_api_s
     for outer_entry in result['entries']:
         entry = outer_entry['entry']
         if entry['sequence_index'] == 0:
-            assert entry['event_identifier'] == event_identifier
+            assert entry['group_identifier'] == group_identifier
             assert entry['entry_type'] == 'eth block event'
             assert entry['event_type'] == 'informational'  # fee recipient not tracked
             assert entry['event_subtype'] == 'block production'
             assert entry['validator_index'] == vindex1
             assert entry['amount'] == '0.126419309459217215'
         elif entry['sequence_index'] == 1:
-            assert entry['event_identifier'] == event_identifier
+            assert entry['group_identifier'] == group_identifier
             assert entry['entry_type'] == 'eth block event'
             assert entry['event_type'] == 'informational'
             assert entry['event_subtype'] == 'mev reward'
             assert entry['validator_index'] == vindex1
             assert entry['amount'] == mev_reward
         elif entry['sequence_index'] == 2:
-            assert entry['event_identifier'] == event_identifier
+            assert entry['group_identifier'] == group_identifier
             assert entry['entry_type'] == 'evm event'
             assert entry['amount'] == mev_reward
-            assert entry['tx_hash'] == tx_hash.hex()  # pylint: disable=no-member
-            assert entry['user_notes'] == f'Receive {mev_reward} ETH from {mevbot_address} as mev reward for block {block_number} in {tx_hash.hex()}'  # pylint: disable=no-member  # noqa: E501
+            assert entry['tx_ref'] == str(tx_hash)
+            assert entry['user_notes'] == f'Receive {mev_reward} ETH from {mevbot_address} as mev reward for block {block_number} in {tx_hash!s}'  # noqa: E501
         else:
             raise AssertionError('Should not get to this sequence index')
 
     # Also check that querying by validator indices work
-    assert event_identifier is not None
+    assert group_identifier is not None
     response = requests.post(
         api_url_for(
             rotkehlchen_api_server,
@@ -1008,7 +1032,7 @@ def test_query_combined_mev_reward_and_block_production_events(rotkehlchen_api_s
         assert entry['entry']['entry_type'] == 'eth block event'
 
     # check that filtering by entry_types works properly with include behaviour (default)
-    assert event_identifier is not None
+    assert group_identifier is not None
     entry_types_include_arg = {
         'values': ['eth block event'],
         # default behaviour is include
@@ -1027,7 +1051,7 @@ def test_query_combined_mev_reward_and_block_production_events(rotkehlchen_api_s
         assert entry['entry_type'] == 'eth block event'
 
     # check that filtering by entry_types works properly with exclude behaviour
-    assert event_identifier is not None
+    assert group_identifier is not None
     entry_types_exclude_arg = {
         'values': ['eth block event'],
         'behaviour': 'exclude',
@@ -1183,7 +1207,7 @@ def test_balances_get_deleted_when_removing_validator(rotkehlchen_api_server: 'A
     assert len(result['totals']['assets']) == 0  # no assets in balances
 
 
-@pytest.mark.vcr(match_on=['beaconchain_matcher'])
+@pytest.mark.vcr(match_on=['beaconchain_matcher'], filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.parametrize('ethereum_modules', [['eth2']])
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
@@ -1242,8 +1266,8 @@ def test_redecode_block_production_events(rotkehlchen_api_server: 'APIServer') -
         2. mev reward event - Should remain unmodified.
         3. evm event - Should be updated by combine_block_with_tx_events.
     - Two block events with an address that will get tracked:
-        1. event_identifier will be passed when redecoding - Event type will be updated to staking.
-        2. event_identifier will not be passed - Event type will remain informational.
+        1. group_identifier will be passed when redecoding - Event type will be updated to staking.
+        2. group_identifier will not be passed - Event type will remain informational.
 
     `fee_recipient_tracked` is initially set to False on all events.
     """
@@ -1268,7 +1292,7 @@ def test_redecode_block_production_events(rotkehlchen_api_server: 'APIServer') -
                 block_number=block_number,
                 is_mev_reward=True,
             ), EvmEvent(
-                tx_hash=(tx_hash := deserialize_evm_tx_hash(tx_hash_str := '0x8d0969db1e536969ba2e29abf8e8945e4304d49ae14523b66cbe9be5d52df804')),  # noqa: E501
+                tx_ref=(tx_hash := deserialize_evm_tx_hash(tx_hash_str := '0x8d0969db1e536969ba2e29abf8e8945e4304d49ae14523b66cbe9be5d52df804')),  # noqa: E501
                 sequence_index=0,
                 timestamp=timestamp,
                 location=Location.ETHEREUM,
@@ -1296,7 +1320,7 @@ def test_redecode_block_production_events(rotkehlchen_api_server: 'APIServer') -
                 is_mev_reward=False,
             ),
         ])
-        dbevmtx.add_evm_transactions(  # transaction is needed for combine_block_with_tx_events
+        dbevmtx.add_transactions(  # transaction is needed for combine_block_with_tx_events
             write_cursor=write_cursor,
             evm_transactions=[EvmTransaction(
                 tx_hash=tx_hash,

@@ -3,10 +3,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V3
 from rotkehlchen.chain.evm.decoding.balancer.v3.constants import VAULT_ADDRESS
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_ETH, A_XDAI
@@ -15,6 +15,7 @@ from rotkehlchen.globaldb.cache import globaldb_set_general_cache_values
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import (
     CacheType,
@@ -38,7 +39,7 @@ def test_add_liquidity_imbalanced(ethereum_inquirer: 'EthereumInquirer', ethereu
     tx_hash = deserialize_evm_tx_hash('0xbc89bf067bc7ca7cff308538c90401fce967bbfeb11c588454011ff5e1aa21a9')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1755582935000)),
         location=Location.ETHEREUM,
@@ -50,7 +51,7 @@ def test_add_liquidity_imbalanced(ethereum_inquirer: 'EthereumInquirer', ethereu
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -63,7 +64,7 @@ def test_add_liquidity_imbalanced(ethereum_inquirer: 'EthereumInquirer', ethereu
         counterparty=CPT_BALANCER_V3,
         address=VAULT_ADDRESS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -84,7 +85,7 @@ def test_add_liquidity_proportionally(arbitrum_one_inquirer: 'ArbitrumOneInquire
     tx_hash = deserialize_evm_tx_hash('0x0ea5100f442d6a998af7c91226d9d5685acbc628e7c838703d30c5b3002cec6c')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=arbitrum_one_inquirer, tx_hash=tx_hash)  # noqa: E501
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1754617078000)),
         location=Location.ARBITRUM_ONE,
@@ -96,7 +97,7 @@ def test_add_liquidity_proportionally(arbitrum_one_inquirer: 'ArbitrumOneInquire
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=20,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -108,7 +109,7 @@ def test_add_liquidity_proportionally(arbitrum_one_inquirer: 'ArbitrumOneInquire
         notes=f'Set AAVE spending approval of {user_address} by 0x000000000022D473030F116dDEE9F6B43aC78BA3 to {approval_amount}',  # noqa: E501
         address=string_to_evm_address('0x000000000022D473030F116dDEE9F6B43aC78BA3'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=21,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -121,7 +122,7 @@ def test_add_liquidity_proportionally(arbitrum_one_inquirer: 'ArbitrumOneInquire
         counterparty=CPT_BALANCER_V3,
         address=string_to_evm_address('0xEAedc32a51c510d35ebC11088fD5fF2b47aACF2E'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=22,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -134,7 +135,7 @@ def test_add_liquidity_proportionally(arbitrum_one_inquirer: 'ArbitrumOneInquire
         counterparty=CPT_BALANCER_V3,
         address=VAULT_ADDRESS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=23,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -150,12 +151,13 @@ def test_add_liquidity_proportionally(arbitrum_one_inquirer: 'ArbitrumOneInquire
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0xDDA0E94955C637E30052CB28e73ce04C265f328b']])
 def test_remove_liquidity_imbalanced(base_inquirer: 'BaseInquirer', base_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
     tx_hash = deserialize_evm_tx_hash('0x8c6721fe24583cc69a64aa656e2c2235c3a8631ae6d4573807e24cb7ed7ec342')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=tx_hash)
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1755641555000)),
         location=Location.BASE,
@@ -167,7 +169,7 @@ def test_remove_liquidity_imbalanced(base_inquirer: 'BaseInquirer', base_account
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=9,
         timestamp=timestamp,
         location=Location.BASE,
@@ -179,7 +181,7 @@ def test_remove_liquidity_imbalanced(base_inquirer: 'BaseInquirer', base_account
         notes=f'Set WETH-USDC spending approval of {user_address} by 0x3f170631ed9821Ca51A59D996aB095162438DC10 to {pool_amount}',  # noqa: E501
         address=string_to_evm_address('0x3f170631ed9821Ca51A59D996aB095162438DC10'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=11,
         timestamp=timestamp,
         location=Location.BASE,
@@ -191,7 +193,7 @@ def test_remove_liquidity_imbalanced(base_inquirer: 'BaseInquirer', base_account
         notes=f'Revoke WETH-USDC spending approval of {user_address} by 0x3f170631ed9821Ca51A59D996aB095162438DC10',  # noqa: E501
         address=string_to_evm_address('0x3f170631ed9821Ca51A59D996aB095162438DC10'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=12,
         timestamp=timestamp,
         location=Location.BASE,
@@ -204,7 +206,7 @@ def test_remove_liquidity_imbalanced(base_inquirer: 'BaseInquirer', base_account
         counterparty=CPT_BALANCER_V3,
         address=ZERO_ADDRESS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=13,
         timestamp=timestamp,
         location=Location.BASE,
@@ -225,7 +227,7 @@ def test_remove_liquidity_proportionally(gnosis_inquirer: 'GnosisInquirer', gnos
     tx_hash = deserialize_evm_tx_hash('0x6dc9174eb7a4cf8c39bc65b5166359c1de6da8e19c160d896bf4db588496e82a')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=gnosis_inquirer, tx_hash=tx_hash)
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1754669850000)),
         location=Location.GNOSIS,
@@ -237,7 +239,7 @@ def test_remove_liquidity_proportionally(gnosis_inquirer: 'GnosisInquirer', gnos
         notes=f'Burn {gas_amount} XDAI for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=7,
         timestamp=timestamp,
         location=Location.GNOSIS,
@@ -249,7 +251,7 @@ def test_remove_liquidity_proportionally(gnosis_inquirer: 'GnosisInquirer', gnos
         notes=f'Set 40WBTC-10WETH-50USDT spending approval of {user_address} by 0x4eff2d77D9fFbAeFB4b141A3e494c085b3FF4Cb5 to {approval_amount}',  # noqa: E501
         address=string_to_evm_address('0x4eff2d77D9fFbAeFB4b141A3e494c085b3FF4Cb5'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=9,
         timestamp=timestamp,
         location=Location.GNOSIS,
@@ -261,7 +263,7 @@ def test_remove_liquidity_proportionally(gnosis_inquirer: 'GnosisInquirer', gnos
         notes=f'Revoke 40WBTC-10WETH-50USDT spending approval of {user_address} by 0x4eff2d77D9fFbAeFB4b141A3e494c085b3FF4Cb5',  # noqa: E501
         address=string_to_evm_address('0x4eff2d77D9fFbAeFB4b141A3e494c085b3FF4Cb5'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=10,
         timestamp=timestamp,
         location=Location.GNOSIS,
@@ -274,7 +276,7 @@ def test_remove_liquidity_proportionally(gnosis_inquirer: 'GnosisInquirer', gnos
         counterparty=CPT_BALANCER_V3,
         address=ZERO_ADDRESS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=11,
         timestamp=timestamp,
         location=Location.GNOSIS,
@@ -287,7 +289,7 @@ def test_remove_liquidity_proportionally(gnosis_inquirer: 'GnosisInquirer', gnos
         counterparty=CPT_BALANCER_V3,
         address=VAULT_ADDRESS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=12,
         timestamp=timestamp,
         location=Location.GNOSIS,
@@ -300,7 +302,7 @@ def test_remove_liquidity_proportionally(gnosis_inquirer: 'GnosisInquirer', gnos
         counterparty=CPT_BALANCER_V3,
         address=VAULT_ADDRESS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=13,
         timestamp=timestamp,
         location=Location.GNOSIS,
@@ -316,12 +318,13 @@ def test_remove_liquidity_proportionally(gnosis_inquirer: 'GnosisInquirer', gnos
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0x5aA57B34DaaDB76ea486157B3D4472C4DF536C82']])
 def test_swap_via_batch_router(base_inquirer: 'BaseInquirer', base_accounts: list['ChecksumEvmAddress']) -> None:  # noqa: E501
     tx_hash = deserialize_evm_tx_hash('0xbffb6bd2994f90676be45db667203317f0f70afb4eaa3832271e02e8dffb8101')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=tx_hash)
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1755679029000)),
         location=Location.BASE,
@@ -333,7 +336,7 @@ def test_swap_via_batch_router(base_inquirer: 'BaseInquirer', base_accounts: lis
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         location=Location.BASE,
         event_subtype=HistoryEventSubType.SPEND,
@@ -345,7 +348,7 @@ def test_swap_via_batch_router(base_inquirer: 'BaseInquirer', base_accounts: lis
         counterparty=CPT_BALANCER_V3,
         address=VAULT_ADDRESS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         location=Location.BASE,
         event_subtype=HistoryEventSubType.RECEIVE,
@@ -365,7 +368,7 @@ def test_swap(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['Ch
     tx_hash = deserialize_evm_tx_hash('0x3dabc20af2bc5bf72c42fd1e915578f789189c2f09ec8049c4a6e3a2921b1baf')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1755614699000)),
         location=Location.ETHEREUM,
@@ -377,7 +380,7 @@ def test_swap(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['Ch
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         location=Location.ETHEREUM,
         event_subtype=HistoryEventSubType.SPEND,
@@ -389,7 +392,7 @@ def test_swap(ethereum_inquirer: 'EthereumInquirer', ethereum_accounts: list['Ch
         counterparty=CPT_BALANCER_V3,
         address=VAULT_ADDRESS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         location=Location.ETHEREUM,
         event_subtype=HistoryEventSubType.RECEIVE,
@@ -430,7 +433,7 @@ def test_gauge_deposit(
         load_global_caches=load_global_caches,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1755709055000)),
         location=Location.ETHEREUM,
@@ -442,7 +445,7 @@ def test_gauge_deposit(
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -455,7 +458,7 @@ def test_gauge_deposit(
         counterparty=CPT_BALANCER_V3,
         address=string_to_evm_address('0x70A1c01902DAb7a45dcA1098Ca76A8314dd8aDbA'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -471,6 +474,7 @@ def test_gauge_deposit(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('load_global_caches', [[CPT_BALANCER_V3]])
 @pytest.mark.parametrize('base_accounts', [['0x9EE4d24dB1104bDF818391efCB8CCBa8Ff206159']])
 def test_gauge_withdrawal(
@@ -497,7 +501,7 @@ def test_gauge_withdrawal(
         load_global_caches=load_global_caches,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1756113395000)),
         location=Location.BASE,
@@ -509,7 +513,7 @@ def test_gauge_withdrawal(
         notes=f'Burn {gas_amount} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.BASE,
@@ -522,7 +526,7 @@ def test_gauge_withdrawal(
         counterparty=CPT_BALANCER_V3,
         address=ZERO_ADDRESS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.BASE,

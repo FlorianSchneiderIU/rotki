@@ -12,6 +12,7 @@ export const Routes = {
   ACCOUNTS: ensureRoute('/accounts'),
   ACCOUNTS_BITCOIN: ensureRoute('/accounts/bitcoin'),
   ACCOUNTS_EVM: ensureRoute('/accounts/evm'),
+  ACCOUNTS_SOLANA: ensureRoute('/accounts/solana'),
   ACCOUNTS_SUBSTRATE: ensureRoute('/accounts/substrate'),
   ADDRESS_BOOK_MANAGER: ensureRoute('/address-book-manager'),
   AIRDROPS: ensureRoute('/airdrops'),
@@ -51,6 +52,7 @@ export const Routes = {
   SETTINGS_ACCOUNT: ensureRoute('/settings/account'),
   SETTINGS_ACCOUNTING: ensureRoute('/settings/accounting'),
   SETTINGS_DATABASE: ensureRoute('/settings/database'),
+  SETTINGS_EVM: ensureRoute('/settings/evm'),
   SETTINGS_GENERAL: ensureRoute('/settings/general'),
   SETTINGS_INTERFACE: ensureRoute('/settings/interface'),
   SETTINGS_MODULES: ensureRoute('/settings/modules'),
@@ -83,6 +85,11 @@ export const useAppRoutes = createSharedComposable(() => {
       icon: 'lu-evm-accounts' as const,
       route: Routes.ACCOUNTS_EVM,
       text: t('navigation_menu.accounts_sub.evm'),
+    },
+    ACCOUNTS_SOLANA: {
+      icon: 'lu-solana-accounts-fill' as const,
+      route: Routes.ACCOUNTS_SOLANA,
+      text: t('navigation_menu.accounts_sub.solana'),
     },
     ACCOUNTS_SUBSTRATE: {
       icon: 'lu-substrate-accounts' as const,
@@ -276,6 +283,11 @@ export const useAppRoutes = createSharedComposable(() => {
       icon: 'lu-manage-assets' as const,
       route: Routes.SETTINGS_DATABASE,
       text: t('navigation_menu.settings_sub.database'),
+    },
+    SETTINGS_EVM: {
+      icon: 'lu-link' as const,
+      route: Routes.SETTINGS_EVM,
+      text: t('navigation_menu.settings_sub.evm'),
     },
     SETTINGS_GENERAL: {
       icon: 'lu-bolt' as const,

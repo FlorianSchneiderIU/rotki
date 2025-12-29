@@ -2,30 +2,30 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.assets.utils import get_or_create_evm_token
-from rotkehlchen.chain.ethereum.utils import (
+from rotkehlchen.assets.utils import (
     asset_normalized_value,
     asset_raw_value,
-    should_update_protocol_cache,
+    get_or_create_evm_token,
     token_normalized_value,
 )
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache
 from rotkehlchen.chain.evm.constants import DEPOSIT_TOPIC_V2, WITHDRAW_TOPIC_V2, ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface, ReloadableDecoderMixin
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface, ReloadableDecoderMixin
 from rotkehlchen.chain.evm.decoding.stakedao.utils import (
+    ensure_gauge_token,
     query_stakedao_gauges,
 )
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.globaldb.cache import globaldb_get_general_cache_values
 from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import (
     HistoryEventSubType,
     HistoryEventType,
@@ -45,7 +45,7 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class StakedaoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
+class StakedaoCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
     """Base decoder for Stake DAO protocol.
 
     Note: There is no claim contract deployed on Binance or Base chains,
@@ -62,7 +62,7 @@ class StakedaoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             claim_bribe_addresses: set['ChecksumEvmAddress'] | None = None,
             claim_bribe_protocolfee_addresses: set['ChecksumEvmAddress'] | None = None,
@@ -81,9 +81,9 @@ class StakedaoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
         if should_update_protocol_cache(
                 userdb=self.base.database,
                 cache_key=CacheType.STAKEDAO_GAUGES,
-                args=(str(self.evm_inquirer.chain_id.serialize()),),
+                args=(str(self.node_inquirer.chain_id.serialize()),),
         ) is True:
-            query_stakedao_gauges(self.evm_inquirer)
+            query_stakedao_gauges(self.node_inquirer)
 
         if len(self.gauges) != 0:
             return None  # we didn't update the globaldb cache, and we have the data already
@@ -91,7 +91,7 @@ class StakedaoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
         with GlobalDBHandler().conn.read_ctx() as cursor:
             self.gauges = set(globaldb_get_general_cache_values(  # type: ignore[arg-type]  # addresses are always checksummed
                 cursor=cursor,
-                key_parts=(CacheType.STAKEDAO_GAUGES, str(self.evm_inquirer.chain_id.serialize())),
+                key_parts=(CacheType.STAKEDAO_GAUGES, str(self.node_inquirer.chain_id.serialize())),  # noqa: E501
             ))
 
         return self.addresses_to_decoders()
@@ -102,7 +102,7 @@ class StakedaoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             reward_token_address: ChecksumEvmAddress,
             amount: int,
             period: Timestamp,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """Base functionality for claiming different types of stakedao votemarket bribes
 
         Note: We don't check the user address in the logs as user is not always
@@ -111,8 +111,8 @@ class StakedaoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
         claimed_token = get_or_create_evm_token(
             userdb=self.base.database,
             evm_address=reward_token_address,
-            chain_id=self.evm_inquirer.chain_id,
-            evm_inquirer=self.evm_inquirer,
+            chain_id=self.node_inquirer.chain_id,
+            evm_inquirer=self.node_inquirer,
         )
         normalized_amount = token_normalized_value(amount, claimed_token)
         for event in context.decoded_events:
@@ -120,14 +120,13 @@ class StakedaoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
                 event.event_subtype = HistoryEventSubType.REWARD
                 event.counterparty = CPT_STAKEDAO
                 event.notes = f'Claim {normalized_amount} {claimed_token.symbol} from StakeDAO veCRV bribes for the period starting at {timestamp_to_date(period, formatstr="%d/%m/%Y %H:%M:%S")}'  # noqa: E501
-                event.product = EvmProduct.BRIBE
                 break
         else:  # not found
             log.error(f'Stakedao bribe transfer was not found for {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_reward_claim_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_reward_claim_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] == CLAIMED_WITH_BOUNTY:
             reward_token_address = bytes_to_address(context.tx_log.data[0:32])
             amount = int.from_bytes(context.tx_log.data[32:64])
@@ -148,28 +147,28 @@ class StakedaoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
                     event.event_subtype = HistoryEventSubType.REWARD
                     event.notes = f'Claim {event.amount} {event.asset.resolve_to_asset_with_symbol().symbol} from StakeDAO'  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_claim_with_bribe(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_claim_with_bribe(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != CLAIMED_WITH_BRIBE:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         reward_token_address = bytes_to_address(context.tx_log.topics[2])
         amount = int.from_bytes(context.tx_log.data[0:32])
         period = Timestamp(int.from_bytes(context.tx_log.data[32:64]))
         return self._decode_claim(context=context, reward_token_address=reward_token_address, amount=amount, period=period)  # noqa: E501
 
-    def _decode_claim_bribe_protocolfee(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_claim_bribe_protocolfee(self, context: DecoderContext) -> EvmDecodingOutput:
         """Very similar to _decode_claim_with_bribe but has topics[0] of CLAIMED_WITH_BOUNTY but different handling needed due to having a protocol fee which is not paid from the user directly so no need to decode"""  # noqa: E501
         if context.tx_log.topics[0] != CLAIMED_WITH_BOUNTY:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         reward_token_address = bytes_to_address(context.tx_log.topics[2])
         amount = int.from_bytes(context.tx_log.data[0:32])
         period = Timestamp(int.from_bytes(context.tx_log.data[64:96]))
         return self._decode_claim(context=context, reward_token_address=reward_token_address, amount=amount, period=period)  # noqa: E501
 
-    def _decode_deposit(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_deposit(self, context: DecoderContext) -> EvmDecodingOutput:
         deposited_raw_amount = int.from_bytes(context.tx_log.data[:32])
         received_amount = asset_normalized_value(
             amount=deposited_raw_amount,
@@ -196,9 +195,9 @@ class StakedaoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
                 break
         else:
             log.error(f'Could not find stakedao deposit event for transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
-        return DecodingOutput(action_items=[ActionItem(
+        return EvmDecodingOutput(action_items=[ActionItem(
             action='transform',
             from_event_type=HistoryEventType.RECEIVE,
             from_event_subtype=HistoryEventSubType.NONE,
@@ -211,103 +210,126 @@ class StakedaoCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             to_counterparty=CPT_STAKEDAO,
         )])
 
-    def _decode_withdraw(self, context: DecoderContext) -> DecodingOutput:
-        claim_events = []
-        recipient = bytes_to_address(context.tx_log.topics[1])
+    def _decode_withdraw(self, context: DecoderContext) -> EvmDecodingOutput:
+        claim_events, recipient, withdraw_event, return_event, action_items = [], bytes_to_address(context.tx_log.topics[1]), None, None, []  # noqa: E501
+        removed_raw_amount = int.from_bytes(context.tx_log.data[:32])
+        vault_or_staking_token = self.base.get_or_create_evm_token(deserialize_evm_address(self.node_inquirer.call_contract(  # noqa: E501
+            contract_address=context.tx_log.address,
+            abi=STAKEDAO_GAUGE_ABI,
+            method_name='staking_token',
+        )))
         for event in context.decoded_events:
-            if (
+            if not (
                     event.address == context.tx_log.address and
                     event.location_label == recipient and
                     event.event_type == HistoryEventType.RECEIVE and
                     event.event_subtype == HistoryEventSubType.NONE
             ):
+                continue
+
+            if event.asset != vault_or_staking_token:
                 claim_events.append(event)
                 event.counterparty = CPT_STAKEDAO
                 event.event_type = HistoryEventType.RECEIVE
                 event.event_subtype = HistoryEventSubType.REWARD
                 event.notes = f'Claim {event.amount} {event.asset.resolve_to_asset_with_symbol().symbol} from StakeDAO'  # noqa: E501
+            else:  # if this happens, that's the actual staked token
+                withdraw_event = event
+                event.notes = f'Withdraw {event.amount} {vault_or_staking_token.symbol} from StakeDAO'  # noqa: E501
+                event.counterparty = CPT_STAKEDAO
+                event.event_type = HistoryEventType.WITHDRAWAL
+                event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
 
-        vault_address = deserialize_evm_address(self.evm_inquirer.call_contract(
-            contract_address=context.tx_log.address,
-            abi=STAKEDAO_GAUGE_ABI,
-            method_name='vault',
-        ))
-        removed_raw_amount = int.from_bytes(context.tx_log.data[:32])
-
-        # search logs for the gauge token burn — this happens when the vault contract,
-        # not the user, burns the gauge token as part of the withdrawal process.
-        # We use this to confirm the amount unwrapped and trace the original wrapped token.
+        # search logs for the gauge token burn to confirm the withdrawal amount.
+        # The burn can be initiated by either the user directly or by the vault contract.
         for tx_log in context.all_logs:
             if not (
-                    tx_log.topics[0] == ERC20_OR_ERC721_TRANSFER and
-                    tx_log.address == context.tx_log.address and
-                    bytes_to_address(tx_log.topics[1]) == vault_address and
-                    bytes_to_address(tx_log.topics[2]) == ZERO_ADDRESS and
-                    int.from_bytes(tx_log.data[:32]) == removed_raw_amount
+                tx_log.topics[0] == ERC20_OR_ERC721_TRANSFER and
+                tx_log.address == context.tx_log.address and
+                bytes_to_address(tx_log.topics[2]) == ZERO_ADDRESS and
+                int.from_bytes(tx_log.data[:32]) == removed_raw_amount
             ):
                 continue
 
-            return_event = self.base.make_event_from_transaction(
-                transaction=context.transaction,
-                tx_log=tx_log,
-                event_type=HistoryEventType.SPEND,
-                event_subtype=HistoryEventSubType.RETURN_WRAPPED,
-                asset=(returned_asset := self.base.get_or_create_evm_token(tx_log.address)),
-                amount=(returned_amount := asset_normalized_value(
-                    amount=removed_raw_amount,
-                    asset=returned_asset,
-                )),
-                counterparty=CPT_STAKEDAO,
-                address=tx_log.address,
-                location_label=bytes_to_address(context.tx_log.topics[1]),
-                notes=f'Return {returned_amount} {returned_asset.symbol} to StakeDAO',
-            )
-            break
-        else:
-            log.error(f'Could not find stakedao gauge token return event for transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            if (burner := bytes_to_address(tx_log.topics[1])) == recipient and withdraw_event is not None:  # noqa: E501
+                action_items.append(ActionItem(
+                    action='transform',
+                    from_event_type=HistoryEventType.SPEND,
+                    from_event_subtype=HistoryEventSubType.NONE,
+                    to_event_type=HistoryEventType.SPEND,
+                    to_event_subtype=HistoryEventSubType.RETURN_WRAPPED,
+                    asset=(returned_asset := self.base.get_or_create_evm_token(tx_log.address)),
+                    amount=(returned_amount := asset_normalized_value(
+                        amount=removed_raw_amount,
+                        asset=returned_asset,
+                    )),
+                    to_counterparty=CPT_STAKEDAO,
+                    to_notes=f'Return {returned_amount} {returned_asset.symbol} to StakeDAO',
+                    paired_events_data=([withdraw_event, *claim_events], False),
+                ))
+                break
+            elif burner == vault_or_staking_token.evm_address:
+                context.decoded_events.append(return_event := self.base.make_event_from_transaction(  # noqa: E501
+                    transaction=context.transaction,
+                    tx_log=tx_log,
+                    event_type=HistoryEventType.SPEND,
+                    event_subtype=HistoryEventSubType.RETURN_WRAPPED,
+                    asset=(returned_asset := self.base.get_or_create_evm_token(tx_log.address)),
+                    amount=(returned_amount := asset_normalized_value(
+                        amount=removed_raw_amount,
+                        asset=returned_asset,
+                    )),
+                    counterparty=CPT_STAKEDAO,
+                    address=tx_log.address,
+                    location_label=recipient,
+                    notes=f'Return {returned_amount} {returned_asset.symbol} to StakeDAO',
+                ))
 
-        context.decoded_events.append(return_event)
+                action_items.append(ActionItem(
+                    action='transform',
+                    amount=(received_amount := asset_normalized_value(  # retrieve the actual staked token  # noqa: E501
+                        amount=removed_raw_amount,
+                        asset=(received_token := self.base.get_or_create_evm_token(deserialize_evm_address(self.node_inquirer.call_contract(  # noqa: E501
+                            contract_address=vault_or_staking_token.evm_address,
+                            abi=STAKEDAO_VAULT_ABI,
+                            method_name='token',
+                        )))),
+                    )),
+                    asset=received_token,  # type: ignore[has-type]
+                    from_event_type=HistoryEventType.RECEIVE,
+                    from_event_subtype=HistoryEventSubType.NONE,
+                    to_event_type=HistoryEventType.WITHDRAWAL,
+                    paired_events_data=(claim_events, False),
+                    to_event_subtype=HistoryEventSubType.REDEEM_WRAPPED,
+                    to_counterparty=CPT_STAKEDAO,
+                    to_notes=f'Withdraw {received_amount} {received_token.symbol} from StakeDAO',
+                    to_address=context.transaction.to_address,
+                ))
+                break
+        else:
+            log.error(f'Could not find stakedao gauge token burn event for transaction {context.transaction}')  # noqa: E501
+            return DEFAULT_EVM_DECODING_OUTPUT
+
         maybe_reshuffle_events(
-            ordered_events=[return_event] + claim_events,
+            ordered_events=[return_event, withdraw_event] + claim_events,  # type: ignore[operator]
             events_list=context.decoded_events,
         )
+        return EvmDecodingOutput(action_items=action_items)
 
-        # retrieve the underlying token of the vault
-        received_amount = asset_normalized_value(
-            amount=removed_raw_amount,
-            asset=(received_token := self.base.get_or_create_evm_token(deserialize_evm_address(self.evm_inquirer.call_contract(  # noqa: E501
-                contract_address=vault_address,
-                abi=STAKEDAO_VAULT_ABI,
-                method_name='token',
-            )))),
+    def _decode_deposit_withdrawal_events(self, context: DecoderContext) -> EvmDecodingOutput:
+        ensure_gauge_token(
+            gauge_address=context.tx_log.address,
+            evm_inquirer=self.node_inquirer,
+            tx_hash=context.transaction.tx_hash,
         )
-        return DecodingOutput(action_items=[ActionItem(
-            action='transform',
-            asset=received_token,
-            amount=received_amount,
-            from_event_type=HistoryEventType.RECEIVE,
-            from_event_subtype=HistoryEventSubType.NONE,
-            to_event_type=HistoryEventType.WITHDRAWAL,
-            paired_events_data=(claim_events, False),
-            to_event_subtype=HistoryEventSubType.REDEEM_WRAPPED,
-            to_counterparty=CPT_STAKEDAO,
-            to_notes=f'Withdraw {received_amount} {received_token.symbol} from StakeDAO',
-            to_address=context.transaction.to_address,
-        )])
 
-    def _decode_deposit_withdrawal_events(self, context: DecoderContext) -> DecodingOutput:
         if context.tx_log.topics[0] == DEPOSIT_TOPIC_V2:
             return self._decode_deposit(context)
         elif context.tx_log.topics[0] == WITHDRAW_TOPIC_V2:
             return self._decode_withdraw(context)
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
-
-    @staticmethod
-    def possible_products() -> dict[str, list[EvmProduct]]:
-        return {CPT_STAKEDAO: [EvmProduct.BRIBE]}
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         decoders = dict.fromkeys(self.gauges, (self._decode_deposit_withdrawal_events, ))

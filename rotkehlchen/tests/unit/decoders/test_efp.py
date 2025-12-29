@@ -4,14 +4,15 @@ import pytest
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.base.modules.efp.constants import EFP_LIST_REGISTRY
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.efp.constants import CPT_EFP
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ONE, ZERO
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
 
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12']])
 def test_efp_list_creation(
         base_inquirer: 'BaseInquirer',
@@ -33,7 +35,7 @@ def test_efp_list_creation(
     timestamp, user_address, gas_amount = TimestampMS(1727210173000), base_accounts[0], '0.000001943732883081'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -45,7 +47,7 @@ def test_efp_list_creation(
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=408,
             timestamp=timestamp,
             location=Location.BASE,
@@ -57,7 +59,7 @@ def test_efp_list_creation(
             notes=f'Create EFP primary list for {user_address}',
             counterparty=CPT_EFP,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=409,
             timestamp=timestamp,
             location=Location.BASE,
@@ -74,6 +76,7 @@ def test_efp_list_creation(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0x706A70067BE19BdadBea3600Db0626859Ff25D74']])
 def test_efp_list_operations_base(
         base_inquirer: 'BaseInquirer',
@@ -84,7 +87,7 @@ def test_efp_list_operations_base(
     timestamp, user_address, gas_amount = TimestampMS(1731678515000), base_accounts[0], '0.000007264164076207'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -96,7 +99,7 @@ def test_efp_list_operations_base(
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=424,
             timestamp=timestamp,
             location=Location.BASE,
@@ -108,7 +111,7 @@ def test_efp_list_operations_base(
             notes='Follow 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 on EFP',
             counterparty=CPT_EFP,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=425,
             timestamp=timestamp,
             location=Location.BASE,
@@ -120,7 +123,7 @@ def test_efp_list_operations_base(
             notes='Add top8 tag to 0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12 on EFP',
             counterparty=CPT_EFP,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=426,
             timestamp=timestamp,
             location=Location.BASE,
@@ -132,7 +135,7 @@ def test_efp_list_operations_base(
             notes='Add top8 tag to 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 on EFP',
             counterparty=CPT_EFP,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=427,
             timestamp=timestamp,
             location=Location.BASE,
@@ -148,6 +151,7 @@ def test_efp_list_operations_base(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0xc09453d6b920186f0a638C0cd1CAc2EF338424Ca']])
 def test_efp_list_operations_optimism(
         optimism_inquirer: 'OptimismInquirer',
@@ -158,7 +162,7 @@ def test_efp_list_operations_optimism(
     timestamp, user_address, gas_amount = TimestampMS(1731685871000), optimism_accounts[0], '0.000000746188721518'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -170,7 +174,7 @@ def test_efp_list_operations_optimism(
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=9,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -182,7 +186,7 @@ def test_efp_list_operations_optimism(
             notes='Unfollow 0x14536667Cd30e52C0b458BaACcB9faDA7046E056 on EFP',
             counterparty=CPT_EFP,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=10,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -208,7 +212,7 @@ def test_efp_list_operations_ethereum(
     timestamp, user_address, gas_amount = TimestampMS(1728767939000), ethereum_accounts[0], '0.00074678442257622'  # noqa: E501
     assert events == [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -220,7 +224,7 @@ def test_efp_list_operations_ethereum(
             notes=f'Burn {gas_amount} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=310,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -232,7 +236,7 @@ def test_efp_list_operations_ethereum(
             notes='Follow 0x653223a381fBbE16ddb1EC44C7a1c31ffFFBb1E9 on EFP',
             counterparty=CPT_EFP,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=311,
             timestamp=timestamp,
             location=Location.ETHEREUM,

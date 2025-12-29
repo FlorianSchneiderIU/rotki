@@ -3,7 +3,10 @@ from typing import TYPE_CHECKING, Any, Final
 
 from rotkehlchen.chain.evm.decoding.constants import CPT_GITCOIN
 from rotkehlchen.chain.evm.decoding.gitcoinv2.decoder import GitcoinV2CommonDecoder
-from rotkehlchen.chain.evm.decoding.structures import DEFAULT_DECODING_OUTPUT, DecodingOutput
+from rotkehlchen.chain.evm.decoding.structures import (
+    DEFAULT_EVM_DECODING_OUTPUT,
+    EvmDecodingOutput,
+)
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -13,7 +16,7 @@ from rotkehlchen.utils.misc import bytes_to_address, from_wei
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.decoding.structures import DecoderContext
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -29,7 +32,7 @@ class GitcoinDecoder(GitcoinV2CommonDecoder):
     def __init__(  # pylint: disable=super-init-not-called
             self,
             optimism_inquirer: 'ArbitrumOneInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -61,12 +64,12 @@ class GitcoinDecoder(GitcoinV2CommonDecoder):
             direct_allocation_strategy_addresses=[string_to_evm_address('0x91AD709FE04E214eF53218572D8d8690a8b4FdD0')],
         )
 
-    def _decode_donation_impact_minting(self, context: 'DecoderContext') -> DecodingOutput:
+    def _decode_donation_impact_minting(self, context: 'DecoderContext') -> EvmDecodingOutput:
         if context.tx_log.topics[0] != ON_ATTESTED:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if not self.base.is_tracked(recipient := bytes_to_address(context.tx_log.topics[2])):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = from_wei(int.from_bytes(context.tx_log.data[:32]))
         for event in context.decoded_events:
@@ -80,7 +83,7 @@ class GitcoinDecoder(GitcoinV2CommonDecoder):
         else:
             log.error(f'In minting donation impact could not find the ETH fee transfer in {context.transaction}')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

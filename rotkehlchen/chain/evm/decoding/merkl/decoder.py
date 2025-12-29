@@ -1,15 +1,15 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.constants import REWARD_CLAIMED
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
@@ -19,7 +19,7 @@ from .constants import CPT_MERKL, MERKL_DISTRIBUTOR_ADDRESS
 from .utils import get_merkl_protocol_for_token
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -27,12 +27,12 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class MerklDecoder(DecoderInterface):
+class MerklDecoder(EvmDecoderInterface):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -41,10 +41,10 @@ class MerklDecoder(DecoderInterface):
             msg_aggregator=msg_aggregator,
         )
 
-    def _decode_reward_claim(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_reward_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode a Merkl reward claim event."""
         if context.tx_log.topics[0] != REWARD_CLAIMED:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         claimed_asset = self.base.get_or_create_evm_asset(
             address=(claimed_asset_addr := bytes_to_address(context.tx_log.topics[2])),
@@ -67,7 +67,7 @@ class MerklDecoder(DecoderInterface):
                 protocol = get_merkl_protocol_for_token(
                     account=user_address,
                     token=claimed_asset_addr,
-                    chain_id=self.evm_inquirer.chain_id,
+                    chain_id=self.node_inquirer.chain_id,
                 )
                 from_str = f'{protocol} via Merkl' if protocol else 'Merkl'
                 event.notes = f'Claim {event.amount} {claimed_asset.symbol} from {from_str}'
@@ -75,7 +75,7 @@ class MerklDecoder(DecoderInterface):
         else:
             log.error(f'Failed to find Merkl reward claim event in {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

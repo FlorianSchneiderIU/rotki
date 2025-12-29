@@ -3,18 +3,17 @@ import { groupBy } from 'es-toolkit';
 import { useHistoryEventsApi } from '@/composables/api/history/events';
 import { useSupportedChains } from '@/composables/info/chains';
 import { useStatusUpdater } from '@/composables/status';
+import { snakeCaseTransformer } from '@/modules/api/transformers';
 import { EvmUndecodedTransactionResponse } from '@/modules/messaging/types';
-import { snakeCaseTransformer } from '@/services/axios-transformers';
 import { useHistoryStore } from '@/store/history';
 import { useNotificationsStore } from '@/store/notifications';
 import { useTaskStore } from '@/store/tasks';
 import {
-  type ChainAndTxHash,
-  type EvmChainAndTxHash,
   type PullEthBlockEventPayload,
-  type PullEvmTransactionPayload,
+  type PullLocationTransactionPayload,
   type PullTransactionPayload,
   TransactionChainType,
+  TransactionChainTypeNeedDecoding,
 } from '@/types/history/events';
 import { Section } from '@/types/status';
 import { TaskType } from '@/types/task-type';
@@ -41,27 +40,25 @@ export const useHistoryTransactionDecoding = createSharedComposable(() => {
     updateUndecodedTransactionsStatus,
   } = useHistoryStore();
 
-  const { evmAndEvmLikeTxChainsInfo, getChain, getChainName, getEvmChainName, isEvmLikeChains } = useSupportedChains();
+  const { decodableTxChainsInfo, getChain, getChainName, isEvmLikeChains, isSolanaChains } = useSupportedChains();
 
   const { resetStatus } = useStatusUpdater(Section.HISTORY);
 
-  const fetchUndecodedTransactionsBreakdown = async (type: TransactionChainType): Promise<void> => {
-    const isEvm = type === TransactionChainType.EVM;
+  const fetchUndecodedTransactionsBreakdown = async (): Promise<void> => {
     const taskType = TaskType.FETCH_UNDECODED_TXS;
-    if (isTaskRunning(taskType, { isEvm })) {
-      logger.debug(`was already fetching undecoded transactions for ${type}`);
+    if (isTaskRunning(taskType)) {
+      logger.debug(`was already fetching undecoded transactions`);
       return;
     }
 
     const title = t('actions.history.fetch_undecoded_transactions.task.title');
 
     const taskMeta = {
-      isEvm,
       title,
     };
 
     try {
-      const { taskId } = await getUndecodedTransactionsBreakdown(type);
+      const { taskId } = await getUndecodedTransactionsBreakdown();
       const { result } = await awaitTask<EvmUndecodedTransactionResponse, TaskMeta>(taskId, taskType, taskMeta);
 
       const breakdown = EvmUndecodedTransactionResponse.parse(snakeCaseTransformer(result));
@@ -86,7 +83,7 @@ export const useHistoryTransactionDecoding = createSharedComposable(() => {
       else {
         // If the response is empty, it means all chains has been processed.
         // We should set the processed equal to total, so it appears as completed.
-        clearUndecodedTransactionsNumbers(type);
+        clearUndecodedTransactionsNumbers();
       }
     }
     catch (error: any) {
@@ -105,8 +102,7 @@ export const useHistoryTransactionDecoding = createSharedComposable(() => {
   };
 
   const fetchUndecodedTransactionsStatus = async (): Promise<void> => {
-    await fetchUndecodedTransactionsBreakdown(TransactionChainType.EVM);
-    await fetchUndecodedTransactionsBreakdown(TransactionChainType.EVMLIKE);
+    await fetchUndecodedTransactionsBreakdown();
   };
 
   const clearDependedSection = (): void => {
@@ -117,7 +113,6 @@ export const useHistoryTransactionDecoding = createSharedComposable(() => {
 
   const decodeTransactionsTask = async (
     chain: string,
-    type: TransactionChainType = TransactionChainType.EVM,
     ignoreCache = false,
   ): Promise<void> => {
     const taskType = TaskType.TRANSACTIONS_DECODING;
@@ -126,7 +121,7 @@ export const useHistoryTransactionDecoding = createSharedComposable(() => {
       return;
 
     try {
-      const { taskId } = await decodeTransactions([chain], type, ignoreCache);
+      const { taskId } = await decodeTransactions(chain, ignoreCache);
 
       const taskMeta = {
         all: false,
@@ -165,7 +160,7 @@ export const useHistoryTransactionDecoding = createSharedComposable(() => {
     await awaitParallelExecution(
       chains,
       item => item,
-      async item => decodeTransactionsTask(item, type),
+      async item => decodeTransactionsTask(item),
       2,
     );
   };
@@ -173,85 +168,74 @@ export const useHistoryTransactionDecoding = createSharedComposable(() => {
   const checkMissingEventsAndRedecode = async (): Promise<void> => {
     resetUndecodedTransactionsStatus();
     await fetchUndecodedTransactionsStatus();
-    await Promise.allSettled([
-      checkMissingEventsAndRedecodeHandler(TransactionChainType.EVM),
-      checkMissingEventsAndRedecodeHandler(TransactionChainType.EVMLIKE),
-    ]);
+    await Promise.allSettled(TransactionChainTypeNeedDecoding.map(async item => checkMissingEventsAndRedecodeHandler(item)));
   };
 
   const redecodeTransactions = async (chains: string[] = []): Promise<void> => {
-    const decodeChains = chains.length > 0 ? chains : get(evmAndEvmLikeTxChainsInfo).map(chain => chain.id);
-
-    const chainInfo = decodeChains
-      .map((chain) => {
-        if (isEvmLikeChains(chain)) {
-          return {
-            chain,
-            type: TransactionChainType.EVMLIKE,
-          };
-        }
-
-        return {
-          chain: getEvmChainName(chain) || '',
-          type: TransactionChainType.EVM,
-        };
-      })
-      .filter(item => item.chain);
+    const decodeChains = chains.length > 0 ? chains : get(decodableTxChainsInfo).map(chain => chain.id);
 
     await awaitParallelExecution(
-      chainInfo,
-      item => item.chain,
-      async item => decodeTransactionsTask(item.chain, item.type, true),
+      decodeChains,
+      item => item,
+      async item => decodeTransactionsTask(item, true),
       2,
     );
   };
 
-  const pullAndRecodeTransactionsByType = async (payload: PullTransactionPayload, type: TransactionChainType): Promise<void> => {
+  const pullAndDecodeTransactions = async (payload: PullTransactionPayload): Promise<void> => {
+    const notifyUser = (error: string): void => notify({
+      display: true,
+      message: t('actions.transactions_redecode.error.description', {
+        error,
+      }),
+      title: t('actions.transactions_redecode.error.title'),
+    });
+
     try {
       const taskType = TaskType.TRANSACTIONS_DECODING;
-      const { taskId } = await pullAndRecodeTransactionRequest(payload, type);
+      const { taskId } = await pullAndRecodeTransactionRequest(payload);
 
       let taskMeta = {
         description: t('actions.transactions_redecode.task.single_description', {
-          number: payload.transactions.length,
+          chain: get(getChainName(payload.chain)),
+          number: payload.txRefs.length,
         }),
         title: t('actions.transactions_redecode.task.title'),
       };
 
-      if (payload.transactions.length === 1) {
-        const data = payload.transactions[0];
+      if (payload.txRefs.length === 1) {
         taskMeta = {
           description: t('actions.transactions_redecode.task.description', {
-            chain: 'chain' in data ? data.chain : getChain(data.evmChain),
-            tx: data.txHash,
+            chain: payload.chain,
+            tx: payload.txRefs[0],
           }),
           title: t('actions.transactions_redecode.task.title'),
         };
       }
 
-      const { result } = await awaitTask<boolean, TaskMeta>(taskId, taskType, taskMeta, true);
+      const { message, result } = await awaitTask<boolean, TaskMeta>(taskId, taskType, taskMeta, true);
 
-      if (result)
+      if (result) {
         clearDependedSection();
+      }
+      else {
+        notifyUser(message ?? '');
+      }
     }
     catch (error: any) {
-      if (!isTaskCancelled(error)) {
-        logger.error(error);
-        notify({
-          display: true,
-          message: t('actions.transactions_redecode.error.description', {
-            error,
-          }),
-          title: t('actions.transactions_redecode.error.title'),
-        });
+      if (isTaskCancelled(error)) {
+        return;
       }
+
+      logger.error(error);
+      notifyUser(error);
     }
   };
 
-  const pullAndRedecodeTransactions = async ({ deleteCustom, transactions }: PullEvmTransactionPayload): Promise<void> => {
+  const pullAndRedecodeTransactions = async ({ customIndexersOrder, deleteCustom, transactions }: PullLocationTransactionPayload): Promise<void> => {
     resetUndecodedTransactionsStatus();
 
-    const grouped = groupBy(transactions, item => item.evmChain);
+    const grouped = groupBy(transactions, item => item.location);
     Object.entries(grouped).forEach(([chain, transactions]) => {
       updateUndecodedTransactionsStatus({
         [chain]: {
@@ -262,38 +246,55 @@ export const useHistoryTransactionDecoding = createSharedComposable(() => {
       });
     });
 
-    const evmChainsPayload: EvmChainAndTxHash[] = [];
-    const evmLikeChainsPayload: ChainAndTxHash[] = [];
+    // Group transactions by chain type
+    const chainMaps = {
+      evm: new Map<string, string[]>(),
+      evmLike: new Map<string, string[]>(),
+      solana: new Map<string, string[]>(),
+    };
 
     transactions.forEach((item) => {
-      const chain = getChain(item.evmChain);
-      const type = isEvmLikeChains(chain) ? TransactionChainType.EVMLIKE : TransactionChainType.EVM;
+      const chain = getChain(item.location);
+      let targetMap: Map<string, string[]>;
 
-      if (type === TransactionChainType.EVM) {
-        evmChainsPayload.push(
-          {
-            evmChain: item.evmChain,
-            txHash: item.txHash,
-          },
-        );
+      if (isEvmLikeChains(chain)) {
+        targetMap = chainMaps.evmLike;
+      }
+      else if (isSolanaChains(chain)) {
+        targetMap = chainMaps.solana;
       }
       else {
-        evmLikeChainsPayload.push(
-          {
-            chain,
-            txHash: item.txHash,
-          },
-        );
+        targetMap = chainMaps.evm;
       }
+
+      if (!targetMap.has(chain))
+        targetMap.set(chain, []);
+
+      targetMap.get(chain)!.push(item.txRef);
     });
 
-    if (evmChainsPayload.length > 0) {
-      await pullAndRecodeTransactionsByType({ deleteCustom, transactions: evmChainsPayload }, TransactionChainType.EVM);
-    }
+    // Process all chain types in parallel
+    // Note: customIndexersOrder is only passed for EVM chains
+    const processChainMap = async (chainMap: Map<string, string[]>, includeIndexerOrder: boolean): Promise<void> => {
+      if (chainMap.size === 0)
+        return;
 
-    if (evmLikeChainsPayload.length > 0) {
-      await pullAndRecodeTransactionsByType({ deleteCustom, transactions: evmLikeChainsPayload }, TransactionChainType.EVMLIKE);
-    }
+      await awaitParallelExecution(
+        Array.from(chainMap.entries()),
+        ([chain]) => chain,
+        async ([chain, txRefs]) => pullAndDecodeTransactions({
+          chain,
+          customIndexersOrder: includeIndexerOrder ? customIndexersOrder : undefined,
+          deleteCustom,
+          txRefs,
+        }),
+        2,
+      );
+    };
+
+    await processChainMap(chainMaps.evm, true);
+    await processChainMap(chainMaps.solana, false);
+    await processChainMap(chainMaps.evmLike, false);
   };
 
   const pullAndRecodeEthBlockEvents = async (payload: PullEthBlockEventPayload): Promise<void> => {

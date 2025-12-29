@@ -3,6 +3,7 @@ import { bigNumberify, Blockchain } from '@rotki/common';
 import { cloneDeep } from 'es-toolkit';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useBalancesStore } from '@/modules/balances/use-balances-store';
+import { useBalancePricesStore } from '@/store/balances/prices';
 
 describe('useBalancesStore', () => {
   let store: ReturnType<typeof useBalancesStore>;
@@ -13,7 +14,7 @@ describe('useBalancesStore', () => {
     store = useBalancesStore();
   });
 
-  it('should update the balance prices and usd value', () => {
+  it('should update the balance prices and value', () => {
     const { updateBalances, updatePrices } = store;
     const assetPrices: AssetPrices = {
       ETH: {
@@ -24,6 +25,10 @@ describe('useBalancesStore', () => {
       },
     };
 
+    // Set up prices in store so getAssetPriceInCurrentCurrency can find the price
+    const { prices } = storeToRefs(useBalancePricesStore());
+    set(prices, assetPrices);
+
     updateBalances(Blockchain.ETH, {
       perAccount: {
         [Blockchain.ETH]: {
@@ -32,7 +37,7 @@ describe('useBalancesStore', () => {
               ETH: {
                 address: {
                   amount: bigNumberify(10),
-                  usdValue: bigNumberify(20000),
+                  value: bigNumberify(20000),
                 },
               },
             },
@@ -45,7 +50,7 @@ describe('useBalancesStore', () => {
           ETH: {
             address: {
               amount: bigNumberify(10),
-              usdValue: bigNumberify(20000),
+              value: bigNumberify(20000),
             },
           },
         },
@@ -55,9 +60,9 @@ describe('useBalancesStore', () => {
 
     updatePrices(assetPrices);
 
-    expect(store.balances.eth['0xacc'].assets.ETH.address).toEqual({
+    expect(store.balances.eth['0xacc'].assets.ETH.address).toMatchObject({
       amount: bigNumberify(10),
-      usdValue: bigNumberify(25000),
+      value: bigNumberify(25000),
     });
   });
 
@@ -70,7 +75,7 @@ describe('useBalancesStore', () => {
               BTC: {
                 address: {
                   amount: bigNumberify(1),
-                  usdValue: bigNumberify(50000),
+                  value: bigNumberify(50000),
                 },
               },
             },
@@ -83,19 +88,19 @@ describe('useBalancesStore', () => {
               DAI: {
                 address: {
                   amount: bigNumberify(100),
-                  usdValue: bigNumberify(100),
+                  value: bigNumberify(100),
                 },
               },
               ETH: {
                 address: {
                   amount: bigNumberify(10),
-                  usdValue: bigNumberify(25000),
+                  value: bigNumberify(25000),
                 },
               },
               USDC: {
                 address: {
                   amount: bigNumberify(200),
-                  usdValue: bigNumberify(200),
+                  value: bigNumberify(200),
                 },
               },
             },
@@ -103,7 +108,7 @@ describe('useBalancesStore', () => {
               DAI: {
                 address: {
                   amount: bigNumberify(50),
-                  usdValue: bigNumberify(50),
+                  value: bigNumberify(50),
                 },
               },
             },
@@ -113,13 +118,13 @@ describe('useBalancesStore', () => {
               ETH: {
                 address: {
                   amount: bigNumberify(5),
-                  usdValue: bigNumberify(12500),
+                  value: bigNumberify(12500),
                 },
               },
               USDT: {
                 address: {
                   amount: bigNumberify(300),
-                  usdValue: bigNumberify(300),
+                  value: bigNumberify(300),
                 },
               },
             },
@@ -191,9 +196,9 @@ describe('useBalancesStore', () => {
       expect(store.balances).toEqual(balancesBefore);
     });
 
-    it('should preserve usdValue of non-filtered assets', () => {
+    it('should preserve value of non-filtered assets', () => {
       store.removeIgnoredAssets(['USDC']);
-      expect(store.balances.eth['0xacc1'].assets.ETH.address.usdValue).toEqual(bigNumberify(25000));
+      expect(store.balances.eth['0xacc1'].assets.ETH.address.value).toEqual(bigNumberify(25000));
     });
 
     it('should handle filtering with case-sensitive asset names', () => {

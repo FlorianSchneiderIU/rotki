@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import requests
 
+from rotkehlchen.chain.evm.types import EvmIndexer
 from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
@@ -21,7 +22,7 @@ EMPTY_RESULT = {
 
 @pytest.mark.parametrize('include_etherscan_key', [False])
 @pytest.mark.parametrize('include_cryptocompare_key', [False])
-@pytest.mark.parametrize('start_with_valid_premium', [True])  # for monerium
+@pytest.mark.parametrize('include_beaconchain_key', [False])
 def test_add_get_external_service(rotkehlchen_api_server: 'APIServer') -> None:
     """Tests that adding and retrieving external service credentials works"""
     # With no data an empty response should be returned
@@ -36,12 +37,10 @@ def test_add_get_external_service(rotkehlchen_api_server: 'APIServer') -> None:
         'etherscan': {'api_key': 'key1'},
         **EMPTY_RESULT,
         'cryptocompare': {'api_key': 'key2'},
-        'monerium': {'username': 'Ben', 'password': 'supersafepassword'},
     }
     data = {'services': [
         {'name': 'etherscan', 'api_key': 'key1'},
         {'name': 'cryptocompare', 'api_key': 'key2'},
-        {'name': 'monerium', 'username': 'Ben', 'password': 'supersafepassword'},
     ]}
     response = requests.put(
         api_url_for(rotkehlchen_api_server, 'externalservicesresource'),
@@ -76,7 +75,26 @@ def test_add_get_external_service(rotkehlchen_api_server: 'APIServer') -> None:
     assert result == expected_result
 
 
+def test_etherscan_re_enabled(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that etherscan is re-enabled when a user adds a new api key."""
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    for chain_manager in (chain_managers := (
+        rotki.chains_aggregator.binance_sc,
+        rotki.chains_aggregator.base,
+        rotki.chains_aggregator.optimism,
+    )):
+        chain_manager.node_inquirer.available_indexers.pop(EvmIndexer.ETHERSCAN)
+
+    assert_proper_sync_response_with_result(requests.put(
+        api_url_for(rotkehlchen_api_server, 'externalservicesresource'),
+        json={'services': [{'name': 'etherscan', 'api_key': 'key1'}]},
+    ))
+    for chain_manager in chain_managers:
+        assert EvmIndexer.ETHERSCAN in chain_manager.node_inquirer.available_indexers
+
+
 @pytest.mark.parametrize('include_etherscan_key', [False])
+@pytest.mark.parametrize('include_beaconchain_key', [False])
 def test_delete_external_service(rotkehlchen_api_server: 'APIServer') -> None:
     """Tests that delete external service credentials works"""
     # Add some data and see that the response shows they are added
@@ -215,40 +233,6 @@ def test_add_external_services_errors(rotkehlchen_api_server: 'APIServer') -> No
         response=response,
         contained_in_msg='"api_key": ["Not a valid string."',
         status_code=HTTPStatus.BAD_REQUEST,
-    )
-
-    # monerium without username
-    response = requests.put(
-        api_url_for(rotkehlchen_api_server, 'externalservicesresource'),
-        json={'services': [{'name': 'monerium', 'api_key': 'aaa'}]},
-    )
-    assert_error_response(
-        response=response,
-        contained_in_msg='monerium needs a username and password"',
-        status_code=HTTPStatus.BAD_REQUEST,
-    )
-
-    # monerium without password
-    response = requests.put(
-        api_url_for(rotkehlchen_api_server, 'externalservicesresource'),
-        json={'services': [{'name': 'monerium', 'username': 'Ben'}]},
-    )
-    assert_error_response(
-        response=response,
-        contained_in_msg='monerium needs a username and password"',
-        status_code=HTTPStatus.BAD_REQUEST,
-    )
-
-    # monerium without premium
-    rotkehlchen_api_server.rest_api.rotkehlchen.premium = None
-    response = requests.put(
-        api_url_for(rotkehlchen_api_server, 'externalservicesresource'),
-        json={'services': [{'name': 'monerium', 'username': 'Ben', 'password': 'secure'}]},
-    )
-    assert_error_response(
-        response=response,
-        contained_in_msg='You can only use monerium with rotki premium',
-        status_code=HTTPStatus.FORBIDDEN,
     )
 
 

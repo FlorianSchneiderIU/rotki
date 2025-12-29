@@ -3,19 +3,18 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Optional
 
 from rotkehlchen.assets.asset import Asset, EvmToken
-from rotkehlchen.assets.resolver import AssetResolver
-from rotkehlchen.assets.utils import CHAIN_TO_WRAPPED_TOKEN
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.decoding.constants import CPT_GAS
+from rotkehlchen.chain.decoding.types import (
+    CounterpartyDetails,
+    get_versioned_counterparty_label,
+)
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
-    EnricherContext,
-    TransferEnrichmentOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.uniswap.constants import (
     CPT_UNISWAP_V2,
     CPT_UNISWAP_V3,
@@ -23,16 +22,17 @@ from rotkehlchen.chain.evm.decoding.uniswap.constants import (
 )
 from rotkehlchen.chain.evm.decoding.uniswap.utils import (
     decode_basic_uniswap_info,
+    decode_uniswap_v3_like_position_create_or_exit,
     get_uniswap_swap_amounts,
 )
 from rotkehlchen.chain.evm.decoding.uniswap.v3.constants import (
     COLLECT_LIQUIDITY_SIGNATURE,
+    CPT_UNISWAP_V3_ROUTER,
     INCREASE_LIQUIDITY_SIGNATURE,
     SWAP_SIGNATURE,
 )
 from rotkehlchen.chain.evm.decoding.uniswap.v3.utils import (
     decode_uniswap_v3_like_deposit_or_withdrawal,
-    maybe_enrich_uniswap_v3_like_lp_position_creation,
 )
 from rotkehlchen.chain.evm.structures import EvmTxReceiptLog, SwapData
 from rotkehlchen.constants import ZERO
@@ -41,14 +41,13 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import (
-    CHAINID_TO_SUPPORTED_BLOCKCHAIN,
     ChecksumEvmAddress,
     EvmTransaction,
 )
 from rotkehlchen.utils.misc import ts_ms_to_sec
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
@@ -82,12 +81,12 @@ def _find_from_asset_and_amount(events: list['EvmEvent']) -> tuple[Asset, FVal] 
     return from_asset, from_amount
 
 
-class Uniswapv3CommonDecoder(DecoderInterface):
+class Uniswapv3CommonDecoder(EvmDecoderInterface):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             routers_addresses: set['ChecksumEvmAddress'],
             nft_manager: 'ChecksumEvmAddress',
@@ -97,9 +96,6 @@ class Uniswapv3CommonDecoder(DecoderInterface):
             base_tools=base_tools,
             msg_aggregator=msg_aggregator,
         )
-        chain = CHAINID_TO_SUPPORTED_BLOCKCHAIN[evm_inquirer.chain_id]
-        self.native_currency = AssetResolver.resolve_asset(chain.get_native_token_id()).resolve_to_crypto_asset()  # noqa: E501
-        self.wrapped_native_currency = CHAIN_TO_WRAPPED_TOKEN[chain]
         self.routers_addresses = routers_addresses
         self.nft_manager = nft_manager
 
@@ -125,7 +121,7 @@ class Uniswapv3CommonDecoder(DecoderInterface):
                 elif to_asset != event.asset:  # We currently support only single `to_asset`.
                     return None  # unexpected event
                 to_amount += event.amount
-            elif event.event_type == HistoryEventType.RECEIVE and event.asset != self.native_currency and to_asset is None:  # noqa: E501
+            elif event.event_type == HistoryEventType.RECEIVE and event.asset != self.node_inquirer.native_token and to_asset is None:  # noqa: E501
                 # Some other swaps have only a single receive event. The structure is:
                 # spend1, spend2, ..., spendN, receive
                 # In this case the receive event won't be decoded as a trade and we check it here.
@@ -137,13 +133,13 @@ class Uniswapv3CommonDecoder(DecoderInterface):
             return None
         return to_asset, to_amount
 
-    def _decode_deposits_and_withdrawals(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_deposits_and_withdrawals(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] == INCREASE_LIQUIDITY_SIGNATURE:
             is_deposit = True
         elif context.tx_log.topics[0] == COLLECT_LIQUIDITY_SIGNATURE:
             is_deposit = False
         else:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         position_id = int.from_bytes(context.tx_log.topics[1])
         try:
@@ -161,8 +157,8 @@ class Uniswapv3CommonDecoder(DecoderInterface):
             # 9 -> position.feeGrowthInside1LastX128,
             # 10 -> position.tokensOwed0,
             # 11 -> position.tokensOwed1
-            lp_position_info = self.evm_inquirer.contracts.contract(self.nft_manager).call(
-                node_inquirer=self.evm_inquirer,
+            lp_position_info = self.node_inquirer.contracts.contract(self.nft_manager).call(
+                node_inquirer=self.node_inquirer,
                 method_name='positions',
                 arguments=[position_id],
             )
@@ -171,7 +167,7 @@ class Uniswapv3CommonDecoder(DecoderInterface):
                 'Failed to query uniswap v3 nft contract for '
                 f'position {position_id} due to {e!s}',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         return decode_uniswap_v3_like_deposit_or_withdrawal(
             context=context,
@@ -182,8 +178,7 @@ class Uniswapv3CommonDecoder(DecoderInterface):
             amount0_raw=int.from_bytes(context.tx_log.data[32:64]),
             amount1_raw=int.from_bytes(context.tx_log.data[64:96]),
             position_id=position_id,
-            evm_inquirer=self.evm_inquirer,
-            wrapped_native_currency=self.wrapped_native_currency,
+            evm_inquirer=self.node_inquirer,
         )
 
     def _maybe_decode_v3_swap(
@@ -194,14 +189,14 @@ class Uniswapv3CommonDecoder(DecoderInterface):
             decoded_events: list['EvmEvent'],
             action_items: list[ActionItem],  # pylint: disable=unused-argument
             all_logs: list[EvmTxReceiptLog],  # pylint: disable=unused-argument
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """
         Detect some basic uniswap v3 events. This method doesn't ensure the order of the events
         and other things, but just labels some of the events as uniswap v3 events.
         The order should be ensured by the post-decoding rules.
         """
         if tx_log.topics[0] != SWAP_SIGNATURE:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount_received, amount_sent = get_uniswap_swap_amounts(tx_log=tx_log)
 
@@ -215,7 +210,7 @@ class Uniswapv3CommonDecoder(DecoderInterface):
             decoded_events=decoded_events,
             counterparty=CPT_UNISWAP_V3,
             notify_user=self.notify_user,
-            native_currency=self.native_currency,
+            native_currency=self.node_inquirer.native_token,
         )
 
     # --- Routers methods ---
@@ -241,7 +236,7 @@ class Uniswapv3CommonDecoder(DecoderInterface):
             return None
 
         return SwapData(
-            from_asset=self.native_currency,
+            from_asset=self.node_inquirer.native_token,
             from_amount=from_amount,
             to_asset=to_data[0],
             to_amount=to_data[1],
@@ -259,7 +254,7 @@ class Uniswapv3CommonDecoder(DecoderInterface):
         return SwapData(
             from_asset=from_data[0],
             from_amount=from_data[1],
-            to_asset=self.native_currency,
+            to_asset=self.node_inquirer.native_token,
             to_amount=receive_native_event.amount,
         )
 
@@ -307,7 +302,7 @@ class Uniswapv3CommonDecoder(DecoderInterface):
 
         send_native_event, receive_native_event = None, None
         for event in decoded_events:
-            if event.asset == self.native_currency and event.counterparty != CPT_GAS:
+            if event.asset == self.node_inquirer.native_token and event.counterparty != CPT_GAS:
                 if event.event_type == HistoryEventType.SPEND:
                     send_native_event = event
                 else:  # Receive
@@ -327,7 +322,7 @@ class Uniswapv3CommonDecoder(DecoderInterface):
             swap_data = self._decode_token_to_token_swap(decoded_events)
 
         if swap_data is None or swap_data.from_asset is None or swap_data.to_asset is None:
-            log.error(f'Failed to decode a {self.evm_inquirer.chain_name} uniswap swap for transaction {transaction.tx_hash.hex()}')  # noqa: E501
+            log.error(f'Failed to decode a {self.node_inquirer.chain_name} uniswap swap for transaction {transaction.tx_hash!s}')  # noqa: E501
             return decoded_events
 
         # These should never raise any errors since `from_asset` and `to_asset` are either native
@@ -345,8 +340,9 @@ class Uniswapv3CommonDecoder(DecoderInterface):
         gas_event.sequence_index = 0
 
         timestamp = ts_ms_to_sec(decoded_events[0].timestamp)  # all events have same timestamp
+        display_name = get_versioned_counterparty_label(CPT_UNISWAP_V3)
         from_event = self.base.make_event(
-            tx_hash=transaction.tx_hash,
+            tx_ref=transaction.tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             event_type=HistoryEventType.TRADE,
@@ -354,13 +350,13 @@ class Uniswapv3CommonDecoder(DecoderInterface):
             asset=from_crypto_asset,
             amount=swap_data.from_amount,
             location_label=transaction.from_address,
-            notes=f'Swap {swap_data.from_amount} {from_crypto_asset.symbol} via {CPT_UNISWAP_V3} auto router',  # noqa: E501
+            notes=f'Swap {swap_data.from_amount} {from_crypto_asset.symbol} via {display_name} auto router',  # noqa: E501
             counterparty=CPT_UNISWAP_V3,
             address=transaction.to_address,
         )
 
         to_event = self.base.make_event(
-            tx_hash=transaction.tx_hash,
+            tx_ref=transaction.tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             event_type=HistoryEventType.TRADE,
@@ -368,21 +364,23 @@ class Uniswapv3CommonDecoder(DecoderInterface):
             asset=to_crypto_asset,
             amount=swap_data.to_amount,
             location_label=transaction.from_address,
-            notes=f'Receive {swap_data.to_amount} {to_crypto_asset.symbol} as the result of a swap via {CPT_UNISWAP_V3} auto router',  # noqa: E501
+            notes=f'Receive {swap_data.to_amount} {to_crypto_asset.symbol} as the result of a swap via {display_name} auto router',  # noqa: E501
             counterparty=CPT_UNISWAP_V3,
             address=transaction.to_address,
         )
 
         return [gas_event, from_event, to_event]
 
-    def _maybe_enrich_liquidity_pool_creation(
+    def _lp_post_decoding(
             self,
-            context: EnricherContext,
-    ) -> TransferEnrichmentOutput:
+            transaction: EvmTransaction,
+            decoded_events: list['EvmEvent'],
+            all_logs: list[EvmTxReceiptLog],  # pylint: disable=unused-argument
+    ) -> list['EvmEvent']:
         """Update the lp position creation event and position token."""
-        return maybe_enrich_uniswap_v3_like_lp_position_creation(
-            context=context,
-            evm_inquirer=self.evm_inquirer,
+        return decode_uniswap_v3_like_position_create_or_exit(
+            decoded_events=decoded_events,
+            evm_inquirer=self.node_inquirer,
             nft_manager=self.nft_manager,
             counterparty=CPT_UNISWAP_V3,
             token_symbol='UNI-V3-POS',
@@ -392,19 +390,10 @@ class Uniswapv3CommonDecoder(DecoderInterface):
     # -- DecoderInterface methods
 
     def decoding_rules(self) -> list[Callable]:
-        return [
-            self._maybe_decode_v3_swap,
-        ]
+        return [self._maybe_decode_v3_swap]
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
-        return {
-            self.nft_manager: (self._decode_deposits_and_withdrawals,),
-        }
-
-    def enricher_rules(self) -> list[Callable]:
-        return [
-            self._maybe_enrich_liquidity_pool_creation,
-        ]
+        return {self.nft_manager: (self._decode_deposits_and_withdrawals,)}
 
     @staticmethod
     def counterparties() -> tuple[CounterpartyDetails, ...]:
@@ -414,7 +403,10 @@ class Uniswapv3CommonDecoder(DecoderInterface):
         ),)
 
     def post_decoding_rules(self) -> dict[str, list[tuple[int, Callable]]]:
-        return {CPT_UNISWAP_V3: [(0, self._routers_post_decoding)]}
+        return {
+            CPT_UNISWAP_V3: [(0, self._lp_post_decoding)],
+            CPT_UNISWAP_V3_ROUTER: [(0, self._routers_post_decoding)],
+        }
 
     def addresses_to_counterparties(self) -> dict[ChecksumEvmAddress, str]:
-        return dict.fromkeys(self.routers_addresses, CPT_UNISWAP_V3)
+        return dict.fromkeys(self.routers_addresses, CPT_UNISWAP_V3_ROUTER)

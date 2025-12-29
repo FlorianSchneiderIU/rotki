@@ -6,12 +6,12 @@ from eth_utils import to_checksum_address
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import Asset, EvmToken
-from rotkehlchen.assets.utils import get_or_create_evm_token
-from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
-from rotkehlchen.chain.ethereum.utils import (
+from rotkehlchen.assets.utils import (
+    get_or_create_evm_token,
     token_normalized_value,
     token_normalized_value_decimals,
 )
+from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.chain.evm.decoding.extrafi.constants import (
@@ -29,7 +29,6 @@ from rotkehlchen.globaldb.cache import (
     globaldb_set_unique_cache_value,
 )
 from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -62,7 +61,7 @@ class ExtrafiCommonBalances(ProtocolWithBalance):
     def query_balances(self) -> 'BalancesSheetType':
         """Query balances of lending pools and extra locking"""
         balances: BalancesSheetType = defaultdict(BalanceSheet)
-        address_to_deposits = self.addresses_with_deposits(products=None)
+        address_to_deposits = self.addresses_with_deposits()
         for address, events in address_to_deposits.items():
             unique_reserves = set()
             farm_positions: set[tuple[int, int]] = set()
@@ -79,10 +78,10 @@ class ExtrafiCommonBalances(ProtocolWithBalance):
             if len(unique_reserves) != 0:
                 lending_reserves = self.query_lending_reserves(address, list(unique_reserves))
                 for reserve_token, balance_amount in lending_reserves.items():
-                    price = Inquirer.find_usd_price(asset=reserve_token)
+                    price = Inquirer.find_main_currency_price(reserve_token)
                     balances[address].assets[reserve_token][self.counterparty] += Balance(
                         amount=balance_amount,
-                        usd_value=balance_amount * price,
+                        value=balance_amount * price,
                     )
 
             if len(farm_positions) != 0:
@@ -92,8 +91,9 @@ class ExtrafiCommonBalances(ProtocolWithBalance):
                     balances=balances,
                 )
 
-        if len(locked_extra_addresses := list(self.addresses_with_deposits(
-            products=[EvmProduct.STAKING],
+        if len(locked_extra_addresses := list(self.addresses_with_activity(
+            event_types=self.deposit_event_types,
+            assets=(self.extrafi_token,),
         ).keys())) != 0:
             self._query_locked_extra(addresses=locked_extra_addresses, balances=balances)
 
@@ -141,10 +141,10 @@ class ExtrafiCommonBalances(ProtocolWithBalance):
             )
 
             lp_amount = token_normalized_value(lp_amount_raw, lp_token)
-            lp_price = Inquirer.find_usd_price(lp_token)
+            lp_price = Inquirer.find_main_currency_price(lp_token)
             balances[address].assets[lp_token][self.counterparty] += Balance(
                 amount=lp_amount,
-                usd_value=lp_amount * lp_price,
+                value=lp_amount * lp_price,
             )
 
             for debt_token, debt_amount in ((token_0, debt_0_amount), (token_1, debt_1_amount)):
@@ -152,10 +152,10 @@ class ExtrafiCommonBalances(ProtocolWithBalance):
                     continue
 
                 amount = token_normalized_value(debt_amount, debt_token)
-                price = Inquirer.find_usd_price(debt_token)
+                price = Inquirer.find_main_currency_price(debt_token)
                 balances[address].liabilities[debt_token][self.counterparty] += Balance(
                     amount=amount,
-                    usd_value=amount * price,
+                    value=amount * price,
                 )
 
     def _query_locked_extra(
@@ -185,7 +185,7 @@ class ExtrafiCommonBalances(ProtocolWithBalance):
             log.error(f'Failed to query {self.evm_inquirer.chain_name} extrafi locked balances due to {e!s}')  # noqa: E501
             return
 
-        extrafi_price = Inquirer.find_usd_price(self.extrafi_token)
+        extrafi_price = Inquirer.find_main_currency_price(self.extrafi_token)
         for idx, result in enumerate(results):
             user_address = addresses[idx]
             if (staked_amount_raw := staking_contract.decode(
@@ -201,7 +201,7 @@ class ExtrafiCommonBalances(ProtocolWithBalance):
             )
             balances[user_address].assets[self.extrafi_token][self.counterparty] += Balance(
                 amount=amount,
-                usd_value=amount * extrafi_price,
+                value=amount * extrafi_price,
             )
 
     def _maybe_query_reserve_idx_to_underlying(

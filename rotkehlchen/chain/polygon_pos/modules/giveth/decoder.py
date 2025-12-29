@@ -1,15 +1,15 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.giveth.constants import CPT_DETAILS_GIVETH, CPT_GIVETH
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.utils import get_donation_event_params
 from rotkehlchen.history.events.structures.types import HistoryEventSubType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -24,16 +24,16 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class GivethDecoder(DecoderInterface):
+class GivethDecoder(EvmDecoderInterface):
 
-    def _decode_donation_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_donation_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != DONATION_MADE_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         sender_tracked = self.base.is_tracked(sender_address := context.transaction.from_address)
         recipient_tracked = self.base.is_tracked(recipient_address := bytes_to_address(context.tx_log.topics[1]))  # noqa: E501
         if not sender_tracked and not recipient_tracked:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount_received = asset_normalized_value(
             amount=int.from_bytes(context.tx_log.data[:32]),
@@ -65,7 +65,7 @@ class GivethDecoder(DecoderInterface):
         else:
             log.error(f'Failed to find giveth donation event in {context.transaction}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def addresses_to_decoders(self) -> dict['ChecksumEvmAddress', tuple[Any, ...]]:
         return {GIVETH_DONATION_CONTRACT_ADDRESS: (self._decode_donation_events,)}

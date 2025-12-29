@@ -1,6 +1,6 @@
 import type { ValidationRuleCollection, ValidationRuleWithoutParams } from '@vuelidate/core';
 import type { Ref } from 'vue';
-import { isValidEthAddress, isValidTxHash } from '@rotki/common';
+import { isValidEthAddress, isValidEvmTxHash, isValidSolanaAddress, isValidSolanaSignature } from '@rotki/common';
 import { helpers, minLength, required, requiredIf } from '@vuelidate/validators';
 
 interface CreateCommonRules {
@@ -8,7 +8,7 @@ interface CreateCommonRules {
   createRequiredAmountRule: <T>() => ValidationRuleCollection<T>;
   createRequiredAssetRule: <T>() => ValidationRuleCollection<T>;
   createRequiredBlockNumberRule: <T>() => ValidationRuleCollection<T>;
-  createRequiredEventIdentifierRule: <T>(condition?: () => boolean) => ValidationRuleCollection<T>;
+  createRequiredGroupIdentifierRule: <T>(condition?: () => boolean) => ValidationRuleCollection<T>;
   createRequiredEventSubtypeRule: <T>() => ValidationRuleCollection<T>;
   createRequiredEventTypeRule: <T>() => ValidationRuleCollection<T>;
   createRequiredFeeAssetRule: <T>(requiredCondition?: ValidationRuleWithoutParams) => ValidationRuleCollection<T>;
@@ -22,8 +22,9 @@ interface CreateCommonRules {
   createRequiredAtLeastOne: <T>() => ValidationRuleCollection<T>;
   createValidCounterpartyRule: <T>(counterparties: Ref<string[]>) => ValidationRuleCollection<T>;
   createValidEthAddressRule: <T>() => ValidationRuleCollection<T>;
-  createValidProductRule: <T>(products: Ref<string[]>) => ValidationRuleCollection<T>;
+  createValidSolanaAddressRule: <T>() => ValidationRuleCollection<T>;
   createValidTxHashRule: <T>() => ValidationRuleCollection<T>;
+  createValidSolanaSignatureRule: <T>() => ValidationRuleCollection<T>;
 }
 
 interface UseEventFormValidationReturn {
@@ -52,12 +53,6 @@ export function useEventFormValidation(): UseEventFormValidationReturn {
     createRequiredBlockNumberRule: () => ({
       required: helpers.withMessage(t('transactions.events.form.block_number.validation.non_empty'), required),
     }),
-    createRequiredEventIdentifierRule: (condition?: () => boolean) => ({
-      required: helpers.withMessage(
-        t('transactions.events.form.event_identifier.validation.non_empty'),
-        condition === undefined ? required : requiredIf(condition),
-      ),
-    }),
     createRequiredEventSubtypeRule: () => ({
       required: helpers.withMessage(t('transactions.events.form.event_subtype.validation.non_empty'), required),
     }),
@@ -74,6 +69,12 @@ export function useEventFormValidation(): UseEventFormValidationReturn {
       required: helpers.withMessage(
         t('transactions.events.form.fee.validation.non_empty'),
         requiredCondition,
+      ),
+    }),
+    createRequiredGroupIdentifierRule: (condition?: () => boolean) => ({
+      required: helpers.withMessage(
+        t('transactions.events.form.event_identifier.validation.non_empty'),
+        condition === undefined ? required : requiredIf(condition),
       ),
     }),
     createRequiredLocationRule: () => ({
@@ -118,16 +119,23 @@ export function useEventFormValidation(): UseEventFormValidationReturn {
         (value: string) => !value || isValidEthAddress(value),
       ),
     }),
-    createValidProductRule: (products: Ref<string[]>) => ({
+    createValidSolanaAddressRule: () => ({
       isValid: helpers.withMessage(
-        t('transactions.events.form.product.validation.valid'),
-        (value: string) => !value || get(products).includes(value),
+        t('transactions.events.form.address.validation.valid'),
+        (value: string) => !value || isValidSolanaAddress(value),
       ),
+    }),
+    createValidSolanaSignatureRule: () => ({
+      isValid: helpers.withMessage(
+        t('transactions.events.form.signature.validation.valid'),
+        (value: string) => isValidSolanaSignature(value),
+      ),
+      required: helpers.withMessage(t('transactions.events.form.signature.validation.non_empty'), required),
     }),
     createValidTxHashRule: () => ({
       isValid: helpers.withMessage(
         t('transactions.events.form.tx_hash.validation.valid'),
-        (value: string) => isValidTxHash(value),
+        (value: string) => isValidEvmTxHash(value),
       ),
       required: helpers.withMessage(t('transactions.events.form.tx_hash.validation.non_empty'), required),
     }),

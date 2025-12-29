@@ -3,11 +3,11 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from rotkehlchen.assets.asset import Asset, EvmToken
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
-from rotkehlchen.chain.evm.decoding.structures import DecoderContext, DecodingOutput
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
+from rotkehlchen.chain.evm.decoding.structures import DecoderContext, EvmDecodingOutput
 from rotkehlchen.chain.evm.transactions import EvmTransactions
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.resolver import evm_address_to_identifier
@@ -20,7 +20,7 @@ from rotkehlchen.types import ChecksumEvmAddress, TokenKind
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -28,11 +28,11 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class OdosCommonDecoderBase(DecoderInterface):
+class OdosCommonDecoderBase(EvmDecoderInterface):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             router_address: ChecksumEvmAddress,
     ) -> None:
@@ -41,9 +41,9 @@ class OdosCommonDecoderBase(DecoderInterface):
             base_tools=base_tools,
             msg_aggregator=msg_aggregator,
         )
-        self.evm_txns = EvmTransactions(self.evm_inquirer, self.base.database)
+        self.evm_txns = EvmTransactions(self.node_inquirer, self.base.database)
         self.router_address = router_address
-        self.native_currency = self.evm_inquirer.native_token
+        self.native_currency = self.node_inquirer.native_token
         self.label = self.counterparties()[0].label
 
     def _calculate_router_fee(
@@ -63,7 +63,7 @@ class OdosCommonDecoderBase(DecoderInterface):
                 tx_log.topics[0] != ERC20_OR_ERC721_TRANSFER or
                 ((identifier := evm_address_to_identifier(
                     address=tx_log.address,
-                    chain_id=self.evm_inquirer.chain_id,
+                    chain_id=self.node_inquirer.chain_id,
                     token_type=TokenKind.ERC20,
                 )) not in output_tokens)
             ):
@@ -109,7 +109,7 @@ class OdosCommonDecoderBase(DecoderInterface):
                 )
             elif amount > ZERO:
                 router_fees.append(self.base.make_event_next_index(
-                    tx_hash=context.transaction.tx_hash,
+                    tx_ref=context.transaction.tx_hash,
                     timestamp=context.transaction.timestamp,
                     event_type=HistoryEventType.TRADE,
                     event_subtype=HistoryEventSubType.FEE,
@@ -129,7 +129,7 @@ class OdosCommonDecoderBase(DecoderInterface):
             sender: 'ChecksumEvmAddress',
             input_tokens: dict[str, FVal],
             output_tokens: dict[str, FVal],
-    ) -> 'DecodingOutput':
+    ) -> 'EvmDecodingOutput':
         """Decodes swaps done using an Odos v1/v2 router"""
         in_events, out_events = [], []
         for event in context.decoded_events:
@@ -177,4 +177,4 @@ class OdosCommonDecoderBase(DecoderInterface):
             ordered_events=out_events + in_events + fee_events,
             events_list=context.decoded_events,
         )
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)

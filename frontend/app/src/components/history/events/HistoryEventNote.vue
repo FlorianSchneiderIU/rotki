@@ -2,6 +2,7 @@
 import type { ExplorerUrls } from '@/types/asset/asset-urls';
 import { type BigNumber, Blockchain } from '@rotki/common';
 import Flag from '@/components/common/Flag.vue';
+import MerchantIcon from '@/components/common/MerchantIcon.vue';
 import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import ExternalLink from '@/components/helper/ExternalLink.vue';
 import { type NoteFormat, NoteType, useHistoryEventNote } from '@/composables/history/events/notes';
@@ -17,7 +18,7 @@ const props = withDefaults(
     amount?: BigNumber | BigNumber[];
     asset?: string;
     chain?: string;
-    noTxHash?: boolean;
+    noTxRef?: boolean;
     validatorIndex?: number;
     blockNumber?: number;
     counterparty?: string;
@@ -29,12 +30,12 @@ const props = withDefaults(
     blockNumber: undefined,
     chain: Blockchain.ETH,
     notes: '',
-    noTxHash: false,
+    noTxRef: false,
     validatorIndex: undefined,
   },
 );
 
-const { amount, asset, blockNumber, counterparty, extraData, notes, noTxHash, validatorIndex } = toRefs(props);
+const { amount, asset, blockNumber, counterparty, extraData, notes, noTxRef, validatorIndex } = toRefs(props);
 
 const { formatNotes } = useHistoryEventNote();
 
@@ -45,7 +46,7 @@ const formattedNotes: ComputedRef<NoteFormat[]> = formatNotes({
   counterparty,
   extraData,
   notes,
-  noTxHash,
+  noTxRef,
   validatorIndex,
 });
 
@@ -70,7 +71,13 @@ function isLinkTypeWithoutImage(t: any, chain: string): t is keyof ExplorerUrls 
       <template v-if="note.type === NoteType.FLAG && note.countryCode">
         <Flag
           :iso="note.countryCode"
-          class="mx-1 rounded-sm"
+          class="mx-1"
+        />
+      </template>
+      <template v-else-if="note.type === NoteType.MERCHANT_CODE && note.merchantCode">
+        <MerchantIcon
+          :code="note.merchantCode"
+          class="mx-0.5"
         />
       </template>
       <template v-else-if="note.type === NoteType.WORD && note.word">
@@ -79,9 +86,8 @@ function isLinkTypeWithoutImage(t: any, chain: string): t is keyof ExplorerUrls 
       <HashLink
         v-else-if="note.showHashLink && note.address && isLinkType(note.type)"
         :key="index"
-        class="inline-flex"
+        class="inline-flex align-middle bg-rui-grey-300 dark:bg-rui-grey-800 pr-1 rounded-full m-0.5"
         :class="{
-          [$style.address]: true,
           'pl-2': isLinkTypeWithoutImage(note.type, note.chain ?? chain),
         }"
         :text="note.address"
@@ -114,6 +120,7 @@ function isLinkTypeWithoutImage(t: any, chain: string): t is keyof ExplorerUrls 
         :text="note.word"
         color="primary"
         custom
+        confirm
       />
       <template v-else>
         {{ ` ${note.word} ` }}
@@ -121,15 +128,3 @@ function isLinkTypeWithoutImage(t: any, chain: string): t is keyof ExplorerUrls 
     </template>
   </div>
 </template>
-
-<style lang="scss" module>
-.address {
-  @apply align-middle bg-rui-grey-300 pr-1 rounded-full m-0.5;
-}
-
-:global(.dark) {
-  .address {
-    @apply bg-rui-grey-800;
-  }
-}
-</style>

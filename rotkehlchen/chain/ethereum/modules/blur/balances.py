@@ -4,16 +4,16 @@ from typing import TYPE_CHECKING
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
 from rotkehlchen.chain.ethereum.modules.blur.constants import (
     BLUR_IDENTIFIER,
     BLUR_STAKING_CONTRACT,
     CPT_BLUR,
 )
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.misc import RemoteError
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -45,7 +45,7 @@ class BlurBalances(ProtocolWithBalance):
         balances: BalancesSheetType = defaultdict(BalanceSheet)
 
         # fetch deposit events
-        if len(addresses_with_deposits := list(self.addresses_with_deposits(products=[EvmProduct.STAKING]))) == 0:  # noqa: E501
+        if len(addresses_with_deposits := list(self.addresses_with_deposits())) == 0:
             return balances
 
         staking_contract = self.evm_inquirer.contracts.contract(BLUR_STAKING_CONTRACT)
@@ -66,7 +66,10 @@ class BlurBalances(ProtocolWithBalance):
         if len(results) == 0:
             return balances
 
-        blur_price = Inquirer.find_usd_price(asset := Asset(BLUR_IDENTIFIER))
+        blur_price = Inquirer.find_price(
+            from_asset=(asset := Asset(BLUR_IDENTIFIER)),
+            to_asset=CachedSettings().main_currency,
+        )
         for idx, result in enumerate(results):
             staked_amount_raw = staking_contract.decode(
                 result=result,
@@ -79,7 +82,7 @@ class BlurBalances(ProtocolWithBalance):
             )
             balances[user_address].assets[asset][self.counterparty] += Balance(
                 amount=amount,
-                usd_value=amount * blur_price,
+                value=amount * blur_price,
             )
 
         return balances

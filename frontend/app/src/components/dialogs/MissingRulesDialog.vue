@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import type { HistoryEventEditData } from '@/modules/history/management/forms/form-types';
-import type { EvmChainAndTxHash } from '@/types/history/events';
-import type { AccountingRuleEntry } from '@/types/settings/accounting';
-import { toEvmChainAndTxHash } from '@/utils/history';
-import { isEvmEvent } from '@/utils/history/events';
+import type { LocationAndTxRef } from '@/types/history/events';
+import type { AccountingRuleIdentifier } from '@/types/settings/accounting';
+import { isEventDecodable } from '@/modules/history/management/forms/form-guards';
+import { toLocationAndTxRef } from '@/utils/history';
 
 const modelValue = defineModel<HistoryEventEditData | undefined>({ required: true });
 
 const emit = defineEmits<{
-  'redecode': [data: EvmChainAndTxHash];
+  'redecode': [data: LocationAndTxRef];
   'edit-event': [event: HistoryEventEditData];
-  'add': [rule: Pick<AccountingRuleEntry, 'eventType' | 'eventSubtype' | 'counterparty'>];
+  'add': [rule: AccountingRuleIdentifier];
   'dismiss': [];
 }>();
 
@@ -20,7 +20,7 @@ function canRedecode(data?: HistoryEventEditData): boolean {
   if (!data || data.type === 'edit-group') {
     return false;
   }
-  return isEvmEvent(data.event);
+  return !!isEventDecodable(data.event);
 }
 
 const options = computed(() => [{
@@ -46,7 +46,10 @@ function close() {
 
 function onRedecode(data: HistoryEventEditData) {
   const event = data.type === 'edit' ? data.event : data.eventsInGroup[0];
-  emit('redecode', toEvmChainAndTxHash(event));
+  const decodableEvent = isEventDecodable(event);
+  if (decodableEvent) {
+    emit('redecode', toLocationAndTxRef(decodableEvent));
+  }
   close();
 }
 
@@ -57,10 +60,11 @@ function onEdit(data: HistoryEventEditData) {
 
 function onAddRule(data: HistoryEventEditData) {
   const event = data.type === 'edit' ? data.event : data.eventsInGroup[0];
-  const { eventSubtype, eventType } = event;
+  const { eventSubtype, eventType, identifier } = event;
 
   emit('add', {
     counterparty: 'counterparty' in event ? event.counterparty : null,
+    eventIds: [identifier],
     eventSubtype,
     eventType,
   });

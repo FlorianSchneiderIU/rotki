@@ -4,15 +4,16 @@ import pytest
 
 from rotkehlchen.assets.asset import Asset, UnderlyingToken
 from rotkehlchen.assets.utils import get_or_create_evm_token
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.beefy_finance.constants import CPT_BEEFY_FINANCE
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.morpho.constants import CPT_MORPHO
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_ETH, A_GMX, A_USDC, A_WETH_ARB, A_WETH_BASE
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import (
     ChainID,
@@ -63,7 +64,7 @@ def test_zap_deposit_to_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache)
         tx_hash=tx_hash,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1749354935000)),
         location=Location.ETHEREUM,
@@ -75,7 +76,7 @@ def test_zap_deposit_to_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache)
         counterparty=CPT_GAS,
         location_label=(user_address := ethereum_accounts[0]),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -88,7 +89,7 @@ def test_zap_deposit_to_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache)
         counterparty=CPT_BEEFY_FINANCE,
         address=string_to_evm_address('0x5Cc9400FfB4Da168Cf271e912F589462C3A00d1F'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -112,7 +113,7 @@ def test_zap_withdrawal_from_beefy(ethereum_inquirer, ethereum_accounts, beefy_c
         tx_hash=tx_hash,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1749215411000)),
         location=Location.ETHEREUM,
@@ -124,7 +125,7 @@ def test_zap_withdrawal_from_beefy(ethereum_inquirer, ethereum_accounts, beefy_c
         counterparty=CPT_GAS,
         location_label=(user_address := ethereum_accounts[0]),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=472,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -136,7 +137,7 @@ def test_zap_withdrawal_from_beefy(ethereum_inquirer, ethereum_accounts, beefy_c
         notes=f'Set mooFxConvexGHO-fxUSD spending approval of {user_address} by 0xEdFEc19ee32f5130084C0aCab91FeA604C137912 to {approval_amount}',  # noqa: E501
         address=string_to_evm_address('0xEdFEc19ee32f5130084C0aCab91FeA604C137912'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=473,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -149,7 +150,7 @@ def test_zap_withdrawal_from_beefy(ethereum_inquirer, ethereum_accounts, beefy_c
         counterparty=CPT_BEEFY_FINANCE,
         address=string_to_evm_address('0x5Cc9400FfB4Da168Cf271e912F589462C3A00d1F'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=474,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -173,7 +174,7 @@ def test_deposit_to_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache):
         tx_hash=tx_hash,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1749395555000)),
         location=Location.ETHEREUM,
@@ -185,7 +186,7 @@ def test_deposit_to_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache):
         counterparty=CPT_GAS,
         location_label=(user_address := ethereum_accounts[0]),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=696,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -197,7 +198,7 @@ def test_deposit_to_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache):
         notes=f'Set USDCfxUSD spending approval of {user_address} by 0xD81eaAE8E6195e67695bE9aC447c9D6214CB717A to {approve_amount}',  # noqa: E501
         address=string_to_evm_address('0xD81eaAE8E6195e67695bE9aC447c9D6214CB717A'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=697,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -210,7 +211,7 @@ def test_deposit_to_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache):
         counterparty=CPT_BEEFY_FINANCE,
         address=string_to_evm_address('0xD81eaAE8E6195e67695bE9aC447c9D6214CB717A'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=698,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -234,7 +235,7 @@ def test_withdrawal_from_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache
         tx_hash=tx_hash,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1749106427000)),
         location=Location.ETHEREUM,
@@ -246,7 +247,7 @@ def test_withdrawal_from_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache
         counterparty=CPT_GAS,
         location_label=(user_address := ethereum_accounts[0]),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -259,7 +260,7 @@ def test_withdrawal_from_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache
         counterparty=CPT_BEEFY_FINANCE,
         address=ZERO_ADDRESS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -275,6 +276,7 @@ def test_withdrawal_from_beefy(ethereum_inquirer, ethereum_accounts, beefy_cache
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0xf5632CFcD668C10949bA06618D50928ce5841aE3']])
 def test_deposit_to_beefy_morpho_vault(
         base_inquirer: 'BaseInquirer',
@@ -313,7 +315,7 @@ def test_deposit_to_beefy_morpho_vault(
         tx_hash=tx_hash,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1754816425000)),
         location=Location.BASE,
@@ -325,7 +327,7 @@ def test_deposit_to_beefy_morpho_vault(
         counterparty=CPT_GAS,
         location_label=(user_address := base_accounts[0]),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.BASE,
@@ -338,7 +340,7 @@ def test_deposit_to_beefy_morpho_vault(
         counterparty=CPT_BEEFY_FINANCE,
         address=beefy_vault.evm_address,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.BASE,
@@ -390,7 +392,7 @@ def test_withdrawal_from_beefy_clm_vault(
         tx_hash=tx_hash,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1754883188000)),
         location=Location.ARBITRUM_ONE,
@@ -402,7 +404,7 @@ def test_withdrawal_from_beefy_clm_vault(
         counterparty=CPT_GAS,
         location_label=(user_address := arbitrum_one_accounts[0]),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=10,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -414,7 +416,7 @@ def test_withdrawal_from_beefy_clm_vault(
         notes=f'Set rcowUniswapArbETH-GMX spending approval of {user_address} by 0x3395BDAE49853Bc7Ab9377d2A93f42BC3A18680e to {approval_amount}',  # noqa: E501
         address=string_to_evm_address('0x3395BDAE49853Bc7Ab9377d2A93f42BC3A18680e'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=11,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -427,7 +429,7 @@ def test_withdrawal_from_beefy_clm_vault(
         counterparty=CPT_BEEFY_FINANCE,
         address=string_to_evm_address('0xf49F7bB6F4F50d272A0914a671895c4384696E5A'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=12,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -440,7 +442,7 @@ def test_withdrawal_from_beefy_clm_vault(
         counterparty=CPT_BEEFY_FINANCE,
         address=string_to_evm_address('0xf49F7bB6F4F50d272A0914a671895c4384696E5A'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=13,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -467,7 +469,7 @@ def test_deposit_eth_to_beefy_vault_with_harvest_call_reward(
         tx_hash=tx_hash,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1755000647000)),
         location=Location.ARBITRUM_ONE,
@@ -479,7 +481,7 @@ def test_deposit_eth_to_beefy_vault_with_harvest_call_reward(
         counterparty=CPT_GAS,
         location_label=(user_address := arbitrum_one_accounts[0]),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -492,7 +494,7 @@ def test_deposit_eth_to_beefy_vault_with_harvest_call_reward(
         counterparty=CPT_BEEFY_FINANCE,
         address=string_to_evm_address('0xf49F7bB6F4F50d272A0914a671895c4384696E5A'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -505,7 +507,7 @@ def test_deposit_eth_to_beefy_vault_with_harvest_call_reward(
         counterparty=CPT_BEEFY_FINANCE,
         address=string_to_evm_address('0xf49F7bB6F4F50d272A0914a671895c4384696E5A'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=3,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -535,7 +537,7 @@ def test_deposit_usdc_to_beefy_vault_with_harvest_call_reward(
         tx_hash=tx_hash,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1755003899000)),
         location=Location.ARBITRUM_ONE,
@@ -547,7 +549,7 @@ def test_deposit_usdc_to_beefy_vault_with_harvest_call_reward(
         counterparty=CPT_GAS,
         location_label=(user_address := arbitrum_one_accounts[0]),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=6,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -559,7 +561,7 @@ def test_deposit_usdc_to_beefy_vault_with_harvest_call_reward(
         notes=f'Set USDC.e spending approval of {user_address} by 0x3395BDAE49853Bc7Ab9377d2A93f42BC3A18680e to {approval_amount}',  # noqa: E501
         address=string_to_evm_address('0x3395BDAE49853Bc7Ab9377d2A93f42BC3A18680e'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=7,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -572,7 +574,7 @@ def test_deposit_usdc_to_beefy_vault_with_harvest_call_reward(
         counterparty=CPT_BEEFY_FINANCE,
         address=string_to_evm_address('0xf49F7bB6F4F50d272A0914a671895c4384696E5A'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=8,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -585,7 +587,7 @@ def test_deposit_usdc_to_beefy_vault_with_harvest_call_reward(
         counterparty=CPT_BEEFY_FINANCE,
         address=string_to_evm_address('0xf49F7bB6F4F50d272A0914a671895c4384696E5A'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=9,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -601,6 +603,7 @@ def test_deposit_usdc_to_beefy_vault_with_harvest_call_reward(
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0xB012F9199Ea0BbF86F99C2e1A572747fB7B5a953']])
 def test_withdrawal_from_beefy_receiving_eth(
         optimism_inquirer: 'OptimismInquirer',
@@ -625,7 +628,7 @@ def test_withdrawal_from_beefy_receiving_eth(
         tx_hash=tx_hash,
     )
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=(timestamp := TimestampMS(1754903127000)),
         location=Location.OPTIMISM,
@@ -637,7 +640,7 @@ def test_withdrawal_from_beefy_receiving_eth(
         counterparty=CPT_GAS,
         location_label=(user_address := optimism_accounts[0]),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=19,
         timestamp=timestamp,
         location=Location.OPTIMISM,
@@ -649,7 +652,7 @@ def test_withdrawal_from_beefy_receiving_eth(
         notes=f'Set mooStargateV2WETH spending approval of {user_address} by 0x5a32F67C5eD74dc1b2e031b1bc2c3E965073424F to {approval_amount}',  # noqa: E501
         address=string_to_evm_address('0x5a32F67C5eD74dc1b2e031b1bc2c3E965073424F'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=20,
         timestamp=timestamp,
         location=Location.OPTIMISM,
@@ -662,7 +665,7 @@ def test_withdrawal_from_beefy_receiving_eth(
         counterparty=CPT_BEEFY_FINANCE,
         address=string_to_evm_address('0xE82343A116d2179F197111D92f9B53611B43C01c'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=21,
         timestamp=timestamp,
         location=Location.OPTIMISM,

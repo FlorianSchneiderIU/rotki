@@ -68,7 +68,7 @@ const rows = computed<AssetBreakdown[]>(() => {
 const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 
 const sort = ref<DataTableSortData<AssetBreakdown>>({
-  column: 'usdValue',
+  column: 'value',
   direction: 'desc' as const,
 });
 
@@ -96,8 +96,8 @@ const cols = computed<DataTableColumn<AssetBreakdown>[]>(() => {
   }, {
     align: 'end',
     cellClass: 'py-2',
-    key: 'usdValue',
-    label: t('asset_locations.header.value', {
+    key: 'value',
+    label: t('common.value_in_symbol', {
       symbol: get(currencySymbol) ?? CURRENCY_USD,
     }),
     sortable: true,
@@ -137,7 +137,7 @@ function getAssets(location: string): AssetBalance[] {
       balances.push({
         amount: entry.amount,
         asset,
-        usdValue: entry.usdValue,
+        value: entry.value,
       });
     }
   }
@@ -171,7 +171,7 @@ function getAssets(location: string): AssetBalance[] {
     <template #item.amount="{ row }">
       <AmountDisplay :value="row.amount" />
     </template>
-    <template #item.usdValue="{ row }">
+    <template #item.value="{ row }">
       <div class="flex items-center justify-end gap-2">
         <Eth2ValidatorLimitTooltip v-if="row.location === Blockchain.ETH2" />
 
@@ -179,14 +179,14 @@ function getAssets(location: string): AssetBalance[] {
           show-currency="symbol"
           :amount="row.amount"
           :price-asset="identifier"
-          fiat-currency="USD"
-          :value="row.usdValue"
+          force-currency
+          :value="row.value"
         />
       </div>
     </template>
     <template #item.percentage="{ row }">
       <PercentageDisplay
-        :value="percentage(row.usdValue)"
+        :value="percentage(row.value)"
         :asset-padding="0.1"
       />
     </template>

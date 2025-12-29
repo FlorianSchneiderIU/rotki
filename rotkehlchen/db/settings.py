@@ -1,13 +1,20 @@
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, NamedTuple, Optional
 
 from rotkehlchen.assets.asset import Asset, AssetWithOracles
+from rotkehlchen.chain.evm.types import (
+    DEFAULT_EVM_INDEXER_ORDER,
+    DEFAULT_INDEXERS_ORDER,
+    EvmIndexer,
+    SerializableChainIndexerOrder,
+)
 from rotkehlchen.constants.assets import A_USD
-from rotkehlchen.constants.timing import YEAR_IN_SECONDS
-from rotkehlchen.data_migrations.constants import LAST_DATA_MIGRATION
+from rotkehlchen.constants.timing import DAY_IN_SECONDS, YEAR_IN_SECONDS
+from rotkehlchen.data_migrations.constants import LAST_USERDB_DATA_MIGRATION
 from rotkehlchen.db.constants import UpdateType
 from rotkehlchen.db.utils import str_to_bool
 from rotkehlchen.errors.serialization import DeserializationError
@@ -18,8 +25,10 @@ from rotkehlchen.types import (
     AVAILABLE_MODULES_MAP,
     DEFAULT_ADDRESS_NAME_PRIORITY,
     DEFAULT_OFF_MODULES,
+    EVM_CHAIN_IDS_WITH_TRANSACTIONS,
     SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE,
     AddressNameSource,
+    ChainID,
     CostBasisMethod,
     ExchangeLocationID,
     ModuleName,
@@ -33,50 +42,53 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
-ROTKEHLCHEN_DB_VERSION = 50
-ROTKEHLCHEN_TRANSIENT_DB_VERSION = 2
-DEFAULT_TAXFREE_AFTER_PERIOD = YEAR_IN_SECONDS
-DEFAULT_INCLUDE_CRYPTO2CRYPTO = True
-DEFAULT_INCLUDE_GAS_COSTS = True
-DEFAULT_PREMIUM_SHOULD_SYNC = False
-DEFAULT_UI_FLOATING_PRECISION = 2
-DEFAULT_BALANCE_SAVE_FREQUENCY = 24
-DEFAULT_MAIN_CURRENCY = A_USD
-DEFAULT_DATE_DISPLAY_FORMAT = '%d/%m/%Y %H:%M:%S %Z'
-DEFAULT_SUBMIT_USAGE_ANALYTICS = True
-DEFAULT_ACTIVE_MODULES = tuple(set(AVAILABLE_MODULES_MAP.keys()) - DEFAULT_OFF_MODULES)
-DEFAULT_BTC_DERIVATION_GAP_LIMIT = 20
-DEFAULT_CALCULATE_PAST_COST_BASIS = True
-DEFAULT_DISPLAY_DATE_IN_LOCALTIME = True
-DEFAULT_CURRENT_PRICE_ORACLES = DEFAULT_CURRENT_PRICE_ORACLES_ORDER
-DEFAULT_HISTORICAL_PRICE_ORACLES = DEFAULT_HISTORICAL_PRICE_ORACLES_ORDER
-DEFAULT_PNL_CSV_WITH_FORMULAS = True
-DEFAULT_PNL_CSV_HAVE_SUMMARY = False
-DEFAULT_SSF_GRAPH_MULTIPLIER = 0
-DEFAULT_LAST_DATA_MIGRATION = LAST_DATA_MIGRATION
-DEFAULT_COST_BASIS_METHOD = CostBasisMethod.FIFO
-DEFAULT_TREAT_ETH2_AS_ETH = True
-DEFAULT_ETH_STAKING_TAXABLE_AFTER_WITHDRAWAL_ENABLED = True
-DEFAULT_INCLUDE_FEES_IN_COST_BASIS = True
-DEFAULT_INFER_ZERO_TIMED_BALANCES = False  # If True the asset amount and value chart shows the 0 balance periods for an asset  # noqa: E501
-DEFAULT_QUERY_RETRY_LIMIT = 5
-DEFAULT_CONNECT_TIMEOUT = 30
-DEFAULT_READ_TIMEOUT = 30
-DEFAULT_ORACLE_PENALTY_THRESHOLD_COUNT = 5
-DEFAULT_ORACLE_PENALTY_DURATION = 1800
-DEFAULT_AUTO_DELETE_CALENDAR_ENTRIES = True
-DEFAULT_AUTO_CREATE_CALENDAR_REMINDERS = True
-DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY = True
-DEFAULT_AUTO_DETECT_TOKENS = True
-DEFAULT_CSV_EXPORT_DELIMITER = ','
+ROTKEHLCHEN_DB_VERSION: Final = 51
+ROTKEHLCHEN_TRANSIENT_DB_VERSION: Final = 2
+DEFAULT_TAXFREE_AFTER_PERIOD: Final = YEAR_IN_SECONDS
+DEFAULT_INCLUDE_CRYPTO2CRYPTO: Final = True
+DEFAULT_INCLUDE_GAS_COSTS: Final = True
+DEFAULT_PREMIUM_SHOULD_SYNC: Final = False
+DEFAULT_UI_FLOATING_PRECISION: Final = 2
+DEFAULT_BALANCE_SAVE_FREQUENCY: Final = 24
+DEFAULT_MAIN_CURRENCY: Final = A_USD
+DEFAULT_DATE_DISPLAY_FORMAT: Final = '%d/%m/%Y %H:%M:%S %Z'
+DEFAULT_SUBMIT_USAGE_ANALYTICS: Final = True
+DEFAULT_ACTIVE_MODULES: Final = tuple(set(AVAILABLE_MODULES_MAP.keys()) - DEFAULT_OFF_MODULES)
+DEFAULT_BTC_DERIVATION_GAP_LIMIT: Final = 20
+DEFAULT_CALCULATE_PAST_COST_BASIS: Final = True
+DEFAULT_DISPLAY_DATE_IN_LOCALTIME: Final = True
+DEFAULT_CURRENT_PRICE_ORACLES: Final = DEFAULT_CURRENT_PRICE_ORACLES_ORDER
+DEFAULT_HISTORICAL_PRICE_ORACLES: Final = DEFAULT_HISTORICAL_PRICE_ORACLES_ORDER
+DEFAULT_PNL_CSV_WITH_FORMULAS: Final = True
+DEFAULT_PNL_CSV_HAVE_SUMMARY: Final = False
+DEFAULT_SSF_GRAPH_MULTIPLIER: Final = 0
+DEFAULT_LAST_DATA_MIGRATION: Final = LAST_USERDB_DATA_MIGRATION
+DEFAULT_COST_BASIS_METHOD: Final = CostBasisMethod.FIFO
+DEFAULT_TREAT_ETH2_AS_ETH: Final = True
+DEFAULT_ETH_STAKING_TAXABLE_AFTER_WITHDRAWAL_ENABLED: Final = True
+DEFAULT_INCLUDE_FEES_IN_COST_BASIS: Final = True
+DEFAULT_INFER_ZERO_TIMED_BALANCES: Final = False  # If True the asset amount and value chart shows the 0 balance periods for an asset  # noqa: E501
+DEFAULT_QUERY_RETRY_LIMIT: Final = 5
+DEFAULT_CONNECT_TIMEOUT: Final = 30
+DEFAULT_READ_TIMEOUT: Final = 30
+DEFAULT_ORACLE_PENALTY_THRESHOLD_COUNT: Final = 5
+DEFAULT_ORACLE_PENALTY_DURATION: Final = 1800
+DEFAULT_AUTO_DELETE_CALENDAR_ENTRIES: Final = True
+DEFAULT_AUTO_CREATE_CALENDAR_REMINDERS: Final = True
+DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY: Final = True
+DEFAULT_AUTO_DETECT_TOKENS: Final = True
+DEFAULT_CSV_EXPORT_DELIMITER: Final = ','
+DEFAULT_EVENTS_PROCESSING_FREQUENCY: Final = DAY_IN_SECONDS
 
-JSON_KEYS = (
+LIST_KEYS: Final = (
     'current_price_oracles',
     'historical_price_oracles',
     'non_syncing_exchanges',
     'evmchains_to_skip_detection',
+    'default_evm_indexer_order',
 )
-BOOLEAN_KEYS = (
+JSON_KEYS: Final = ('evm_indexers_order',)
+BOOLEAN_KEYS: Final = (
     'have_premium',
     'include_crypto2crypto',
     'include_gas_costs',
@@ -95,7 +107,7 @@ BOOLEAN_KEYS = (
     'ask_user_upon_size_discrepancy',
     'auto_detect_tokens',
 )
-INTEGER_KEYS = (
+INTEGER_KEYS: Final = (
     'version',
     'ui_floating_precision',
     'balance_save_frequency',
@@ -107,17 +119,19 @@ INTEGER_KEYS = (
     'read_timeout',
     'oracle_penalty_threshold_count',
     'oracle_penalty_duration',
+    'events_processing_frequency',
 )
-STRING_KEYS = (
+STRING_KEYS: Final = (
     'ksm_rpc_endpoint',
     'dot_rpc_endpoint',
     'beacon_rpc_endpoint',
+    'btc_mempool_api',
     'date_display_format',
     'frontend_settings',
     'csv_export_delimiter',
 )
 
-UPDATE_TYPES_VERSIONS = {x.serialize() for x in UpdateType}
+UPDATE_TYPES_VERSIONS: Final = {x.serialize() for x in UpdateType}
 
 CachedDBSettingsFieldNames = Literal[
     'have_premium',
@@ -131,6 +145,7 @@ CachedDBSettingsFieldNames = Literal[
     'ksm_rpc_endpoint',
     'dot_rpc_endpoint',
     'beacon_rpc_endpoint',
+    'btc_mempool_api',
     'main_currency',
     'date_display_format',
     'submit_usage_analytics',
@@ -141,6 +156,8 @@ CachedDBSettingsFieldNames = Literal[
     'display_date_in_localtime',
     'current_price_oracles',
     'historical_price_oracles',
+    'evm_indexers_order',
+    'default_evm_indexer_order',
     'pnl_csv_with_formulas',
     'pnl_csv_have_summary',
     'ssf_graph_multiplier',
@@ -161,6 +178,7 @@ CachedDBSettingsFieldNames = Literal[
     'auto_delete_calendar_entries',
     'auto_create_calendar_reminders',
     'ask_user_upon_size_discrepancy',
+    'events_processing_frequency',
 ]
 
 DBSettingsFieldTypes = (
@@ -171,6 +189,7 @@ DBSettingsFieldTypes = (
     Sequence[ModuleName] |
     Sequence[CurrentPriceOracle] |
     Sequence[HistoricalPriceOracle] |
+    dict[ChainID, Sequence[EvmIndexer]] |
     Sequence[ExchangeLocationID] |
     CostBasisMethod |
     Sequence[AddressNameSource]
@@ -191,6 +210,7 @@ class DBSettings:
     ksm_rpc_endpoint: str = 'http://localhost:9933'
     dot_rpc_endpoint: str = ''  # same as kusama -- must be set by user
     beacon_rpc_endpoint: str = ''  # must be set by user
+    btc_mempool_api: str = ''
     main_currency: Asset = DEFAULT_MAIN_CURRENCY
     date_display_format: str = DEFAULT_DATE_DISPLAY_FORMAT
     submit_usage_analytics: bool = DEFAULT_SUBMIT_USAGE_ANALYTICS
@@ -201,6 +221,8 @@ class DBSettings:
     display_date_in_localtime: bool = DEFAULT_DISPLAY_DATE_IN_LOCALTIME
     current_price_oracles: Sequence[CurrentPriceOracle] = field(default=DEFAULT_CURRENT_PRICE_ORACLES)  # noqa: E501
     historical_price_oracles: Sequence[HistoricalPriceOracle] = field(default=DEFAULT_HISTORICAL_PRICE_ORACLES)  # noqa: E501
+    evm_indexers_order: SerializableChainIndexerOrder = field(default=DEFAULT_INDEXERS_ORDER)
+    default_evm_indexer_order: Sequence[EvmIndexer] = field(default=DEFAULT_EVM_INDEXER_ORDER)
     pnl_csv_with_formulas: bool = DEFAULT_PNL_CSV_WITH_FORMULAS
     pnl_csv_have_summary: bool = DEFAULT_PNL_CSV_HAVE_SUMMARY
     ssf_graph_multiplier: int = DEFAULT_SSF_GRAPH_MULTIPLIER
@@ -223,6 +245,7 @@ class DBSettings:
     ask_user_upon_size_discrepancy: bool = DEFAULT_ASK_USER_UPON_SIZE_DISCREPANCY
     auto_detect_tokens: bool = DEFAULT_AUTO_DETECT_TOKENS
     csv_export_delimiter: str = DEFAULT_CSV_EXPORT_DELIMITER
+    events_processing_frequency: int = DEFAULT_EVENTS_PROCESSING_FREQUENCY
 
     def serialize(self) -> dict[str, Any]:
         settings_dict = {}
@@ -262,6 +285,8 @@ class ModifiableDBSettings(NamedTuple):
     display_date_in_localtime: bool | None = None
     current_price_oracles: list[CurrentPriceOracle] | None = None
     historical_price_oracles: list[HistoricalPriceOracle] | None = None
+    evm_indexers_order: SerializableChainIndexerOrder | None = None
+    default_evm_indexer_order: list[EvmIndexer] | None = None
     pnl_csv_with_formulas: bool | None = None
     pnl_csv_have_summary: bool | None = None
     ssf_graph_multiplier: int | None = None
@@ -283,6 +308,8 @@ class ModifiableDBSettings(NamedTuple):
     ask_user_upon_size_discrepancy: bool | None = None
     auto_detect_tokens: bool | None = None
     csv_export_delimiter: str | None = None
+    btc_mempool_api: str | None = None
+    events_processing_frequency: int | None = None
 
     def serialize(self) -> dict[str, Any]:
         settings_dict = {}
@@ -307,6 +334,28 @@ def read_boolean(value: str | bool) -> bool:
     raise DeserializationError(
         f'Failed to read a boolean from {value} which is of type {type(value)}',
     )
+
+
+def _deserialize_evm_indexers_order(value: str) -> SerializableChainIndexerOrder:
+    """Deserialize per-chain indexer order mapping."""
+    result: dict[ChainID, Sequence[EvmIndexer]] = {}
+    try:
+        indexers = json.loads(value)
+    except json.JSONDecodeError as e:
+        log.error(f'Failed to load indexers settings due to {e}. Skipping')
+        return SerializableChainIndexerOrder(result)
+
+    for chain in EVM_CHAIN_IDS_WITH_TRANSACTIONS:
+        if (order := indexers.get(chain.to_name())) is not None:
+            try:
+                result[chain] = [EvmIndexer.deserialize(idx) for idx in order]
+            except DeserializationError as e:
+                log.error(
+                    f'Found unexpected indexer for chain {chain.to_name()} in '
+                    f'{order} with {e}. Skipping',
+                )
+
+    return SerializableChainIndexerOrder(result)
 
 
 def db_settings_from_dict(
@@ -350,6 +399,10 @@ def db_settings_from_dict(
         elif key == 'historical_price_oracles':
             oracles = json.loads(value)
             specified_args[key] = [HistoricalPriceOracle.deserialize(oracle) for oracle in oracles]
+        elif key == 'evm_indexers_order':
+            specified_args[key] = _deserialize_evm_indexers_order(value=value)
+        elif key == 'default_evm_indexer_order':
+            specified_args[key] = [EvmIndexer.deserialize(entry) for entry in json.loads(value)]
         elif key == 'non_syncing_exchanges':
             values = json.loads(value)
             specified_args[key] = [ExchangeLocationID.deserialize(x) for x in values]
@@ -377,23 +430,29 @@ def serialize_db_setting(
     """Utility function to serialize a db setting.
     `is_modifiable` represents `ModifiableDBSettings` specific flag.
     """
-    # We need to save booleans as strings in the DB
-    if isinstance(value, bool) and is_modifiable is True:
-        value = str(value)
-    # taxfree_after_period of -1 by the user means disable the setting
-    elif setting == 'taxfree_after_period' and value == -1 and is_modifiable is True:
-        value = None
-    elif setting == 'active_modules' and is_modifiable is True:
-        value = json.dumps(value)
-    elif setting in {'main_currency', 'cost_basis_method'}:
-        value = value.serialize()  # pylint: disable=no-member
-    elif setting == 'address_name_priority' and is_modifiable is True:
-        value = json.dumps(value)
-    elif setting in JSON_KEYS:
-        if is_modifiable is True:
-            value = json.dumps([x.serialize() for x in value])
-        else:
-            value = [x.serialize() for x in value]
+    # Handle settings that serialize regardless of is_modifiable
+    if setting in {'main_currency', 'cost_basis_method'}:
+        return value.serialize()  # pylint: disable=no-member
+
+    if is_modifiable:
+        if isinstance(value, bool):
+            # We need to save booleans as strings in the DB
+            return str(value)
+        if setting == 'taxfree_after_period' and value == -1:
+            # taxfree_after_period of -1 by the user means disable the setting
+            return None
+        if setting in {'active_modules', 'address_name_priority'}:
+            return json.dumps(value)
+        if setting in LIST_KEYS:
+            return json.dumps([x.serialize() for x in value])
+        if setting in JSON_KEYS:
+            return json.dumps(value.serialize())
+    else:
+        if setting in LIST_KEYS:
+            return [x.serialize() for x in value]
+        if setting in JSON_KEYS:
+            return value.serialize()
+
     return value
 
 
@@ -417,25 +476,46 @@ class CachedSettings:
     """
     __instance: Optional['CachedSettings'] = None
     _settings: DBSettings = DBSettings()  # the default settings values
+    _evm_indexers_order_per_chain: ClassVar[Mapping[ChainID, tuple[EvmIndexer, ...]]] = {}
+    evm_indexers_order_override_var: ClassVar[ContextVar[tuple[EvmIndexer, ...] | None]] = ContextVar(  # noqa: E501
+        'cachedsettings_evm_indexer_override',
+        default=None,
+    )
 
     def __new__(cls) -> 'CachedSettings':
         if CachedSettings.__instance is not None:
             return CachedSettings.__instance
 
         CachedSettings.__instance = super().__new__(cls)
+        CachedSettings.__instance._refresh_indexers_cache()
         return CachedSettings.__instance
+
+    def _refresh_indexers_cache(self) -> None:
+        """Normalize indexer order once for quick lookups."""
+        chain_to_indexers = {}
+        for chain in EVM_CHAIN_IDS_WITH_TRANSACTIONS:
+            chain_to_indexers[chain] = self._settings.evm_indexers_order.get(
+                chain,
+                self._settings.default_evm_indexer_order,
+            )
+
+        self.__class__._evm_indexers_order_per_chain = chain_to_indexers  # type: ignore
 
     def initialize(self, settings: DBSettings) -> None:
         """Initialize with saved DB settings
 
         This overwrites the default db settings set at class instantiation"""
         self._settings = settings
+        self._refresh_indexers_cache()
 
     def reset(self) -> None:
         self._settings = DBSettings()
+        self._refresh_indexers_cache()
 
     def update_entry(self, attr: str, value: DBSettingsFieldTypes) -> None:
         setattr(self._settings, attr, value)
+        if attr in ('evm_indexers_order', 'default_evm_indexer_order'):
+            self._refresh_indexers_cache()
 
     def update_entries(self, settings: ModifiableDBSettings) -> None:
         for attr in settings._fields:
@@ -458,6 +538,14 @@ class CachedSettings:
     def get_query_retry_limit(self) -> int:
         return self.get_entry('query_retry_limit')  # type: ignore
 
+    def get_evm_indexers_order_for_chain(self, chain_id: ChainID) -> tuple[EvmIndexer, ...]:
+        """Return chain-specific indexer order falling back to defaults."""
+        default_order = self._evm_indexers_order_per_chain[chain_id]
+        if (override := self.evm_indexers_order_override_var.get()) is None:
+            return default_order
+
+        return tuple(override)
+
     @property
     def oracle_penalty_duration(self) -> int:
         return self._settings.oracle_penalty_duration
@@ -465,3 +553,7 @@ class CachedSettings:
     @property
     def oracle_penalty_threshold_count(self) -> int:
         return self._settings.oracle_penalty_threshold_count
+
+    @property
+    def main_currency(self) -> Asset:
+        return self._settings.main_currency

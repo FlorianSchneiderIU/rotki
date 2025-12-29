@@ -6,26 +6,28 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.arbitrum_one.modules.compound.v3.constants import (
     COMPOUND_BULKER_ADDRESS as ARBITRUM_BULKER_ADDRESS,
 )
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.modules.compound.v3.constants import COMPOUND_REWARDS_ADDRESS
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.compound.v3.constants import CPT_COMPOUND_V3
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.optimism.modules.compound.v3.constants import (
     COMPOUND_BULKER_ADDRESS as OPTIMISM_BULKER_ADDRESS,
 )
 from rotkehlchen.constants import ZERO
-from rotkehlchen.constants.assets import A_COMP, A_ETH, A_POLYGON_POS_MATIC, A_USDC, A_WBTC
+from rotkehlchen.constants.assets import A_COMP, A_ETH, A_POL, A_USDC, A_WBTC
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.unit.decoders.test_paraswap import A_BRIDGED_USDC
 from rotkehlchen.tests.unit.decoders.test_zerox import A_BASE_USDC
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
+    from rotkehlchen.types import ChecksumEvmAddress
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -43,7 +45,7 @@ def test_compound_v3_claim_comp(
     amount_str = '2.368215'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -55,7 +57,7 @@ def test_compound_v3_claim_comp(
             notes=f'Burn {gas_str} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=199,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -81,7 +83,7 @@ def test_compound_v3_supply(ethereum_inquirer, ethereum_accounts):
     gas_fees, supply_amount, position_amount = '0.003305489949685846', '15000', '14999.999998'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -93,7 +95,7 @@ def test_compound_v3_supply(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -106,7 +108,7 @@ def test_compound_v3_supply(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_COMPOUND_V3,
             address=string_to_evm_address('0xc3d688B66703497DAA19211EEdff47f25384cdc3'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -131,7 +133,7 @@ def test_compound_v3_withdraw(ethereum_inquirer, ethereum_accounts):
     gas_fees, withdraw_amount = '0.002760840922152728', '8158.266856'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -143,7 +145,7 @@ def test_compound_v3_withdraw(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -156,7 +158,7 @@ def test_compound_v3_withdraw(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_COMPOUND_V3,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -181,7 +183,7 @@ def test_compound_v3_withdraw_collateral(ethereum_inquirer, ethereum_accounts):
     gas_fees, collateral_amount = '0.003503372063979697', '30'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -193,7 +195,7 @@ def test_compound_v3_withdraw_collateral(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -206,7 +208,7 @@ def test_compound_v3_withdraw_collateral(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_COMPOUND_V3,
             address=string_to_evm_address('0xc3d688B66703497DAA19211EEdff47f25384cdc3'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -231,7 +233,7 @@ def test_compound_v3_deposit_collateral(ethereum_inquirer, ethereum_accounts):
     gas_fees, collateral_amount = '0.00267689111806624', '15'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -243,7 +245,7 @@ def test_compound_v3_deposit_collateral(ethereum_inquirer, ethereum_accounts):
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -256,7 +258,7 @@ def test_compound_v3_deposit_collateral(ethereum_inquirer, ethereum_accounts):
             counterparty=CPT_COMPOUND_V3,
             address=string_to_evm_address('0xc3d688B66703497DAA19211EEdff47f25384cdc3'),
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ETHEREUM,
@@ -284,19 +286,19 @@ def test_polygon_pos_withdraw(polygon_pos_inquirer, polygon_pos_accounts):
     gas_fees, withdraw_amount, return_amount = '0.025730978971038568', '417.093804', '417.093805'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.POLYGON_POS,
             event_type=HistoryEventType.SPEND,
             event_subtype=HistoryEventSubType.FEE,
-            asset=A_POLYGON_POS_MATIC,
+            asset=A_POL,
             amount=FVal(gas_fees),
             location_label=polygon_pos_accounts[0],
             notes=f'Burn {gas_fees} POL for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.POLYGON_POS,
@@ -309,7 +311,7 @@ def test_polygon_pos_withdraw(polygon_pos_inquirer, polygon_pos_accounts):
             counterparty=CPT_COMPOUND_V3,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.POLYGON_POS,
@@ -337,7 +339,7 @@ def test_arbitrum_one_borrow(arbitrum_one_inquirer, arbitrum_one_accounts):
     gas_fees, borrow_amount = '0.0000019956', '600'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ARBITRUM_ONE,
@@ -349,7 +351,7 @@ def test_arbitrum_one_borrow(arbitrum_one_inquirer, arbitrum_one_accounts):
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ARBITRUM_ONE,
@@ -366,6 +368,7 @@ def test_arbitrum_one_borrow(arbitrum_one_inquirer, arbitrum_one_accounts):
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0xBD1eefb658C2B80c297493A0D4298B16941eff85']])
 def test_base_repay(base_inquirer, base_accounts):
     tx_hash = deserialize_evm_tx_hash('0x455761ce3e1076eb03a3af1a90b935b42a703336e08aacf218afe76102d8d171')  # noqa: E501
@@ -377,7 +380,7 @@ def test_base_repay(base_inquirer, base_accounts):
     gas_fees, repay_amount = '0.00000528542843901', '100.000919'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.BASE,
@@ -389,7 +392,7 @@ def test_base_repay(base_inquirer, base_accounts):
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=230,
             timestamp=timestamp,
             location=Location.BASE,
@@ -418,7 +421,7 @@ def test_scroll_withdraw(scroll_inquirer, scroll_accounts):
     gas_fees, withdraw_amount = '0.000179933419363529', '5001.003801'
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.SCROLL,
@@ -430,7 +433,7 @@ def test_scroll_withdraw(scroll_inquirer, scroll_accounts):
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.SCROLL,
@@ -443,7 +446,7 @@ def test_scroll_withdraw(scroll_inquirer, scroll_accounts):
             counterparty=CPT_COMPOUND_V3,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.SCROLL,
@@ -460,6 +463,7 @@ def test_scroll_withdraw(scroll_inquirer, scroll_accounts):
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0xBf02910A77281F3c279ee45dA17c3BE8163b108f']])
 def test_optimism_supply_eth_with_wrapping(optimism_inquirer, optimism_accounts):
     tx_hash = deserialize_evm_tx_hash('0x6b4320c7965cfeb3263cdeb13469e49881ae66c2cfef68c94af1c210d7da8be7')  # noqa: E501
@@ -470,7 +474,7 @@ def test_optimism_supply_eth_with_wrapping(optimism_inquirer, optimism_accounts)
     user, timestamp, gas_fees, deposit_amount, withdraw_amount = optimism_accounts[0], TimestampMS(1739077677000), '0.00000002224085855', '0.025', '0.024999999999999999'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -482,7 +486,7 @@ def test_optimism_supply_eth_with_wrapping(optimism_inquirer, optimism_accounts)
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -495,7 +499,7 @@ def test_optimism_supply_eth_with_wrapping(optimism_inquirer, optimism_accounts)
             counterparty=CPT_COMPOUND_V3,
             address=OPTIMISM_BULKER_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -522,7 +526,7 @@ def test_arbitrum_one_withdraw_eth_with_unwrapping(arbitrum_one_inquirer, arbitr
     user, timestamp, gas_fees, amount = arbitrum_one_accounts[0], TimestampMS(1739094648000), '0.00000128289', '0.409005868637616281'  # noqa: E501
     expected_events = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.ARBITRUM_ONE,
@@ -534,7 +538,7 @@ def test_arbitrum_one_withdraw_eth_with_unwrapping(arbitrum_one_inquirer, arbitr
             notes=f'Burn {gas_fees} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=1,
             timestamp=timestamp,
             location=Location.ARBITRUM_ONE,
@@ -547,7 +551,7 @@ def test_arbitrum_one_withdraw_eth_with_unwrapping(arbitrum_one_inquirer, arbitr
             counterparty=CPT_COMPOUND_V3,
             address=ZERO_ADDRESS,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=2,
             timestamp=timestamp,
             location=Location.ARBITRUM_ONE,
@@ -561,3 +565,53 @@ def test_arbitrum_one_withdraw_eth_with_unwrapping(arbitrum_one_inquirer, arbitr
             address=ARBITRUM_BULKER_ADDRESS,
         )]
     assert events == expected_events
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('ethereum_accounts', [['0xD413dCf1b80E10a8Ba7Cab329DA7545cCc827319']])
+def test_deposit_native_eth(
+        ethereum_inquirer: 'EthereumInquirer',
+        ethereum_accounts: list['ChecksumEvmAddress'],
+) -> None:
+    """Check that depositing native ETH works correctly."""
+    tx_hash = deserialize_evm_tx_hash('0xde4dcd5588a4f2e2c3a6f24b5386cf289aad5f3b7a3f99d5411ca815dccc9fa3')  # noqa: E501
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
+    assert events == [EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=0,
+        timestamp=(timestamp := TimestampMS(1761848615000)),
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.SPEND,
+        event_subtype=HistoryEventSubType.FEE,
+        asset=A_ETH,
+        amount=FVal(gas_fees := '0.000082791232942678'),
+        location_label=(user_address := ethereum_accounts[0]),
+        notes=f'Burn {gas_fees} ETH for gas',
+        counterparty=CPT_GAS,
+    ), EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=1,
+        timestamp=timestamp,
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.DEPOSIT,
+        event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+        asset=A_ETH,
+        amount=FVal(deposit_amount := '0.01'),
+        location_label=user_address,
+        notes=f'Deposit {deposit_amount} ETH into Compound v3',
+        counterparty=CPT_COMPOUND_V3,
+        address=(compound_contract := string_to_evm_address('0xc3d688B66703497DAA19211EEdff47f25384cdc3')),  # noqa: E501
+    ), EvmEvent(
+        tx_ref=tx_hash,
+        sequence_index=2,
+        timestamp=timestamp,
+        location=Location.ETHEREUM,
+        event_type=HistoryEventType.INFORMATIONAL,
+        event_subtype=HistoryEventSubType.NONE,
+        asset=A_ETH,
+        amount=ZERO,
+        location_label=user_address,
+        notes=f'Enable {deposit_amount} ETH as collateral on Compound v3',
+        counterparty=CPT_COMPOUND_V3,
+        address=compound_contract,
+    )]

@@ -200,7 +200,7 @@ def test_history_export_download_csv(
         start_ts=Timestamp(0),
         end_ts=Timestamp(1640493376),
         history_list=[HistoryEvent(
-            event_identifier=str(make_evm_tx_hash()),
+            group_identifier=str(make_evm_tx_hash()),
             sequence_index=0,
             timestamp=TimestampMS(1601040360000),
             location=Location.ETHEREUM,
@@ -235,8 +235,8 @@ def test_history_export_download_csv(
         start_ts=Timestamp(0),
         end_ts=Timestamp(1640493376),
         history_list=[EvmEvent(
-            tx_hash=tx_hash,
-            event_identifier=ZKL_IDENTIFIER.format(tx_hash=tx_hash.hex()),  # pylint: disable=no-member
+            tx_ref=tx_hash,
+            group_identifier=ZKL_IDENTIFIER.format(tx_hash=str(tx_hash)),
             sequence_index=0,
             timestamp=TimestampMS(1601040360000),
             location=Location.ZKSYNC_LITE,
@@ -285,7 +285,7 @@ def test_encoding(
         rotki.history_querying_manager,
         'get_history',
         lambda start_ts, end_ts, has_premium: ('', [EvmEvent(
-            tx_hash=GENESIS_HASH,
+            tx_ref=GENESIS_HASH,
             sequence_index=0,
             timestamp=TimestampMS(1569924574000),
             location=Location.ETHEREUM,
@@ -365,6 +365,11 @@ def test_history_export_csv_errors(
     with ExitStack() as stack:
         for manager in setup:
             stack.enter_context(manager)
+            stack.enter_context(patch(
+                'rotkehlchen.chain.evm.node_inquirer.EvmNodeInquirer.is_safe_proxy_or_eoa',
+                return_value=False,
+            ))
+
         response = requests.get(
             api_url_for(rotkehlchen_api_server_with_exchanges, 'historyprocessingresource'),
         )

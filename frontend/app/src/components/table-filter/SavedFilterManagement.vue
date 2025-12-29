@@ -13,7 +13,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'update:matches', matches: Suggestion[]): void;
+  'update:matches': [matches: Suggestion[]];
 }>();
 
 const { t } = useI18n({ useScope: 'global' });
@@ -101,6 +101,7 @@ async function addToSavedFilter() {
         <RuiButton
           color="secondary"
           variant="text"
+          class="!p-2.5"
           icon
           :disabled="disabled || selection.length === 0"
           @click="addToSavedFilter()"
@@ -111,12 +112,9 @@ async function addToSavedFilter() {
           />
         </RuiButton>
       </template>
-      <div
-        class="text-center"
-        :class="$style['add-tooltip']"
-      >
+      <div class="text-center h-4 overflow-hidden">
         <div
-          class="h-4 transition-all"
+          class="h-4 transition-all duration-200"
           :class="{ '-mt-4': added }"
         >
           <div>
@@ -145,6 +143,7 @@ async function addToSavedFilter() {
               :disabled="disabled"
               color="primary"
               variant="text"
+              class="!p-2.5"
               icon
               v-bind="attrs"
             >
@@ -263,18 +262,3 @@ async function addToSavedFilter() {
     </RuiMenu>
   </div>
 </template>
-
-<style module lang="scss">
-.add-tooltip {
-  height: 1rem;
-  overflow: hidden;
-
-  &__wrapper {
-    transition: 0.2s all;
-
-    &--added {
-      margin-top: -1rem;
-    }
-  }
-}
-</style>

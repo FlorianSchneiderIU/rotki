@@ -1,4 +1,3 @@
-import type { Notification } from '@rotki/common';
 import { z } from 'zod/v4';
 import { CalendarEventWithReminder } from '@/types/history/calendar';
 import { LegacyMessageData, SocketMessageType } from './types/base';
@@ -65,9 +64,9 @@ const MigratedAccountsMessage = z.object({
   type: z.literal(SocketMessageType.EVM_ACCOUNTS_DETECTION),
 });
 
-const NewEvmTokenDetectedMessage = z.object({
+const NewTokenDetectedMessage = z.object({
   data: NewDetectedToken,
-  type: z.literal(SocketMessageType.NEW_EVM_TOKEN_DETECTED),
+  type: z.literal(SocketMessageType.NEW_TOKEN_DETECTED),
 });
 
 const MissingApiKeyMessage = z.object({
@@ -134,7 +133,7 @@ export const WebsocketMessage = z.discriminatedUnion('type', [
   DbUpgradeStatusMessage,
   DataMigrationStatusMessage,
   MigratedAccountsMessage,
-  NewEvmTokenDetectedMessage,
+  NewTokenDetectedMessage,
   MissingApiKeyMessage,
   RefreshBalancesMessage,
   DbUploadResultMessage,
@@ -149,7 +148,3 @@ export const WebsocketMessage = z.discriminatedUnion('type', [
 ]);
 
 export type WebsocketMessage = z.infer<typeof WebsocketMessage>;
-
-export interface CommonMessageHandler<T> {
-  handle: (data: T) => Promise<Notification | null>;
-}

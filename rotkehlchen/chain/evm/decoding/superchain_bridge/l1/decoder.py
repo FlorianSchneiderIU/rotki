@@ -2,12 +2,12 @@ from abc import ABC
 from typing import TYPE_CHECKING, Any, Final
 
 from rotkehlchen.assets.asset import EvmToken
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
 from rotkehlchen.chain.evm.decoding.utils import bridge_match_transfer, bridge_prepare_data
 from rotkehlchen.constants.assets import A_ETH
@@ -18,8 +18,8 @@ from rotkehlchen.types import ChainID, ChecksumEvmAddress, TokenKind
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
-    from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
+    from rotkehlchen.chain.decoding.types import CounterpartyDetails
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -31,11 +31,11 @@ ETH_WITHDRAWAL_FINALIZED: Final = b'*\xc6\x9e\xe8\x04\xd9\xa7\xa0\x98BI\xf5\x08\
 WITHDRAWAL_PROVEN: Final = b'g\xa6 \x8c\xfc\xc0\x80\x1dP\xf6\xcb\xe7ds?O\xdd\xf6j\xc0\xb0DB\x06\x1a\x8a\x8c\x0c\xb6\xb6?b'  # noqa: E501
 
 
-class SuperchainL1SideCommonBridgeDecoder(DecoderInterface, ABC):
+class SuperchainL1SideCommonBridgeDecoder(EvmDecoderInterface, ABC):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             bridge_addresses: tuple['ChecksumEvmAddress', ...],
             counterparty: 'CounterpartyDetails',
@@ -50,7 +50,7 @@ class SuperchainL1SideCommonBridgeDecoder(DecoderInterface, ABC):
         self.counterparty = counterparty
         self.l2_chain = l2_chain
 
-    def _decode_bridge(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_bridge(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes a bridging(deposit or withdrawal) event for superchain chains.
 
         Note:
@@ -67,7 +67,7 @@ class SuperchainL1SideCommonBridgeDecoder(DecoderInterface, ABC):
             ERC20_WITHDRAWAL_FINALIZED,
         }:
             # Make sure that we are decoding a supported event.
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         # Read information from event's topics & data
         if context.tx_log.topics[0] in {ETH_DEPOSIT_INITIATED, ETH_WITHDRAWAL_FINALIZED}:
@@ -119,12 +119,12 @@ class SuperchainL1SideCommonBridgeDecoder(DecoderInterface, ABC):
                     counterparty=self.counterparty,
                 )
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_prove_withdrawal(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_prove_withdrawal(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes a proving withdrawal event."""
         if context.tx_log.topics[0] != WITHDRAWAL_PROVEN:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         withdrawal_hash = context.tx_log.topics[1].hex()
         event = self.base.make_event_from_transaction(
@@ -139,7 +139,7 @@ class SuperchainL1SideCommonBridgeDecoder(DecoderInterface, ABC):
             counterparty=self.counterparty.identifier,
             address=context.tx_log.address,
         )
-        return DecodingOutput(events=[event])
+        return EvmDecodingOutput(events=[event])
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         return dict.fromkeys(self.bride_addresses, (self._decode_bridge,))

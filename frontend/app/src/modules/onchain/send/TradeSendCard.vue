@@ -14,17 +14,11 @@ import { useBalanceQueries } from '@/modules/onchain/send/use-balance-queries';
 import { useTradableAsset } from '@/modules/onchain/use-tradable-asset';
 import { useWalletHelper } from '@/modules/onchain/use-wallet-helper';
 import { useWalletStore } from '@/modules/onchain/use-wallet-store';
-import { useInjectedWallet } from '@/modules/onchain/wallet-bridge/use-injected-wallet';
+import { isUserRejectedError, WALLET_MODES } from '@/modules/onchain/wallet-constants';
+import { useProviderSelection } from '@/modules/onchain/wallet-providers/use-provider-selection';
 import { useUnifiedProviders } from '@/modules/onchain/wallet-providers/use-unified-providers';
 import { logger } from '@/utils/logging';
 import { useTradeApi } from './use-trade-api';
-
-const REJECTED_KEYWORDS = [
-  'ACTION_REJECTED',
-  'User cancelled',
-  'User canceled',
-  'User rejected',
-];
 
 const { t } = useI18n({ useScope: 'global' });
 
@@ -67,30 +61,17 @@ const { getAssetBalance, getIsInteractedBefore } = useTradeApi();
 const router = useRouter();
 
 // Provider selection for wallet connection
-const injectedWallet = useInjectedWallet();
 const unifiedProviders = useUnifiedProviders();
 const { availableProviders, isDetecting: detectingProviders, showProviderSelection } = unifiedProviders;
 
 const isConnecting = logicOr(preparing, detectingProviders);
 
+const { handleProviderSelection: handleProviderSelectionBase } = useProviderSelection();
+
 async function handleProviderSelection(provider: EnhancedProviderDetail): Promise<void> {
-  try {
-    await unifiedProviders.selectProvider(provider.info.uuid);
-    await injectedWallet.connectToSelectedProvider();
-  }
-  catch (error: any) {
-    const errorString = error.toString();
-    if (REJECTED_KEYWORDS.some(keyword => errorString.includes(keyword))) {
-      set(errorMessage, 'Wallet connection was rejected by user');
-    }
-    else if (errorString.includes('Request timeout')) {
-      set(errorMessage, 'Connection request timed out. Please try again.');
-    }
-    else {
-      set(errorMessage, `Failed to connect wallet: ${errorString}`);
-    }
-    logger.error('Provider selection failed:', error);
-  }
+  await handleProviderSelectionBase(provider, (message) => {
+    set(errorMessage, message);
+  });
 }
 
 const isNativeAsset = computed(() => {
@@ -105,6 +86,8 @@ const isNativeAsset = computed(() => {
 });
 
 const assetDetail = getAssetDetail(asset, assetChain);
+
+const isWalletConnected = computed(() => get(connected) && !!get(connectedAddress));
 
 const wrongNetwork = computed(() => {
   const chainId = get(connectedChainId);
@@ -212,12 +195,11 @@ async function send() {
     resetInput();
   }
   catch (error: any) {
-    const errorString = error.toString();
-    if (REJECTED_KEYWORDS.some(keyword => errorString.includes(keyword))) {
+    if (isUserRejectedError(error)) {
       set(errorMessage, 'Request is rejected by user');
     }
     else {
-      set(errorMessage, errorString);
+      set(errorMessage, error.toString());
     }
   }
 }
@@ -403,7 +385,7 @@ watch([estimatedGasFee, assetBalance], () => {
 
       <div class="flex items-end">
         <div class="grow">
-          <template v-if="!connected">
+          <template v-if="!isWalletConnected">
             <div class="text-rui-text-secondary text-caption uppercase mb-1">
               {{ t('trade.wallet_mode.label') }}
             </div>
@@ -414,10 +396,10 @@ watch([estimatedGasFee, assetBalance], () => {
               :required="true"
               size="sm"
             >
-              <RuiButton model-value="local-bridge">
+              <RuiButton :model-value="WALLET_MODES.LOCAL_BRIDGE">
                 {{ t('trade.wallet_mode.local_bridge') }}
               </RuiButton>
-              <RuiButton model-value="walletconnect">
+              <RuiButton :model-value="WALLET_MODES.WALLET_CONNECT">
                 {{ t('trade.wallet_mode.wallet_connect') }}
               </RuiButton>
             </RuiButtonGroup>
@@ -460,9 +442,10 @@ watch([estimatedGasFee, assetBalance], () => {
     </div>
     <div class="p-6 border-t border-default">
       <WalletConnectionButton
-        v-if="!connected || isDisconnecting"
+        v-if="!isWalletConnected || isDisconnecting"
         size="lg"
         full-width
+        :connected="isWalletConnected"
         :loading="isConnecting || isDisconnecting"
         @click="onConnectClicked()"
       />

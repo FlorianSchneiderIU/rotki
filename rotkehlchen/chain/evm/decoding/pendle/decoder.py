@@ -2,26 +2,26 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
-from rotkehlchen.chain.ethereum.utils import (
+from rotkehlchen.assets.utils import (
     asset_normalized_value,
     asset_raw_value,
-    should_update_protocol_cache,
     token_normalized_value_decimals,
 )
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache
 from rotkehlchen.chain.evm.constants import (
     DEFAULT_TOKEN_DECIMALS,
     SWAPPED_TOPIC,
     ZERO_ADDRESS,
 )
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface, ReloadableDecoderMixin
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface, ReloadableDecoderMixin
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.globaldb.cache import globaldb_get_general_cache_values
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -52,7 +52,7 @@ from .constants import (
 from .utils import query_pendle_markets
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -60,11 +60,11 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
+class PendleCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -75,7 +75,7 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
         self.pools: set[ChecksumEvmAddress] = set()
         self.sy_tokens: set[ChecksumEvmAddress] = set()
 
-    def _decode_pendle_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_pendle_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """This method decodes the following pendle events:
         1. Swapping tokens for Principal Tokens (PT) or Yield Tokens (YT), and vice versa.
             - PT: Represents the principal portion of a yield-bearing asset.
@@ -98,9 +98,9 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
         elif context.tx_log.topics[0] == EXIT_POST_EXP_TO_TOKEN_TOPIC:
             return self._decode_exit_post_exp_to_token(context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_add_liquidity_event(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_add_liquidity_event(self, context: DecoderContext) -> EvmDecodingOutput:
         """This method decodes adding liquidity to a Pendle LP"""
         deposited_amount = asset_normalized_value(
             amount=int.from_bytes(context.tx_log.data[32:64]),
@@ -123,9 +123,9 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
                 event.event_subtype = HistoryEventSubType.RECEIVE_WRAPPED
                 event.notes = f'Receive {received_amount} PENDLE-LPT for depositing in a Pendle pool'  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_remove_liquidity_event(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_remove_liquidity_event(self, context: DecoderContext) -> EvmDecodingOutput:
         """This method decodes removing liquidity from a Pendle LP"""
         received_amount = asset_normalized_value(
             amount=int.from_bytes(context.tx_log.data[64:96]),
@@ -148,9 +148,9 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
                 event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
                 event.notes = f'Withdraw {event.amount} {received_token.symbol} from a Pendle pool'
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_pt_yt_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_pt_yt_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode Pendle market events for buying or selling PT/YT.
 
         This method handles two primary scenarios:
@@ -158,7 +158,7 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
         - Selling PT/YT: token_0 is received, token_1 is spent
         """
         market = bytes_to_address(context.tx_log.topics[2])
-        _, principal_token, yield_token = self.evm_inquirer.call_contract(
+        _, principal_token, yield_token = self.node_inquirer.call_contract(
             contract_address=market,
             abi=PENDLE_ROUTER_ABI,
             method_name='readTokens',
@@ -208,9 +208,9 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             ordered_events=[out_event, *in_events],
             events_list=context.decoded_events,
         )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_pendle_swap(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_pendle_swap(self, context: DecoderContext) -> EvmDecodingOutput:
         """This decodes swap events that use the PendleSwap contract.
 
         Below are aggregators used by PendleSwap with their indexes:
@@ -223,7 +223,7 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
         https://github.com/pendle-finance/pendle-core-v2-public/blob/761033bcc36ecfdb3c523458d7f66aeabb01c3ab/contracts/router/swap-aggregator/IPSwapAggregator.sol#L18
         """
         if context.tx_log.topics[0] != SWAP_SINGLE_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         # Determine swap type and retrieve received token details.
         # Pendle only emits an event for the token being swapped,
@@ -240,7 +240,7 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             expected_log_topic = OKX_ORDER_RECORD_TOPIC
         else:
             log.debug(f'Found an unsupported swap type {swap_type} in transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         for tx_log in context.all_logs:
             if tx_log.topics[0] != expected_log_topic:
@@ -268,7 +268,7 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
                 break
         else:
             log.error(f'Could not retrieve swap details for {swap_type=} in transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         in_event, out_event = None, None
         for event in context.decoded_events:
@@ -300,7 +300,7 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
 
         if in_event is None and out_event is None:
             log.error(f'Could not retrieve both in & out events for pendle swap transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         # If the received token isn't the native token, we use an action item to match it later,
         # since the receive event occurs after the swap event.
@@ -323,7 +323,7 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events,
         )
-        return DecodingOutput(action_items=action_items, process_swaps=True)
+        return EvmDecodingOutput(action_items=action_items, process_swaps=True)
 
     def _decode_sy_pt_yt_events(
             self,
@@ -331,7 +331,7 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             input_token_log_idx: int,
             output_token_log_idx: int,
             direction: Literal['mint', 'redeem', 'exit'],
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """Decodes Pendle SY/PT/YT mint, redeem, or post-expiry exit events"""
         amount_in = asset_normalized_value(
             amount=int.from_bytes(context.tx_log.data[64:96]),
@@ -386,15 +386,15 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
 
         if len(in_events) == 0 or len(out_events) == 0:
             log.error(f'Could not retrieve either out events or in events in pendle {direction} transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         maybe_reshuffle_events(
             ordered_events=out_events + in_events,
             events_list=context.decoded_events,
         )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_mint_sy_pt_yt_from_token(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_mint_sy_pt_yt_from_token(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes Pendle deposits where an underlying token is converted into SY, PT, or YT."""
         return self._decode_sy_pt_yt_events(
             context=context,
@@ -403,7 +403,7 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             output_token_log_idx=2,
         )
 
-    def _decode_redeem_sy_pt_yt_to_token(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_redeem_sy_pt_yt_to_token(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes Pendle redemptions where SY, PT, or YT are converted back to the underlying token."""  # noqa: E501
         return self._decode_sy_pt_yt_events(
             context=context,
@@ -412,7 +412,7 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             output_token_log_idx=3,
         )
 
-    def _decode_exit_post_exp_to_token(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_exit_post_exp_to_token(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes Pendle pool exits after maturity are redeemed for the underlying asset."""
         return self._decode_sy_pt_yt_events(
             context=context,
@@ -421,9 +421,9 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             output_token_log_idx=2,
         )
 
-    def _decode_claim_rewards(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_claim_rewards(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != REDEEM_REWARDS_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         raw_rewards_amount = int.from_bytes(context.tx_log.data[64:])
         for event in context.decoded_events:
@@ -444,12 +444,12 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
         else:
             log.error(f'Could not find the pendle claim transfer for transaction {context.transaction}')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_redeem_interests(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_redeem_interests(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode a Pendle redeem interests transaction."""
         if context.tx_log.topics[0] != REDEEM_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount_in = asset_normalized_value(
             asset=(token_in := self.base.get_token_or_native(bytes_to_address(context.tx_log.topics[3]))),  # noqa: E501
@@ -487,35 +487,35 @@ class PendleCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
 
         if not sy_in_event or not sy_out_event:
             log.error(f'Failed to in & out events of sy token for Pendle redeem interests transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         # these SY receive/spend events cancel each other out, so we remove them.
         context.decoded_events.remove(sy_in_event)
         context.decoded_events.remove(sy_out_event)
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def reload_data(self) -> Mapping['ChecksumEvmAddress', tuple[Any, ...]] | None:
         if should_update_protocol_cache(
                 userdb=self.base.database,
                 cache_key=CacheType.PENDLE_POOLS,
-                args=(str(self.evm_inquirer.chain_id.serialize()),),
+                args=(str(self.node_inquirer.chain_id.serialize()),),
         ) or should_update_protocol_cache(
             userdb=self.base.database,
             cache_key=CacheType.PENDLE_SY_TOKENS,
-            args=(str(self.evm_inquirer.chain_id.serialize()),),
+            args=(str(self.node_inquirer.chain_id.serialize()),),
         ):
-            query_pendle_markets(self.evm_inquirer.chain_id)
+            query_pendle_markets(self.node_inquirer.chain_id)
         elif len(self.pools) != 0 and len(self.sy_tokens) == 0:
             return None  # we didn't update the globaldb cache, and we have the data already
 
         with GlobalDBHandler().conn.read_ctx() as cursor:
             self.pools = set(globaldb_get_general_cache_values(  # type: ignore[arg-type]  # addresses are always checksummed
                 cursor=cursor,
-                key_parts=(CacheType.PENDLE_POOLS, str(self.evm_inquirer.chain_id.serialize())),
+                key_parts=(CacheType.PENDLE_POOLS, str(self.node_inquirer.chain_id.serialize())),
             ))
             self.sy_tokens = set(globaldb_get_general_cache_values(  # type: ignore[arg-type]  # addresses are always checksummed
                 cursor=cursor,
-                key_parts=(CacheType.PENDLE_SY_TOKENS, str(self.evm_inquirer.chain_id.serialize())),  # noqa: E501
+                key_parts=(CacheType.PENDLE_SY_TOKENS, str(self.node_inquirer.chain_id.serialize())),  # noqa: E501
             ))
 
         return self.addresses_to_decoders()

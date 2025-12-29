@@ -10,13 +10,17 @@ import gevent
 import requests
 from pysqlcipher3.dbapi2 import IntegrityError
 
-from rotkehlchen.accounting.structures.balance import Balance
+from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.api.websockets.typedefs import ProgressUpdateSubType, WSMessageType
 from rotkehlchen.assets.asset import Asset, CryptoAsset
-from rotkehlchen.assets.utils import TokenEncounterInfo, get_or_create_evm_token
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import (
+    TokenEncounterInfo,
+    asset_normalized_value,
+    get_or_create_evm_token,
+)
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
-from rotkehlchen.constants import ZERO
+from rotkehlchen.chain.manager import ChainManagerWithTransactions, ChainWithEoA
+from rotkehlchen.constants import DEFAULT_BALANCE_LABEL, ZERO
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.settings import CachedSettings
@@ -35,6 +39,7 @@ from rotkehlchen.types import (
     EvmlikeChain,
     EVMTxHash,
     Location,
+    Timestamp,
     deserialize_evm_tx_hash,
 )
 from rotkehlchen.utils.misc import iso8601ts_to_timestamp, set_user_agent, ts_sec_to_ms
@@ -53,7 +58,7 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class ZksyncLiteManager:
+class ZksyncLiteManager(ChainManagerWithTransactions[ChecksumEvmAddress], ChainWithEoA):
 
     def __init__(
             self,
@@ -179,7 +184,7 @@ class ZksyncLiteManager:
             if (
                 from_hash != 'latest' and
                 len(new_transactions) != 0 and
-                new_transactions[0].tx_hash.hex() == from_hash
+                str(new_transactions[0].tx_hash) == from_hash
             ):
                 # When there are already transactions in the database, and new ones are queried
                 # using from_hash, the API includes the from_hash transaction in its response,
@@ -444,17 +449,17 @@ class ZksyncLiteManager:
         In case of error returns None and logs the error.
         """
         try:
-            response = self._query_api(url=f'transactions/{tx_hash.hex()}/data')
+            response = self._query_api(url=f'transactions/{tx_hash!s}/data')
         except RemoteError as e:
-            log.error(f'Could not find {tx_hash.hex()} transaction from zksync lite api due to {e!s}')  # noqa: E501
+            log.error(f'Could not find {tx_hash!s} transaction from zksync lite api due to {e!s}')
             return None
 
         if (tx_entry := response.get('tx', None)) is None:
-            log.error(f'Could not find {tx_hash.hex()} transaction from zksync lite api. Response: {response}')  # noqa: E501
+            log.error(f'Could not find {tx_hash!s} transaction from zksync lite api. Response: {response}')  # noqa: E501
             return None
 
         if (tx := self._deserialize_zksync_transaction(entry=tx_entry, concerning_address=concerning_address)) is None:  # noqa: E501
-            log.error(f'Could not deserialize {tx_hash.hex()} transaction. Got None')
+            log.error(f'Could not deserialize {tx_hash!s} transaction. Got None')
             return None
 
         with self.database.user_write() as write_cursor:
@@ -559,20 +564,29 @@ class ZksyncLiteManager:
                 f'from zksync api. Transactions not added to the DB. {address=}',
             )
 
-    def get_balances(
+    def query_transactions(
+            self,
+            addresses: list[ChecksumEvmAddress],
+            from_timestamp: Timestamp,
+            to_timestamp: Timestamp,
+    ) -> None:
+        for address in addresses:
+            self.fetch_transactions(address=address)
+
+    def query_balances(
             self,
             addresses: Sequence[ChecksumEvmAddress],
-    ) -> dict[ChecksumEvmAddress, dict[Asset, Balance]]:
+    ) -> dict[ChecksumEvmAddress, BalanceSheet]:
         """Get ZKSync Lite balances
 
         May raise:
         - RemoteError
         """
-        balances: defaultdict[ChecksumEvmAddress, dict[Asset, Balance]] = defaultdict(dict)
+        balances: defaultdict[ChecksumEvmAddress, BalanceSheet] = defaultdict(BalanceSheet)
         for address in addresses:
             result = self._query_api(url=f'accounts/{address}')
             if (finalized_result := result.get('finalized', None)) is None:
-                balances[address] = {}
+                balances[address] = BalanceSheet()
                 continue
 
             try:
@@ -587,15 +601,18 @@ class ZksyncLiteManager:
                     )
                     amount = asset_normalized_value(raw_amount, asset)
                     try:
-                        usd_price = Inquirer.find_usd_price(asset)
+                        price = Inquirer.find_main_currency_price(asset)
                     except RemoteError as e:
                         log.error(
                             f'Error processing zksync lite balance entry due to inability to '
-                            f'query USD price: {e!s}. Skipping balance entry',
+                            f'query price: {e!s}. Skipping balance entry',
                         )
                         continue
 
-                    balances[address][asset] = Balance(amount, usd_price * amount)
+                    balances[address].assets[asset][DEFAULT_BALANCE_LABEL] = Balance(
+                        amount=amount,
+                        value=price * amount,
+                    )
 
             except (KeyError, DeserializationError, RemoteError) as e:
                 msg = str(e)  # Catching RemoteError here too due to self._get_token_by_symbol
@@ -614,7 +631,7 @@ class ZksyncLiteManager:
         target = None
         tracked_from = transaction.from_address in tracked_addresses
         tracked_to = transaction.to_address in tracked_addresses
-        event_identifier = ZKL_IDENTIFIER.format(tx_hash=transaction.tx_hash.hex())
+        group_identifier = ZKL_IDENTIFIER.format(tx_hash=str(transaction.tx_hash))
         events = []
         event_data: list[tuple[int, HistoryEventType, HistoryEventSubType, Asset, FVal, ChecksumEvmAddress, ChecksumEvmAddress | None, str]] = []  # noqa: E501
         match transaction.tx_type:
@@ -752,8 +769,8 @@ class ZksyncLiteManager:
 
         for sequence_index, event_type, event_subtype, asset, amount, location_label, target, notes in event_data:  # noqa: E501
             events.append(EvmEvent(
-                event_identifier=event_identifier,
-                tx_hash=transaction.tx_hash,
+                group_identifier=group_identifier,
+                tx_ref=transaction.tx_hash,
                 sequence_index=sequence_index,
                 timestamp=ts_sec_to_ms(transaction.timestamp),
                 location=Location.ZKSYNC_LITE,
@@ -775,8 +792,8 @@ class ZksyncLiteManager:
                 fee_type = 'Bridging'
 
             events.append(EvmEvent(
-                event_identifier=event_identifier,
-                tx_hash=transaction.tx_hash,
+                group_identifier=group_identifier,
+                tx_ref=transaction.tx_hash,
                 sequence_index=events[-1].sequence_index + 1,
                 timestamp=ts_sec_to_ms(transaction.timestamp),
                 location=Location.ZKSYNC_LITE,
@@ -824,8 +841,8 @@ class ZksyncLiteManager:
         for tx_index, transaction in enumerate(transactions):
             with self.database.user_write() as write_cursor:  # delete old tx events
                 write_cursor.execute(
-                    'DELETE FROM history_events WHERE event_identifier=?',
-                    (ZKL_IDENTIFIER.format(tx_hash=transaction.tx_hash.hex()),),
+                    'DELETE FROM history_events WHERE group_identifier=?',
+                    (ZKL_IDENTIFIER.format(tx_hash=str(transaction.tx_hash)),),
                 )
 
             self.decode_transaction(transaction, tracked_addresses)
@@ -835,7 +852,7 @@ class ZksyncLiteManager:
                     message_type=WSMessageType.PROGRESS_UPDATES,
                     data={
                         'chain': EvmlikeChain.ZKSYNC_LITE,
-                        'subtype': str(ProgressUpdateSubType.EVM_UNDECODED_TRANSACTIONS),
+                        'subtype': str(ProgressUpdateSubType.UNDECODED_TRANSACTIONS),
                         'total': total_transactions,
                         'processed': tx_index,
                     },
@@ -846,7 +863,7 @@ class ZksyncLiteManager:
                 message_type=WSMessageType.PROGRESS_UPDATES,
                 data={
                     'chain': EvmlikeChain.ZKSYNC_LITE,
-                    'subtype': str(ProgressUpdateSubType.EVM_UNDECODED_TRANSACTIONS),
+                    'subtype': str(ProgressUpdateSubType.UNDECODED_TRANSACTIONS),
                     'total': total_transactions,
                     'processed': total_transactions,
                 },

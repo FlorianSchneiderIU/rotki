@@ -16,8 +16,8 @@ class WSMessageType(StrEnum):
     DB_UPGRADE_STATUS = auto()
     # Used for evm/evmlike address migration after new chain integration
     EVMLIKE_ACCOUNTS_DETECTION = auto()
-    # Used for when a new token is found and saved via processing evm transactions
-    NEW_EVM_TOKEN_DETECTED = auto()
+    # Used for when a new token is found and saved via processing evm/solana transactions
+    NEW_TOKEN_DETECTED = auto()
     DATA_MIGRATION_STATUS = auto()
     MISSING_API_KEY = auto()
     HISTORY_EVENTS_STATUS = auto()
@@ -31,10 +31,11 @@ class WSMessageType(StrEnum):
     SOLANA_TOKENS_MIGRATION = auto()
     DATABASE_UPLOAD_PROGRESS = auto()
     BINANCE_PAIRS_MISSING = auto()
+    UNMATCHED_ASSET_MOVEMENTS = auto()
 
 
 class ProgressUpdateSubType(StrEnum):
-    EVM_UNDECODED_TRANSACTIONS = auto()
+    UNDECODED_TRANSACTIONS = auto()
     PROTOCOL_CACHE_UPDATES = auto()
     CSV_IMPORT_RESULT = auto()
     HISTORICAL_PRICE_QUERY_STATUS = auto()
@@ -56,6 +57,7 @@ class TransactionStatusStep(StrEnum):
 class TransactionStatusSubType(StrEnum):
     EVM = auto()
     BITCOIN = auto()
+    SOLANA = auto()
 
 
 class HistoryEventsStep(StrEnum):

@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
+from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_BEST, A_ETH, A_EUR, A_USDT
 from rotkehlchen.db.filtering import HistoryEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -11,7 +12,7 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.swap import SwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.tests.utils.constants import A_ADA, A_AXS, A_LTC, A_TRY
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.types import Location, Timestamp, TimestampMS
@@ -93,13 +94,13 @@ FIAT_WALLETS_RESPONSE = """{"data":[{"type":"fiat_wallet","attributes":{"fiat_id
 
 
 @pytest.mark.parametrize('mocked_current_prices', [{
-    A_BEST: FVal(20),
-    A_ETH: FVal(3000),
-    A_AXS: FVal(40),
-    A_EUR: FVal(0.85),
-    A_TRY: FVal(0.103),
+    (A_EUR, A_EUR): ONE,
+    (A_BEST, A_EUR): FVal(20),
+    (A_ETH, A_EUR): FVal(3000),
+    (A_AXS, A_EUR): FVal(40),
+    (A_TRY, A_EUR): FVal(0.103),
 }])
-def test_balances(mock_bitpanda):
+def test_balances(mock_bitpanda, inquirer):
     """Test that balances are correctly queried"""
 
     def mock_bitpanda_query(url: str, **kwargs):  # pylint: disable=unused-argument
@@ -121,15 +122,15 @@ def test_balances(mock_bitpanda):
     assert msg == ''
     assert len(balances) == 5
     assert balances[A_ETH].amount == FVal('100.55')
-    assert balances[A_ETH].usd_value == FVal('301650')
+    assert balances[A_ETH].value == FVal('301650')
     assert balances[A_BEST].amount == FVal('210')
-    assert balances[A_BEST].usd_value == FVal('4200')
+    assert balances[A_BEST].value == FVal('4200')
     assert balances[A_AXS].amount == FVal('15.5')
-    assert balances[A_AXS].usd_value == FVal('620')
+    assert balances[A_AXS].value == FVal('620')
     assert balances[A_EUR].amount == FVal('1500.51')
-    assert balances[A_EUR].usd_value == FVal('1275.4335')
+    assert balances[A_EUR].value == FVal('1500.51')
     assert balances[A_TRY].amount == FVal('155.22')
-    assert balances[A_TRY].usd_value == FVal('15.98766')
+    assert balances[A_TRY].value == FVal('15.98766')
 
 
 TRADES_RESPONSE = """{"data":[
@@ -176,7 +177,7 @@ def test_trades(mock_bitpanda):
         asset=A_EUR,
         amount=FVal('1.6599986395'),
         location_label='bitpanda',
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BITPANDA,
             unique_id='tradeid1',
         ),
@@ -188,7 +189,7 @@ def test_trades(mock_bitpanda):
         asset=A_LTC,
         amount=FVal('0.00917887'),
         location_label='bitpanda',
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BITPANDA,
             unique_id='tradeid1',
         ),
@@ -200,7 +201,7 @@ def test_trades(mock_bitpanda):
         asset=A_BEST,
         amount=FVal('1.71800028'),
         location_label='bitpanda',
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BITPANDA,
             unique_id='tradeid1',
         ),
@@ -212,7 +213,7 @@ def test_trades(mock_bitpanda):
         asset=A_ADA,
         amount=FVal('5.37267451'),
         location_label='bitpanda',
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BITPANDA,
             unique_id='tradeid2',
         ),
@@ -224,7 +225,7 @@ def test_trades(mock_bitpanda):
         asset=A_EUR,
         amount=FVal('12.936862952629'),
         location_label='bitpanda',
-        event_identifier=create_event_identifier_from_unique_id(
+        group_identifier=create_group_identifier_from_unique_id(
             location=Location.BITPANDA,
             unique_id='tradeid2',
         ),
@@ -274,7 +275,7 @@ def test_asset_movements(database, mock_bitpanda):
 
     expected_movements = [AssetMovement(
         identifier=5,
-        event_identifier='bc9ae2697f378ed91ce77120c3a29e635c435ecb752865760e5e9304aed35759',
+        group_identifier='bc9ae2697f378ed91ce77120c3a29e635c435ecb752865760e5e9304aed35759',
         location=Location.BITPANDA,
         location_label=mock_bitpanda.name,
         event_type=HistoryEventType.WITHDRAWAL,
@@ -287,7 +288,7 @@ def test_asset_movements(database, mock_bitpanda):
         },
     ), AssetMovement(
         identifier=6,
-        event_identifier='bc9ae2697f378ed91ce77120c3a29e635c435ecb752865760e5e9304aed35759',
+        group_identifier='bc9ae2697f378ed91ce77120c3a29e635c435ecb752865760e5e9304aed35759',
         location=Location.BITPANDA,
         location_label=mock_bitpanda.name,
         event_type=HistoryEventType.WITHDRAWAL,
@@ -297,7 +298,7 @@ def test_asset_movements(database, mock_bitpanda):
         is_fee=True,
     ), AssetMovement(
         identifier=1,
-        event_identifier='417fa4b6bcb5ff3b9050d84ddff00e3e423333512bca8f36a430bccf72634c20',
+        group_identifier='417fa4b6bcb5ff3b9050d84ddff00e3e423333512bca8f36a430bccf72634c20',
         location=Location.BITPANDA,
         location_label=mock_bitpanda.name,
         event_type=HistoryEventType.DEPOSIT,
@@ -306,7 +307,7 @@ def test_asset_movements(database, mock_bitpanda):
         amount=FVal('25.00'),
     ), AssetMovement(
         identifier=2,
-        event_identifier='7db139d1cf52facb8f9043e2fe73e924c3b58d54b27f38574d9a73e74a1c5bd1',
+        group_identifier='7db139d1cf52facb8f9043e2fe73e924c3b58d54b27f38574d9a73e74a1c5bd1',
         location=Location.BITPANDA,
         location_label=mock_bitpanda.name,
         event_type=HistoryEventType.WITHDRAWAL,
@@ -315,7 +316,7 @@ def test_asset_movements(database, mock_bitpanda):
         amount=FVal('50.00'),
     ), AssetMovement(
         identifier=3,
-        event_identifier='7db139d1cf52facb8f9043e2fe73e924c3b58d54b27f38574d9a73e74a1c5bd1',
+        group_identifier='7db139d1cf52facb8f9043e2fe73e924c3b58d54b27f38574d9a73e74a1c5bd1',
         location=Location.BITPANDA,
         location_label=mock_bitpanda.name,
         event_type=HistoryEventType.WITHDRAWAL,
@@ -325,7 +326,7 @@ def test_asset_movements(database, mock_bitpanda):
         is_fee=True,
     ), AssetMovement(
         identifier=4,
-        event_identifier='eedabacb4b72276581975459254fcb3d603dc46900335d40055adcc32cbd69ed',
+        group_identifier='eedabacb4b72276581975459254fcb3d603dc46900335d40055adcc32cbd69ed',
         location=Location.BITPANDA,
         location_label=mock_bitpanda.name,
         event_type=HistoryEventType.DEPOSIT,

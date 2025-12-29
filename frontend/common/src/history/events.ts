@@ -6,6 +6,8 @@ export const HistoryEventEntryType = {
   EVM_EVENT: 'evm event',
   EVM_SWAP_EVENT: 'evm swap event',
   HISTORY_EVENT: 'history event',
+  SOLANA_EVENT: 'solana event',
+  SOLANA_SWAP_EVENT: 'solana swap event',
   SWAP_EVENT: 'swap event',
 } as const;
 

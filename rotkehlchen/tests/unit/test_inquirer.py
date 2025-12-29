@@ -15,6 +15,7 @@ from web3 import HTTPProvider, Web3
 from rotkehlchen.assets.asset import Asset, CustomAsset, EvmToken, FiatAsset, UnderlyingToken
 from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.assets.utils import get_or_create_evm_token
+from rotkehlchen.chain.ethereum.modules.sushiswap.constants import CPT_SUSHISWAP_V2
 from rotkehlchen.chain.ethereum.modules.yearn.constants import CPT_YEARN_V3
 from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
 from rotkehlchen.chain.evm.contracts import find_matching_event_abi
@@ -29,6 +30,11 @@ from rotkehlchen.chain.evm.decoding.curve.curve_cache import (
     query_curve_data,
 )
 from rotkehlchen.chain.evm.decoding.pendle.constants import CPT_PENDLE
+from rotkehlchen.chain.evm.decoding.quickswap.constants import (
+    CPT_QUICKSWAP_V2,
+    CPT_QUICKSWAP_V3,
+    CPT_QUICKSWAP_V4,
+)
 from rotkehlchen.chain.evm.decoding.stakedao.constants import CPT_STAKEDAO
 from rotkehlchen.chain.evm.decoding.uniswap.constants import (
     CPT_UNISWAP_V2,
@@ -39,7 +45,6 @@ from rotkehlchen.chain.evm.decoding.velodrome.constants import CPT_AERODROME, CP
 from rotkehlchen.chain.evm.node_inquirer import _query_web3_get_logs, construct_event_filter_params
 from rotkehlchen.chain.evm.types import NodeName, string_to_evm_address
 from rotkehlchen.chain.gnosis.transactions import ADDED_RECEIVER_ABI, BLOCKREWARDS_ADDRESS
-from rotkehlchen.chain.polygon_pos.constants import POLYGON_POS_POL_HARDFORK
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import (
     A_1INCH,
@@ -55,8 +60,6 @@ from rotkehlchen.constants.assets import (
     A_EUR,
     A_KFEE,
     A_LINK,
-    A_POL,
-    A_POLYGON_POS_MATIC,
     A_USD,
     A_USDC,
     A_USDT,
@@ -428,6 +431,52 @@ def test_find_uniswap_v2_lp_token_price(inquirer, ethereum_manager, globaldb):
     assert price is not None
 
 
+@pytest.mark.vcr
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_uniswap_v2_like_lp_token_price(database: 'DBHandler', inquirer_defi: 'Inquirer') -> None:  # noqa: E501
+    """Tests that LP token prices are correctly found for protocols
+    similar to Uniswap V2 (Sushiswap & Quickswap V2).
+    """
+    assert inquirer_defi.find_usd_price(asset=get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0x397FF1542f962076d0BFE58eA045FfA2d347ACa0'),
+        chain_id=ChainID.ETHEREUM,
+        token_kind=TokenKind.ERC20,
+        protocol=CPT_SUSHISWAP_V2,
+    )).is_close('259718796.476933')
+    assert inquirer_defi.find_usd_price(asset=get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0x6EeFA7f8136B5BfB260BdfF148206668216D8A73'),
+        chain_id=ChainID.POLYGON_POS,
+        token_kind=TokenKind.ERC20,
+        protocol=CPT_QUICKSWAP_V2,
+    )).is_close('0.040227')
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_quickswap_algrebra_lp_token_price(database: 'DBHandler', inquirer_defi: 'Inquirer') -> None:  # noqa: E501
+    """Tests that Quickswap V3/V4 Algebra LP token prices are correctly found."""
+    assert inquirer_defi.find_usd_price(asset=get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0x8eF88E4c7CfbbaC1C163f7eddd4B578792201de6'),
+        chain_id=ChainID.POLYGON_POS,
+        token_kind=TokenKind.ERC721,
+        collectible_id='181062',
+        protocol=CPT_QUICKSWAP_V3,
+    )).is_close('1993.637500')
+    assert inquirer_defi.find_usd_price(asset=get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0x84715977598247125C3D6E2e85370d1F6fDA1eaF'),
+        chain_id=ChainID.BASE,
+        token_kind=TokenKind.ERC721,
+        collectible_id='2782',
+        protocol=CPT_QUICKSWAP_V4,
+    )).is_close('1540.218529')
+
+
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
@@ -462,23 +511,23 @@ def test_find_aerodrome_lp_token_price(inquirer, base_manager):
     )
     inquirer.inject_evm_managers([(ChainID.BASE, base_manager)])
     price = inquirer.find_usd_price(asset=token)
-    assert price.is_close(FVal('64887262.569622'))
+    assert price.is_close(FVal('65026635.229284'))
 
 
-@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.vcr(filter_query_parameters=['apikey'], match_on=['uri', 'method', 'body'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_find_curve_lp_token_price(inquirer: 'Inquirer', blockchain: 'ChainsAggregator'):
     tested_tokens: dict[ChainID, tuple[str, FVal]] = {
         ChainID.ETHEREUM: ('0xA3D87FffcE63B53E0d54fAa1cc983B7eB0b74A9c', FVal('2577.551783')),
         # 3CRV-OP-gauge
-        ChainID.OPTIMISM: ('0x4456d13Fc6736e8e8330394c0C622103E06ea419', FVal('1737.730901')),
+        ChainID.OPTIMISM: ('0x4456d13Fc6736e8e8330394c0C622103E06ea419', FVal('1782.773383')),
         # Curve.fi amDAI/amUSDC/amUSDT (am3CRV)
         ChainID.POLYGON_POS: ('0xE7a24EF0C5e95Ffb0f6684b813A78F2a3AD7D171', FVal('1.139380')),
         # crvUSDT-gauge
         ChainID.ARBITRUM_ONE: ('0xB08FEf57bFcc5f7bF0EF69C0c090849d497C8F8A', FVal('1.726938')),
         # tricrypto
-        ChainID.BASE: ('0x63Eb7846642630456707C3efBb50A03c79B89D81', FVal('1.032154')),
+        ChainID.BASE: ('0x63Eb7846642630456707C3efBb50A03c79B89D81', FVal('1.039377')),
         # crvusdusdt-gauge
         ChainID.GNOSIS: ('0xC2EfDbC1a21D82A677380380eB282a963A6A6ada', FVal('1.000344')),
         # crvUSD/USDT gauge
@@ -551,6 +600,24 @@ def test_zero_supply_curve_lp_price(inquirer_defi: 'Inquirer'):
 def test_find_kfee_price(inquirer):
     price = inquirer.find_usd_price(A_KFEE)
     assert FVal(price) == FVal(0.01)
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_kfee_price_non_usd(inquirer):
+    """Test that we can query KFEE price in non-USD currency"""
+    kfee_eur_price = inquirer.find_price(from_asset=A_KFEE, to_asset=A_EUR)
+    usd_eur_rate = inquirer.find_price(from_asset=A_USD, to_asset=A_EUR)
+    assert kfee_eur_price.is_close(FVal(0.01) * usd_eur_rate), 'kfee price in EUR should be 0.01 USD * USD/EUR rate'  # noqa: E501
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_bsq_price_non_usd(inquirer: 'Inquirer') -> None:
+    """Test that we can query BSQ price in non-USD currency"""
+    bsq_eur_price = Inquirer.find_price(from_asset=A_BSQ, to_asset=A_EUR)
+    btc_eur_price = Inquirer.find_price(from_asset=A_BTC, to_asset=A_EUR)
+    assert bsq_eur_price.is_close(btc_eur_price * BTC_PER_BSQ, max_diff='0.0001'), 'BSQ price in EUR should be close to BTC price in EUR * BTC_PER_BSQ'  # noqa: E501
 
 
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
@@ -946,26 +1013,6 @@ def test_recursion_handling_in_inquirer(inquirer: Inquirer, globaldb: GlobalDBHa
     assert price == Price(FVal('10.010'))
 
 
-@pytest.mark.freeze_time
-@pytest.mark.vcr
-@pytest.mark.parametrize('should_mock_current_price_queries', [False])
-def test_matic_pol_hardforked_price(inquirer: Inquirer, freezer):
-    """Test that we return price of POL for MATIC after hardfork"""
-    before_hardfork = Timestamp(POLYGON_POS_POL_HARDFORK - 1)
-    after_hardfork = Timestamp(POLYGON_POS_POL_HARDFORK + 1)
-
-    with patch(
-        'rotkehlchen.externalapis.coingecko.Coingecko.query_multiple_current_prices',
-        wraps=inquirer._coingecko.query_multiple_current_prices,
-    ) as patched_gecko:
-        freezer.move_to(datetime.datetime.fromtimestamp(before_hardfork, tz=datetime.UTC))
-        inquirer.find_usd_price(A_POLYGON_POS_MATIC, ignore_cache=True)
-        assert patched_gecko.call_args.kwargs['from_assets'] == [A_POLYGON_POS_MATIC]
-        freezer.move_to(datetime.datetime.fromtimestamp(after_hardfork, tz=datetime.UTC))
-        inquirer.find_usd_price(A_POLYGON_POS_MATIC, ignore_cache=True)
-        assert patched_gecko.call_args.kwargs['from_assets'] == [A_POL]
-
-
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
@@ -1147,7 +1194,7 @@ def test_find_savings_crvusd_price(inquirer_defi: 'Inquirer') -> None:
     assert price == FVal('1.041968030723485250')
 
 
-@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.vcr(filter_query_parameters=['apikey'], match_on=['uri', 'method', 'body'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_find_pendle_yield_tokens_prices(database: 'DBHandler', inquirer_defi: 'Inquirer') -> None:
@@ -1299,6 +1346,59 @@ def test_find_beefy_finance_vaults_price(ethereum_inquirer: 'EthereumInquirer', 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_beefy_finance_boost_vault_price(
+        database: 'DBHandler',
+        inquirer_defi: 'Inquirer',
+) -> None:
+    """Test that we get the correct price for Beefy finance boost vault (rmoo) tokens.
+    This particular vault is a bit special - it wraps a clm vault (cowVelomooBIFI-USDC) in a
+    standard vault (mooBeefyVeloMooBIFI-USDC), which is then boosted (rmooBeefyVeloMooBIFI-USDC).
+    """
+    moo_token = get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0x436001D53b77cB0AA636F8124C65dC2c92A46D91'),
+        chain_id=ChainID.OPTIMISM,
+        token_kind=TokenKind.ERC20,
+        symbol='mooBeefyVeloMooBIFI-USDC',
+        name='Moo Beefy Velo mooBIFI-USDC',
+        decimals=18,
+        protocol=CPT_BEEFY_FINANCE,
+        underlying_tokens=[UnderlyingToken(
+            address=get_or_create_evm_token(
+                userdb=database,
+                evm_address=string_to_evm_address('0xD4768E30180786e875a4909472c9826b18931E43'),
+                chain_id=ChainID.OPTIMISM,
+                token_kind=TokenKind.ERC20,
+                symbol='cowVelomooBIFI-USDC',
+                name='Cow Velo mooBIFI-USDC',
+                decimals=18,
+                protocol=CPT_BEEFY_FINANCE,
+            ).evm_address,
+            token_kind=TokenKind.ERC20,
+            weight=ONE,
+        )],
+    )
+    rmoo_token = get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0xc36Ae0469EC19EefD6923f2e4445a782644A0371'),
+        chain_id=ChainID.OPTIMISM,
+        token_kind=TokenKind.ERC20,
+        symbol='rmooBeefyVeloMooBIFI-USDC',
+        name='Reward Moo Beefy Velo mooBIFI-USDC',
+        decimals=18,
+        protocol=CPT_BEEFY_FINANCE,
+        underlying_tokens=[UnderlyingToken(
+            address=moo_token.evm_address,
+            token_kind=TokenKind.ERC20,
+            weight=ONE,
+        )],
+    )
+    assert inquirer_defi.find_usd_price(rmoo_token) == FVal('199.06067619344672271996351206958275405755224768387246')  # noqa: E501
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_find_beefy_finance_clm_vaults_price(
         database: 'DBHandler',
         inquirer_defi: 'Inquirer',
@@ -1334,10 +1434,42 @@ def test_find_beefy_finance_clm_vaults_price(
     )
     cow_price = inquirer_defi.find_usd_price(cow_token)
     rcow_price = inquirer_defi.find_usd_price(rcow_token)
-    assert cow_price == rcow_price == FVal('3280.3835424538426781759')
+    assert cow_price == rcow_price == FVal('2867.90676977741868831673')
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('should_mock_current_price_queries', [False])
+def test_find_beefy_finance_reward_pool_vault_price(ethereum_inquirer: 'EthereumInquirer', database: 'DBHandler', inquirer_defi: 'Inquirer') -> None:  # noqa: E501
+    """Test that we get the correct prices for Beefy finance reward pool vaults"""
+    vault_token = get_or_create_evm_token(
+        userdb=database,
+        evm_address=string_to_evm_address('0xb1F131437e314614313aAb3a3016FA05c1b0e087'),
+        chain_id=ChainID.ETHEREUM,
+        token_kind=TokenKind.ERC20,
+        symbol='rBIFI',
+        name='Beefy Reward Pool',
+        decimals=18,
+        protocol=CPT_BEEFY_FINANCE,
+        underlying_tokens=[UnderlyingToken(
+            address=get_or_create_evm_token(
+                userdb=database,
+                evm_address=string_to_evm_address('0xB1F1ee126e9c96231Cc3d3fAD7C08b4cf873b1f1'),
+                chain_id=ChainID.ETHEREUM,
+                token_kind=TokenKind.ERC20,
+                symbol='BIFI',
+                name='Beefy',
+                decimals=18,
+                coingecko='beefy-finance',
+            ).evm_address,
+            token_kind=TokenKind.ERC20,
+            weight=ONE,
+        )],
+    )
+    assert inquirer_defi.find_usd_price(vault_token) == FVal('185.4')
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'], match_on=['uri', 'method', 'body'])
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('should_mock_current_price_queries', [False])
 def test_find_uniswap_v3_position_price(database: 'DBHandler', inquirer_defi: 'Inquirer') -> None:
@@ -1373,9 +1505,9 @@ def test_find_uniswap_v3_position_price(database: 'DBHandler', inquirer_defi: 'I
 
     assert get_position_price(
         token_address=string_to_evm_address('0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1'),
-        token_id='1815027',
+        token_id='4318421',
         chain_id=ChainID.BASE,
-    ).is_close(FVal('93.54660'), max_diff='1e-5')
+    ).is_close(FVal('498.01916'), max_diff='1e-5')
 
     assert get_position_price(
         token_address=string_to_evm_address('0xC36442b4a4522E871399CD717aBDD847Ab11FE88'),
@@ -1387,8 +1519,7 @@ def test_find_uniswap_v3_position_price(database: 'DBHandler', inquirer_defi: 'I
         token_address=string_to_evm_address('0xC36442b4a4522E871399CD717aBDD847Ab11FE88'),
         token_id='929877',
         chain_id=ChainID.OPTIMISM,
-    ).is_close(FVal('1010.96583'), max_diff='1e-5')
-
+    ).is_close(FVal('1010.99591'), max_diff='1e-5')
     assert get_position_price(
         token_address=string_to_evm_address('0x7b8A01B39D58278b5DE7e48c8449c9f4F5170613'),
         token_id='188693',
@@ -1419,7 +1550,7 @@ def test_find_uniswap_v4_position_price(database: 'DBHandler', inquirer_defi: 'I
 def test_fiat_to_fiat(inquirer):
     """Test that fiat to fiat works for current prices and goes through the fiat oracle path"""
     inquirer.set_oracles_order([CurrentPriceOracle.COINGECKO, CurrentPriceOracle.DEFILLAMA])
-    with patch.object(Inquirer, '_query_fiat_pair', wraps=Inquirer._query_fiat_pair) as _query_fiat_pair:  # noqa: E501
+    with patch.object(Inquirer, '_query_fiat_pair', wraps=Inquirer._query_fiat_pair) as _query_fiat_pair:  # noqa: E501, RUF052
         price = inquirer.find_price(A_USD, A_EUR)
         assert price == FVal('0.924303')
         _query_fiat_pair.assert_called_once_with(

@@ -2,14 +2,14 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.assets.utils import get_or_create_evm_token
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -19,19 +19,19 @@ from .constants import CPT_LOCKEDGNO, LOCKED_GNO_ADDRESS
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class LockedgnoDecoder(DecoderInterface):
+class LockedgnoDecoder(EvmDecoderInterface):
 
     def __init__(
             self,
             ethereum_inquirer: 'EthereumInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -52,7 +52,7 @@ class LockedgnoDecoder(DecoderInterface):
             evm_inquirer=ethereum_inquirer,
         )
 
-    def _decode_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_events(self, context: DecoderContext) -> EvmDecodingOutput:
         for event in context.decoded_events:
             if (
                     event.event_type == HistoryEventType.SPEND and
@@ -78,7 +78,7 @@ class LockedgnoDecoder(DecoderInterface):
                     to_notes=f'Receive {event.amount} locked GNO from the locking contract',
                     to_counterparty=CPT_LOCKEDGNO,
                 )
-                return DecodingOutput(action_items=[action_item])
+                return EvmDecodingOutput(action_items=[action_item])
 
             if (
                     event.event_type == HistoryEventType.RECEIVE and
@@ -104,9 +104,9 @@ class LockedgnoDecoder(DecoderInterface):
                     to_notes=f'Return {event.amount} locked GNO to the locking contract',
                     to_counterparty=CPT_LOCKEDGNO,
                 )
-                return DecodingOutput(action_items=[action_item])
+                return EvmDecodingOutput(action_items=[action_item])
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { MaybeRef } from '@vueuse/core';
 import { toRem } from '@/utils/data';
+import { getPublicPlaceholderImagePath } from '@/utils/file';
 
 const props = withDefaults(
   defineProps<{
@@ -14,6 +15,7 @@ const props = withDefaults(
     sizes?: string;
     alt?: string;
     contain?: boolean;
+    cover?: boolean;
     loading?: boolean;
   }>(),
   {
@@ -32,9 +34,9 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: 'error'): void;
-  (e: 'load'): void;
-  (e: 'loadstart'): void;
+  error: [];
+  load: [];
+  loadstart: [];
 }>();
 
 const { height, maxHeight, maxWidth, size, width } = toRefs(props);
@@ -78,8 +80,8 @@ function onLoadStart() {
     />
     <img
       v-else-if="error"
-      src="/assets/images/placeholder/image.svg"
-      :class="{ 'object-contain': contain }"
+      :src="getPublicPlaceholderImagePath('image.svg')"
+      :class="{ 'object-contain': contain, 'object-cover': cover }"
       loading="lazy"
       :style="style"
       :sizes="sizes"
@@ -88,7 +90,7 @@ function onLoadStart() {
     <img
       v-else
       :alt="alt"
-      :class="{ 'object-contain': contain }"
+      :class="{ 'object-contain': contain, 'object-cover': cover }"
       :style="style"
       :src="src"
       :sizes="sizes"

@@ -2,7 +2,8 @@ from abc import ABC
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import DEPOSIT_TOPIC_V2, WITHDRAW_TOPIC_V2
 from rotkehlchen.chain.evm.decoding.balancer.balancer_cache import query_balancer_data
 from rotkehlchen.chain.evm.decoding.balancer.constants import (
@@ -12,32 +13,31 @@ from rotkehlchen.chain.evm.decoding.balancer.constants import (
     CPT_BALANCER_V2,
 )
 from rotkehlchen.chain.evm.decoding.interfaces import (
-    DecoderInterface,
+    EvmDecoderInterface,
     ReloadablePoolsAndGaugesDecoderMixin,
 )
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.types import ChainID, ChecksumEvmAddress, EvmTransaction
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
 
 
-class BalancerCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin, ABC):
+class BalancerCommonDecoder(EvmDecoderInterface, ReloadablePoolsAndGaugesDecoderMixin, ABC):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             counterparty: Literal['balancer-v1', 'balancer-v2', 'balancer-v3'],
             read_fn: Callable[[ChainID], tuple[set[ChecksumEvmAddress], set[ChecksumEvmAddress]]],
@@ -69,9 +69,9 @@ class BalancerCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMix
         assert isinstance(self.cache_data[0], set), f'{self.counterparty} Decoder cache_data[0] is not a set'  # noqa: E501
         return self.cache_data[0]
 
-    def _decode_gauge_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_gauge_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] not in (DEPOSIT_TOPIC_V2, WITHDRAW_TOPIC_V2):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         gauge_asset = self.base.get_or_create_evm_token(context.tx_log.address)
         amount = asset_normalized_value(
@@ -112,7 +112,7 @@ class BalancerCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMix
                 event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
                 event.notes = f'Withdraw {amount} {evm_asset.symbol} from {self.counterparty} gauge'  # noqa: E501
 
-        return DecodingOutput(action_items=[] if paired_events_data is None else [
+        return EvmDecodingOutput(action_items=[] if paired_events_data is None else [
             ActionItem(
                 action='transform',
                 from_event_type=from_event_type,  # type: ignore[arg-type]  # it cannot be none if paired_events_data is present

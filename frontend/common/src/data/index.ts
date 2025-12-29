@@ -45,6 +45,7 @@ export const SupportedAsset = BaseAsset.extend({
   active: z.boolean().optional(),
   address: z.string().nullish(),
   assetType: z.string().nullish(),
+  collectibleId: z.string().nullish(),
   customAssetType: z.string().nullish(),
   decimals: z.number().nullish(),
   ended: z.number().nullish(),
@@ -58,6 +59,7 @@ export type SupportedAsset = z.infer<typeof SupportedAsset>;
 export const AssetInfo = z.object({
   assetType: z.string().nullish(),
   coingecko: z.string().optional(),
+  collectibleId: z.string().optional(),
   collectionId: z.string().nullish(),
   collectionName: z.string().nullish(),
   cryptocompare: z.string().optional(),
@@ -85,6 +87,16 @@ export const AssetCollection = z.object({
 });
 
 export type AssetCollection = z.infer<typeof AssetCollection>;
+
+export const AssetInfoWithId = z.object({
+  ...AssetInfo.shape,
+  identifier: z.string().min(1),
+}).transform((data: any) => ({
+  ...data,
+  isCustomAsset: data.isCustomAsset || data.assetType === 'custom asset',
+}));
+
+export type AssetInfoWithId = z.infer<typeof AssetInfoWithId>;
 
 // note: make sure that the identifier is checksummed
 const assetSymbolToIdentifierMap: Record<string, string> = {

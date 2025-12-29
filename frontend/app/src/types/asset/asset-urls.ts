@@ -9,7 +9,7 @@ export interface ExplorerUrls {
 
 export type Chains = Blockchain | 'ETC';
 
-export type AssetExplorerUrls = {
+type AssetExplorerUrls = {
   [key in Chains]: ExplorerUrls;
 };
 
@@ -92,7 +92,9 @@ export const explorerUrls: AssetExplorerUrls = {
   },
   [Blockchain.SOLANA]: {
     address: 'https://solscan.io/account/',
-    block: 'solscan.io/block/',
+    block: 'https://solscan.io/block/',
+    token: 'https://solscan.io/token/',
+    transaction: 'https://solscan.io/tx/',
   },
   [Blockchain.ZKSYNC_LITE]: {
     address: 'https://zkscan.io/explorer/accounts/',

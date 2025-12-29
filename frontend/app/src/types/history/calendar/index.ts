@@ -8,7 +8,7 @@ export const CalendarEventPayload = z.object({
   blockchain: z.string().optional(),
   color: z.string().optional(),
   counterparty: z.string().optional(),
-  description: z.string(),
+  description: z.string().optional(),
   name: z.string(),
   timestamp: z.number(),
 });
@@ -39,9 +39,11 @@ export const CalendarEventCollectionResponse = CollectionCommonFields.extend({
   entries: z.array(CalendarEvent),
 });
 
-export interface AddCalendarEventResponse {
-  entryId: number;
-}
+export const AddCalendarEventResponseSchema = z.object({
+  entryId: z.number(),
+});
+
+export type AddCalendarEventResponse = z.infer<typeof AddCalendarEventResponseSchema>;
 
 export const CalendarEventWithReminder = CalendarEvent.extend({
   reminder: z.object({

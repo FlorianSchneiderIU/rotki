@@ -8,6 +8,7 @@ import { isEmpty } from 'es-toolkit/compat';
 import LocationSelector from '@/components/helper/LocationSelector.vue';
 import AmountInput from '@/components/inputs/AmountInput.vue';
 import AutoCompleteWithSearchSync from '@/components/inputs/AutoCompleteWithSearchSync.vue';
+import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
 import { useFormStateWatcher } from '@/composables/form';
 import { useEditModeStateTracker } from '@/composables/history/events/edit-mode-state';
 import { useHistoryEventsForm } from '@/composables/history/events/form';
@@ -31,7 +32,7 @@ const lastLocation = useLocalStorage('rotki.history_event.location', TRADE_LOCAT
 
 const assetPriceForm = useTemplateRef<InstanceType<typeof HistoryEventAssetPriceForm>>('assetPriceForm');
 
-const eventIdentifier = ref<string>('');
+const groupIdentifier = ref<string>('');
 const sequenceIndex = ref<string>('');
 const timestamp = ref<number>(0);
 const location = ref<string>('');
@@ -50,9 +51,9 @@ const commonRules = createCommonRules();
 const rules = {
   amount: commonRules.createRequiredAmountRule(),
   asset: commonRules.createRequiredAssetRule(),
-  eventIdentifier: commonRules.createRequiredEventIdentifierRule(),
   eventSubtype: commonRules.createRequiredEventSubtypeRule(),
   eventType: commonRules.createRequiredEventTypeRule(),
+  groupIdentifier: commonRules.createRequiredGroupIdentifierRule(() => get(data).type === 'edit'),
   location: commonRules.createRequiredLocationRule(),
   locationLabel: commonRules.createExternalValidationRule(),
   notes: commonRules.createExternalValidationRule(),
@@ -69,9 +70,9 @@ const { captureEditModeStateFromRefs, shouldSkipSaveFromRefs } = useEditModeStat
 const states = {
   amount,
   asset,
-  eventIdentifier,
   eventSubtype,
   eventType,
+  groupIdentifier,
   location,
   locationLabel,
   notes,
@@ -98,7 +99,7 @@ const locationLabelSuggestions = computed(() =>
 
 function reset() {
   set(sequenceIndex, get(data)?.nextSequenceId || '0');
-  set(eventIdentifier, '');
+  set(groupIdentifier, '');
   set(timestamp, dayjs().valueOf());
   set(location, get(lastLocation));
   set(locationLabel, '');
@@ -114,7 +115,7 @@ function reset() {
 
 function applyEditableData(entry: OnlineHistoryEvent) {
   set(sequenceIndex, entry.sequenceIndex?.toString() ?? '');
-  set(eventIdentifier, entry.eventIdentifier);
+  set(groupIdentifier, entry.groupIdentifier);
   set(timestamp, entry.timestamp);
   set(location, entry.location);
   set(eventType, entry.eventType);
@@ -132,7 +133,7 @@ function applyGroupHeaderData(entry: OnlineHistoryEvent) {
   set(sequenceIndex, get(data)?.nextSequenceId || '0');
   set(location, entry.location || get(lastLocation));
   set(locationLabel, entry.locationLabel ?? '');
-  set(eventIdentifier, entry.eventIdentifier);
+  set(groupIdentifier, entry.groupIdentifier);
   set(timestamp, entry.timestamp);
 }
 
@@ -145,13 +146,16 @@ async function save(): Promise<boolean> {
   const editable = eventData.type === 'edit' ? eventData.event : undefined;
   const userNotes = get(notes).trim();
 
+  // Generate UUID for eventIdentifier if not present and not in edit mode
+  const generatedGroupIdentifier = !editable && !get(groupIdentifier) ? crypto.randomUUID() : get(groupIdentifier);
+
   const payload: NewOnlineHistoryEventPayload = {
     amount: get(numericAmount).isNaN() ? Zero : get(numericAmount),
     asset: get(asset),
     entryType: HistoryEventEntryType.HISTORY_EVENT,
-    eventIdentifier: get(eventIdentifier),
     eventSubtype: get(eventSubtype),
     eventType: get(eventType),
+    groupIdentifier: generatedGroupIdentifier,
     location: get(location),
     locationLabel: get(locationLabel) || null,
     sequenceIndex: get(sequenceIndex) || '0',
@@ -199,18 +203,19 @@ onMounted(() => {
 
 defineExpose({
   save,
+  v$,
 });
 </script>
 
 <template>
   <div>
     <div class="grid md:grid-cols-2 gap-4 mb-4">
-      <RuiDateTimePicker
+      <DateTimePicker
         v-model="timestamp"
         :label="t('common.datetime')"
+        required
         persistent-hint
         max-date="now"
-        color="primary"
         variant="outlined"
         accuracy="millisecond"
         data-cy="datetime"
@@ -223,20 +228,22 @@ defineExpose({
         :disabled="data.type !== 'add'"
         data-cy="location"
         :label="t('common.location')"
+        required
         :error-messages="toMessages(v$.location)"
         @blur="v$.location.$touch()"
       />
     </div>
 
     <RuiTextField
-      v-model="eventIdentifier"
+      v-model="groupIdentifier"
       variant="outlined"
       color="primary"
       :disabled="data.type !== 'add'"
-      data-cy="eventIdentifier"
+      data-cy="groupIdentifier"
       :label="t('transactions.events.form.event_identifier.label')"
-      :error-messages="toMessages(v$.eventIdentifier)"
-      @blur="v$.eventIdentifier.$touch()"
+      :required="data.type === 'edit'"
+      :error-messages="toMessages(v$.groupIdentifier)"
+      @blur="v$.groupIdentifier.$touch()"
     />
 
     <RuiDivider class="mb-6 mt-2" />
@@ -278,6 +285,7 @@ defineExpose({
         integer
         data-cy="sequence-index"
         :label="t('transactions.events.form.sequence_index.label')"
+        required
         :error-messages="toMessages(v$.sequenceIndex)"
         @blur="v$.sequenceIndex.$touch()"
       />

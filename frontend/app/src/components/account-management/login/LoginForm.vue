@@ -11,6 +11,7 @@ import ExternalLink from '@/components/helper/ExternalLink.vue';
 import { useUsersApi } from '@/composables/api/session/users';
 import { useDynamicMessages } from '@/composables/dynamic-messages';
 import { useInterop } from '@/composables/electron-interop';
+import { useRememberSettings } from '@/composables/user/use-remember-settings';
 import { useLogout } from '@/modules/account/use-logout';
 import { useSessionAuthStore } from '@/store/session/auth';
 import { deleteBackendUrl, getBackendUrl, saveBackendUrl } from '@/utils/account-management';
@@ -29,10 +30,10 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: 'touched'): void;
-  (e: 'new-account'): void;
-  (e: 'login', credentials: LoginCredentials): void;
-  (e: 'backend-changed', url: string | null): void;
+  'touched': [];
+  'new-account': [];
+  'login': [credentials: LoginCredentials];
+  'backend-changed': [url: string | null];
 }>();
 
 const { t } = useI18n({ useScope: 'global' });
@@ -65,9 +66,7 @@ const dynamicMessageDialog = ref<boolean>(false);
 const usernameRef: Ref = ref();
 const passwordRef: Ref = ref();
 
-const savedRememberUsername = useLocalStorage('rotki.remember_username', null);
-const savedRememberPassword = useLocalStorage('rotki.remember_password', null);
-const savedUsername = useLocalStorage('rotki.username', '');
+const { savedRememberPassword, savedRememberUsername, savedUsername } = useRememberSettings();
 const { activeWelcomeMessages, welcomeMessage } = useDynamicMessages();
 
 const rules = {
@@ -306,8 +305,8 @@ function abortLogin() {
     leave-to-class="-translate-y-5 opacity-0"
     leave-active-class="transform duration-100"
   >
-    <div :class="$style.login">
-      <div :class="$style.login__wrapper">
+    <div>
+      <div class="max-w-[27.5rem] mx-auto">
         <h4 class="text-h4 mb-3">
           {{ t('login.title') }}
         </h4>
@@ -444,7 +443,7 @@ function abortLogin() {
                   :disabled="customBackendDisplay || rememberPassword || loading"
                   color="primary"
                   hide-details
-                  :class="$style.remember"
+                  class="-ml-2"
                 >
                   {{ t('login.remember_username') }}
                 </RuiCheckbox>
@@ -458,7 +457,7 @@ function abortLogin() {
                       :disabled="customBackendDisplay || loading"
                       color="primary"
                       hide-details
-                      :class="$style.remember"
+                      class="-ml-2"
                     >
                       {{ t('login.remember_password') }}
                     </RuiCheckbox>
@@ -472,7 +471,7 @@ function abortLogin() {
                   >
                     <template #activator>
                       <RuiIcon
-                        name="lu-circle-help"
+                        name="lu-circle-question-mark"
                         color="primary"
                       />
                     </template>
@@ -566,7 +565,7 @@ function abortLogin() {
 
                 <RuiCheckbox
                   v-model="customBackendSessionOnly"
-                  :class="$style.remember"
+                  class="-ml-2"
                   color="primary"
                   hide-details
                   :disabled="customBackendSaved"
@@ -583,7 +582,7 @@ function abortLogin() {
               @cancel="abortLogin()"
             />
 
-            <div :class="$style.login__actions">
+            <div class="flex flex-col justify-stretch space-y-8 pt-6">
               <RuiButton
                 color="primary"
                 size="lg"
@@ -634,7 +633,7 @@ function abortLogin() {
                 </RuiCard>
               </RuiDialog>
 
-              <div :class="$style.login__actions__footer">
+              <div class="flex flex-wrap gap-1 sm:gap-0 items-center justify-center text-rui-text-secondary">
                 <span>{{ t('login.button_no_account') }}</span>
                 <RuiButton
                   color="primary"
@@ -696,19 +695,3 @@ function abortLogin() {
     </div>
   </Transition>
 </template>
-
-<style module lang="scss">
-.login {
-  &__wrapper {
-    @apply max-w-[27.5rem] mx-auto;
-  }
-
-  &__actions {
-    @apply flex flex-col justify-stretch space-y-8 pt-6;
-
-    &__footer {
-      @apply flex flex-wrap gap-1 sm:gap-0 items-center justify-center text-rui-text-secondary;
-    }
-  }
-}
-</style>

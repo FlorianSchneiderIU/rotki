@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { getTextToken, toHumanReadable } from '@rotki/common';
+import { get, set } from '@vueuse/core';
 import { isEqual } from 'es-toolkit';
 import { useExternalApiKeys } from '@/composables/settings/api-keys/external';
+import { useMoneriumOAuth } from '@/modules/external-services/monerium/use-monerium-auth';
 import { OnlineHistoryEventsQueryType } from '@/types/history/events/schemas';
 
 const modelValue = defineModel<OnlineHistoryEventsQueryType[]>({ required: true });
@@ -18,9 +20,10 @@ const queries: OnlineHistoryEventsQueryType[] = [
   OnlineHistoryEventsQueryType.MONERIUM,
 ];
 
-const { t } = useI18n();
+const { t } = useI18n({ useScope: 'global' });
 
-const { apiKey, credential } = useExternalApiKeys(t);
+const { apiKey } = useExternalApiKeys(t);
+const { authenticated: moneriumAuthenticated } = useMoneriumOAuth();
 
 interface QueryConfig {
   enabled: boolean;
@@ -29,7 +32,7 @@ interface QueryConfig {
 
 const queryConfigs = computed<Record<OnlineHistoryEventsQueryType, QueryConfig>>(() => {
   const gnosisPayEnabled = !!get(apiKey('gnosis_pay'));
-  const moneriumEnabled = !!get(credential('monerium'));
+  const moneriumEnabled = get(moneriumAuthenticated);
 
   return {
     [OnlineHistoryEventsQueryType.GNOSIS_PAY]: {
@@ -100,7 +103,7 @@ defineExpose({
               color="primary"
               size="sm"
               hide-details
-              @click.prevent.stop
+              @click.prevent
             />
 
             <span class="capitalize text-sm text-rui-text-secondary">

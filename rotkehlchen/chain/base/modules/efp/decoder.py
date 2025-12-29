@@ -2,15 +2,14 @@ import logging
 from typing import TYPE_CHECKING, Any, Final
 
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
 from rotkehlchen.chain.evm.decoding.efp.constants import CPT_EFP
 from rotkehlchen.chain.evm.decoding.efp.decoder import EfpCommonDecoder
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
@@ -25,7 +24,7 @@ from .constants import EFP_LIST_REGISTRY
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.base.node_inquirer import BaseInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.types import ChecksumEvmAddress
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -40,7 +39,7 @@ class EfpDecoder(EfpCommonDecoder):
     def __init__(
             self,
             base_inquirer: 'BaseInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -50,17 +49,17 @@ class EfpDecoder(EfpCommonDecoder):
             list_records_contract=string_to_evm_address('0x41Aa48Ef3c0446b46a5b1cc6337FF3d3716E2A33'),
         )
 
-    def _decode_account_metadata_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_account_metadata_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode events from the EFPAccountMetadata contract, currently only deployed on Base.
         See https://docs.ethfollow.xyz/production/deployments
         """
         if context.tx_log.topics[0] != UPDATE_ACCOUNT_METADATA:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if (context.tx_log.data[96:128].rstrip(b'\x00').decode()) != 'primary-list':
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
-        return DecodingOutput(events=[self.base.make_event_from_transaction(
+        return EvmDecodingOutput(events=[self.base.make_event_from_transaction(
             transaction=context.transaction,
             tx_log=context.tx_log,
             event_type=HistoryEventType.INFORMATIONAL,
@@ -72,7 +71,7 @@ class EfpDecoder(EfpCommonDecoder):
             counterparty=CPT_EFP,
         )])
 
-    def _decode_list_registry_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_list_registry_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode events from the EFPListRegistry contract, currently only deployed on Base.
         See https://docs.ethfollow.xyz/production/deployments
         """
@@ -80,20 +79,19 @@ class EfpDecoder(EfpCommonDecoder):
             context.tx_log.topics[0] != ERC20_OR_ERC721_TRANSFER or
             len(context.tx_log.topics) != 4  # erc721 should have 4
         ):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
-        return DecodingOutput(action_items=[ActionItem(
+        return EvmDecodingOutput(action_items=[ActionItem(
             action='transform',
             from_event_type=HistoryEventType.RECEIVE,
             from_event_subtype=HistoryEventSubType.NONE,
             location_label=(user_address := bytes_to_address(context.tx_log.topics[2])),
             asset=Asset(evm_address_to_identifier(  # EFP List NFT
                 address=EFP_LIST_REGISTRY,
-                chain_id=self.evm_inquirer.chain_id,
+                chain_id=self.node_inquirer.chain_id,
                 token_type=TokenKind.ERC721,
                 collectible_id=str(int.from_bytes(context.tx_log.topics[3])),
             )),
-            address=ZERO_ADDRESS,
             to_notes=f'Receive EFP list NFT for {user_address}',
             to_counterparty=CPT_EFP,
         )])

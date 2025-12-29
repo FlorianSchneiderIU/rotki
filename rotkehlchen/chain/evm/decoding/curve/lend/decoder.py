@@ -2,11 +2,9 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.chain.ethereum.utils import (
-    should_update_protocol_cache,
-    token_normalized_value,
-    token_normalized_value_decimals,
-)
+from rotkehlchen.assets.utils import token_normalized_value, token_normalized_value_decimals
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache
 from rotkehlchen.chain.evm.constants import (
     DEFAULT_TOKEN_DECIMALS,
     DEPOSIT_TOPIC,
@@ -19,20 +17,18 @@ from rotkehlchen.chain.evm.constants import (
 from rotkehlchen.chain.evm.decoding.curve.constants import CPT_CURVE
 from rotkehlchen.chain.evm.decoding.interfaces import ReloadableDecoderMixin
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     FAILED_ENRICHMENT_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
     EnricherContext,
+    EvmDecodingOutput,
     TransferEnrichmentOutput,
 )
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.errors.misc import NotERC20Conformant, NotERC721Conformant
 from rotkehlchen.globaldb.cache import globaldb_get_unique_cache_value
 from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import CacheType, ChecksumEvmAddress
@@ -47,7 +43,7 @@ from .utils import query_curve_lending_vaults
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import EvmToken
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.fval import FVal
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
@@ -62,7 +58,7 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',  # pylint: disable=unused-argument
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             leverage_zap: 'ChecksumEvmAddress | None',
     ) -> None:
@@ -76,7 +72,6 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
             evm_inquirer=evm_inquirer,
             base_tools=base_tools,
             msg_aggregator=msg_aggregator,
-            evm_product=EvmProduct.LENDING,
             leverage_zap=leverage_zap,
         )
         self.vaults: set[ChecksumEvmAddress] = set()
@@ -91,8 +86,8 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
                 cache_key=CacheType.CURVE_LENDING_VAULTS,
         ) is True:
             query_curve_lending_vaults(
-                database=self.evm_inquirer.database,
-                chain_id=self.evm_inquirer.chain_id,
+                database=self.node_inquirer.database,
+                chain_id=self.node_inquirer.chain_id,
             )
         elif len(self.vaults) != 0:
             return None  # we didn't update the globaldb cache, and we have the data already
@@ -103,7 +98,7 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
                 'ON evm_tokens.identifier = common_asset_details.identifier '
                 'WHERE protocol=? AND symbol=? AND chain=?'
             )
-            bindings = (CPT_CURVE, CURVE_LEND_VAULT_SYMBOL, self.evm_inquirer.chain_id.serialize_for_db())  # noqa: E501
+            bindings = (CPT_CURVE, CURVE_LEND_VAULT_SYMBOL, self.node_inquirer.chain_id.serialize_for_db())  # noqa: E501
 
             cursor.execute(f'SELECT COUNT(*) {query_body}', bindings)
             if cursor.fetchone()[0] == len(self.vaults):
@@ -250,24 +245,24 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
 
         return out_event, in_event
 
-    def _decode_vault_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_vault_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode events from Curve lending vaults."""
         if context.tx_log.topics[0] == DEPOSIT_TOPIC:
             out_event, in_event = self._decode_deposit(context=context)
         elif context.tx_log.topics[0] == WITHDRAW_TOPIC_V3:
             out_event, in_event = self._decode_withdraw(context=context)
         else:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if out_event is None or in_event is None:
             log.error(f'Failed to find both out and in events for Curve lending vault transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         maybe_reshuffle_events(
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events,
         )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _get_vault_for_controller(
             self,
@@ -282,7 +277,7 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
             ).fetchone()) is None:
                 log.error(
                     'Failed to find Curve lending vault address for controller '
-                    f'{controller_address} on {self.evm_inquirer.chain_name}',
+                    f'{controller_address} on {self.node_inquirer.chain_name}',
                 )
                 return None
 
@@ -310,7 +305,7 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
         )) is None:
             log.error(
                 'Failed to get borrowed token for Curve lending vault '
-                f'{vault_address} on {self.evm_inquirer.chain_name}',
+                f'{vault_address} on {self.node_inquirer.chain_name}',
             )
             return None
 
@@ -327,14 +322,14 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
             ),
         )
 
-    def maybe_decode_leveraged_borrow(self, context: DecoderContext) -> DecodingOutput | None:
+    def maybe_decode_leveraged_borrow(self, context: DecoderContext) -> EvmDecodingOutput | None:
         """Decode events associated with creating a leveraged Curve position."""
         if (tokens_and_amounts := self._get_controller_event_tokens_and_amounts(
                 controller_address=(controller_address := context.tx_log.address),
                 context=context,
         )) is None:
             log.error(f'Failed to find tokens and amounts for Curve borrow transaction {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         collateral_token, borrowed_token, _, _ = tokens_and_amounts
 
@@ -373,11 +368,10 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
                 event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
                 event.notes = f'Deposit {event.amount} {borrowed_token.symbol} into a leveraged Curve position'  # noqa: E501
                 event.counterparty = CPT_CURVE
-                event.product = self.evm_product
                 event.extra_data = {'controller_address': controller_address}
                 break
 
-        return DecodingOutput(action_items=[ActionItem(
+        return EvmDecodingOutput(action_items=[ActionItem(
             action='transform',
             from_event_type=HistoryEventType.SPEND,
             from_event_subtype=HistoryEventSubType.NONE,
@@ -387,14 +381,13 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
             to_event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
             to_notes=f'Deposit {collateral_amount} {collateral_token.symbol} into a leveraged Curve position',  # noqa: E501
             to_counterparty=CPT_CURVE,
-            to_product=self.evm_product,
             extra_data={'controller_address': controller_address},
         )])
 
-    def _decode_staking_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_staking_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """This decodes deposit & withdraw events of the vault's gauge contract."""
         if context.tx_log.topics[0] not in (DEPOSIT_TOPIC_V2, WITHDRAW_TOPIC_V2):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[:32]),
@@ -410,7 +403,6 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
                     event.address == context.tx_log.address
             ):
                 event.counterparty = CPT_CURVE
-                event.product = EvmProduct.GAUGE
                 event.event_type = HistoryEventType.DEPOSIT
                 event.event_subtype = HistoryEventSubType.DEPOSIT_FOR_WRAPPED
                 event.notes = f'Deposit {event.amount} {event.asset.resolve_to_asset_with_symbol().symbol} into {gauge_asset.symbol}'  # noqa: E501
@@ -430,7 +422,6 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
                     event.address == context.tx_log.address
             ):
                 event.counterparty = CPT_CURVE
-                event.product = EvmProduct.GAUGE
                 event.event_type = HistoryEventType.WITHDRAWAL
                 event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
                 event.notes = f'Withdraw {event.amount} {event.asset.resolve_to_asset_with_symbol().symbol} from {gauge_asset.symbol}'  # noqa: E501
@@ -444,9 +435,9 @@ class CurveLendCommonDecoder(CurveBorrowRepayCommonDecoder, ReloadableDecoderMix
                 break
         else:
             log.error(f'Failed to find deposit/withdraw event for curve lending vault gauge for {context.transaction}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
-        return DecodingOutput(action_items=[
+        return EvmDecodingOutput(action_items=[
             ActionItem(
                 action='transform',
                 from_event_type=from_event_type,

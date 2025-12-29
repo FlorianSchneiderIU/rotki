@@ -61,6 +61,11 @@ const navItems: MenuItem[] = [
         ...Routes.ACCOUNTS_BITCOIN,
       },
       {
+        class: 'accounts-solana',
+        type: 'item',
+        ...Routes.ACCOUNTS_SOLANA,
+      },
+      {
         class: 'accounts-substrate',
         type: 'item',
         ...Routes.ACCOUNTS_SUBSTRATE,
@@ -264,7 +269,7 @@ function isRouteMatch(location: RouteLocationRaw) {
         <template #default="{ isActive, href }">
           <a :href="href">
             <NavigationMenuItem
-              :class="`navigation__${navItem.class}`"
+              :data-cy="`navigation__${navItem.class}`"
               :mini="isMini"
               :text="navItem.text"
               :icon="navItem.icon"
@@ -283,7 +288,7 @@ function isRouteMatch(location: RouteLocationRaw) {
         >
           <template #default="{ isActive: isActiveParent }">
             <NavigationMenuItem
-              :class="`navigation__${navItem.class}`"
+              :data-cy="`navigation__${navItem.class}`"
               :mini="isMini"
               :text="navItem.text"
               :icon="navItem.icon"
@@ -302,7 +307,7 @@ function isRouteMatch(location: RouteLocationRaw) {
                   <template #default="{ isActive, href }">
                     <a :href="href">
                       <NavigationMenuItem
-                        :class="`navigation__${subNavItem.class}`"
+                        :data-cy="`navigation__${subNavItem.class}`"
                         :mini="isMini"
                         :text="subNavItem.text"
                         :icon="subNavItem.icon"

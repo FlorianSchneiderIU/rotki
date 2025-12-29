@@ -3,23 +3,23 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.assets.utils import token_normalized_value_decimals
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS, SIMPLE_CLAIM
 from rotkehlchen.chain.evm.decoding.giveth.constants import CPT_DETAILS_GIVETH, CPT_GIVETH
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.types import ChecksumEvmAddress
     from rotkehlchen.user_messages import MessagesAggregator
@@ -29,12 +29,12 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class GivethDecoderBase(DecoderInterface, ABC):
+class GivethDecoderBase(EvmDecoderInterface, ABC):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             distro_address: 'ChecksumEvmAddress',
             givpower_staking_address: 'ChecksumEvmAddress',
@@ -52,9 +52,9 @@ class GivethDecoderBase(DecoderInterface, ABC):
         self.distro_address = distro_address
         self.givpower_staking_address = givpower_staking_address
 
-    def _decode_token_locked(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_token_locked(self, context: DecoderContext) -> EvmDecodingOutput:
         if not self.base.is_tracked(user := bytes_to_address(context.tx_log.topics[1])):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[:32]),
@@ -94,11 +94,11 @@ class GivethDecoderBase(DecoderInterface, ABC):
             ordered_events=[lock_event, receive_event],
             events_list=context.decoded_events,
         )
-        return DecodingOutput(events=[lock_event])
+        return EvmDecodingOutput(events=[lock_event])
 
-    def decode_claim(self, context: DecoderContext) -> DecodingOutput:
+    def decode_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != SIMPLE_CLAIM or not self.base.is_tracked(user := bytes_to_address(context.tx_log.topics[1])):  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amount = token_normalized_value_decimals(
             token_amount=int.from_bytes(context.tx_log.data[:32]),
@@ -118,10 +118,10 @@ class GivethDecoderBase(DecoderInterface, ABC):
         else:
             log.error(f'Could not find the Giv token transfer after reward claiming for {context.transaction}')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     @abstractmethod
-    def decode_staking_events(self, context: DecoderContext) -> DecodingOutput:
+    def decode_staking_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """The staking events are slightly different in gnosis and optimism so let
         each decoder implement them"""
 

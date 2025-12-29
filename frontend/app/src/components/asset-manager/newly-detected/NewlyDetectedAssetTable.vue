@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DataTableColumn, DataTableSortData } from '@rotki/ui-library';
-import type { NewDetectedToken } from '@/modules/messaging/types';
-import { Blockchain, getAddressFromEvmIdentifier } from '@rotki/common';
+import { type BigNumber, getAddressFromEvmIdentifier, getAddressFromSolanaIdentifier } from '@rotki/common';
+import AmountDisplay from '@/components/display/amount/AmountDisplay.vue';
 import AssetDetails from '@/components/helper/AssetDetails.vue';
 import HintMenuIcon from '@/components/HintMenuIcon.vue';
 import TablePageLayout from '@/components/layout/TablePageLayout.vue';
@@ -9,36 +9,62 @@ import { useNewlyDetectedTokens } from '@/composables/assets/newly-detected-toke
 import { useSpamAsset } from '@/composables/assets/spam';
 import { useSupportedChains } from '@/composables/info/chains';
 import HashLink from '@/modules/common/links/HashLink.vue';
+import { type NewDetectedToken, NewDetectedTokenKind } from '@/modules/messaging/types';
+import { usePriceUtils } from '@/modules/prices/use-price-utils';
 import { TableId, useRememberTableSorting } from '@/modules/table/use-remember-table-sorting';
 import { useAssetCacheStore } from '@/store/assets/asset-cache';
+import { useGeneralSettingsStore } from '@/store/settings/general';
 import { arrayify } from '@/utils/array';
 import { uniqueStrings } from '@/utils/data';
 
 interface Token extends NewDetectedToken {
   address: string;
-  evmChain: Blockchain;
+  chain: string;
+  price?: BigNumber;
 }
 
 const { t } = useI18n({ useScope: 'global' });
 
 const selected = ref<string[]>([]);
-const sort = ref<DataTableSortData<NewDetectedToken>>();
+const sort = ref<DataTableSortData<NewDetectedToken>>({
+  column: 'tokenIdentifier',
+  direction: 'asc',
+});
 
+const { currencySymbol } = storeToRefs(useGeneralSettingsStore());
 const { removeNewDetectedTokens, tokens } = useNewlyDetectedTokens();
 const { cache } = storeToRefs(useAssetCacheStore());
 const { getChain } = useSupportedChains();
 const { markAssetsAsSpam } = useSpamAsset();
+const { getAssetPrice } = usePriceUtils();
 
-const rows = computed<Token[]>(() => get(tokens).map((data) => {
-  const evmChain = get(cache)[data.tokenIdentifier]?.evmChain;
+const tokenKindMapping = {
+  [NewDetectedTokenKind.EVM]: {
+    addressFormatter: getAddressFromEvmIdentifier,
+    getChain: (data: NewDetectedToken, cacheData: ReturnType<typeof useAssetCacheStore>['cache']) => {
+      const evmChain = cacheData[data.tokenIdentifier]?.evmChain;
+      return evmChain ? getChain(evmChain) : data.tokenKind;
+    },
+  },
+  [NewDetectedTokenKind.SOLANA]: {
+    addressFormatter: getAddressFromSolanaIdentifier,
+    getChain: (data: NewDetectedToken) => data.tokenKind,
+  },
+} as const;
 
-  return {
-    ...data,
-    address: getAddressFromEvmIdentifier(data.tokenIdentifier),
-    evmChain: evmChain ? getChain(evmChain) : Blockchain.ETH,
-  };
-}),
-);
+const rows = computed<Token[]>(() => {
+  const currentCache = get(cache);
+  return get(tokens).map((data) => {
+    const mappingEntry = tokenKindMapping[data.tokenKind];
+
+    return {
+      ...data,
+      address: mappingEntry.addressFormatter(data.tokenIdentifier),
+      chain: mappingEntry.getChain(data, currentCache),
+      price: getAssetPrice(data.tokenIdentifier),
+    };
+  });
+});
 
 const cols = computed<DataTableColumn<Token>[]>(() => [
   {
@@ -53,6 +79,13 @@ const cols = computed<DataTableColumn<Token>[]>(() => [
     class: 'py-0',
     key: 'address',
     label: t('common.address'),
+    sortable: true,
+  },
+  {
+    cellClass: 'py-0',
+    class: 'py-0',
+    key: 'price',
+    label: t('common.price'),
     sortable: true,
   },
   {
@@ -209,9 +242,16 @@ async function markAsSpam(identifiers?: string | string[]): Promise<void> {
 
         <template #item.address="{ row }">
           <HashLink
-            :location="row.evmChain"
+            :location="row.chain"
             :text="row.address"
             type="token"
+          />
+        </template>
+
+        <template #item.price="{ row }">
+          <AmountDisplay
+            :value="row.price"
+            :asset="currencySymbol"
           />
         </template>
 
@@ -220,10 +260,10 @@ async function markAsSpam(identifiers?: string | string[]): Promise<void> {
             {{ row.seenDescription }}
           </div>
 
-          <div v-if="row.seenTxHash">
+          <div v-if="row.seenTxReference">
             <HashLink
-              :location="row.evmChain"
-              :text="row.seenTxHash"
+              :location="row.chain"
+              :text="row.seenTxReference"
               type="transaction"
             />
           </div>

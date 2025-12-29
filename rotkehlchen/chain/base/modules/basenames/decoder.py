@@ -4,15 +4,15 @@ from typing import TYPE_CHECKING, Any, Final
 
 import requests
 
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.ethereum.abi import decode_event_data_abi_str
 from rotkehlchen.chain.evm.decoding.ens.decoder import EnsCommonDecoder
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.resolver import tokenid_belongs_to_collection
@@ -40,7 +40,7 @@ from .constants import (
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.base.node_inquirer import BaseInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.user_messages import MessagesAggregator
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ class BasenamesDecoder(EnsCommonDecoder):
     def __init__(  # pylint: disable=super-init-not-called
             self,
             base_inquirer: 'BaseInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',  # pylint: disable=unused-argument
     ) -> None:
         super().__init__(
@@ -91,8 +91,8 @@ class BasenamesDecoder(EnsCommonDecoder):
 
         # Call the L2 Resolver contract's name method.
         try:
-            if not (name_to_show := self.evm_inquirer.contracts.contract(BASENAMES_L2_RESOLVER).call(  # noqa: E501
-                node_inquirer=self.evm_inquirer,
+            if not (name_to_show := self.node_inquirer.contracts.contract(BASENAMES_L2_RESOLVER).call(  # noqa: E501
+                node_inquirer=self.node_inquirer,
                 method_name='name',
                 arguments=[node],
             )):
@@ -163,9 +163,9 @@ class BasenamesDecoder(EnsCommonDecoder):
 
         return name
 
-    def _decode_registrar_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_registrar_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] != NAME_REGISTERED_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         try:
             _, decoded_data = decode_event_data_abi_str(
@@ -174,7 +174,7 @@ class BasenamesDecoder(EnsCommonDecoder):
             )
         except DeserializationError as e:
             log.error(f'Failed to decode Basenames registered event due to {e!s}')
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         fullname = f'{decoded_data[0]}.base.eth'
         expires = decoded_data[1]
@@ -220,7 +220,7 @@ class BasenamesDecoder(EnsCommonDecoder):
                 events_list=context.decoded_events,
             )
 
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)
 
     # -- DecoderInterface methods
 

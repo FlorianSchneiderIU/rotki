@@ -31,7 +31,7 @@ const {
   refreshNonFungibleBalances,
   sectionLoading,
   sort,
-  totalUsdValue,
+  totalValue,
 } = useNftData();
 
 // Price management
@@ -89,7 +89,6 @@ watch(sectionLoading, async (isLoading, wasLoading) => {
         :cols="cols"
         :rows="data"
         :loading="dataLoading"
-        show-select
       >
         <template #item.name="{ row }">
           <NftDetails :identifier="row.id" />
@@ -112,14 +111,14 @@ watch(sectionLoading, async (isLoading, wasLoading) => {
           />
           <span v-else>-</span>
         </template>
-        <template #item.usdPrice="{ row }">
+        <template #item.price="{ row }">
           <AmountDisplay
             :price-asset="row.priceAsset"
             :amount="row.priceInAsset"
-            :value="row.usdPrice"
+            :value="row.price"
             is-asset-price
             show-currency="symbol"
-            fiat-currency="USD"
+            force-currency
           />
         </template>
         <template #item.actions="{ row }">
@@ -141,16 +140,16 @@ watch(sectionLoading, async (isLoading, wasLoading) => {
         </template>
         <template #body.append>
           <RowAppend
-            v-if="totalUsdValue"
+            v-if="totalValue"
             label-colspan="4"
             :label="t('common.total')"
             class="[&>td]:p-4"
             :right-patch-colspan="2"
           >
             <AmountDisplay
-              :value="totalUsdValue"
+              :value="totalValue"
               show-currency="symbol"
-              fiat-currency="USD"
+              force-currency
             />
           </RowAppend>
         </template>
@@ -164,15 +163,3 @@ watch(sectionLoading, async (isLoading, wasLoading) => {
     />
   </TablePageLayout>
 </template>
-
-<style scoped lang="scss">
-.non-fungible-balances {
-  &__item {
-    &__preview {
-      width: 50px;
-      height: 50px;
-      max-width: 50px;
-    }
-  }
-}
-</style>

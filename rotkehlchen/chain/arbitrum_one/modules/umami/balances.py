@@ -3,7 +3,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
-from rotkehlchen.assets.utils import get_token
+from rotkehlchen.assets.utils import get_evm_token, token_normalized_value_decimals
 from rotkehlchen.chain.arbitrum_one.modules.umami.constants import (
     CPT_UMAMI,
     UMAMI_MASTERCHEF_ABI,
@@ -11,10 +11,11 @@ from rotkehlchen.chain.arbitrum_one.modules.umami.constants import (
 )
 from rotkehlchen.chain.arbitrum_one.modules.umami.utils import get_umami_vault_token_price
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.constants.assets import A_USD
 from rotkehlchen.constants.prices import ZERO_PRICE
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
@@ -104,7 +105,7 @@ class UmamiBalances(ProtocolWithBalance):
                     if balance == 0:
                         continue
 
-                    if (gm_vault_token := get_token(
+                    if (gm_vault_token := get_evm_token(
                             evm_address=(gm_vault_token_address := gm_vault_addresses[idx]),
                             chain_id=self.evm_inquirer.chain_id,
                     )) is None:
@@ -131,7 +132,7 @@ class UmamiBalances(ProtocolWithBalance):
             user_address: 'ChecksumEvmAddress',
     ) -> None:
         """Process vault balance and add to user's balance sheet."""
-        if (price := get_umami_vault_token_price(
+        if (usd_price := get_umami_vault_token_price(
             inquirer=Inquirer(),
             vault_token=vault_token,
             evm_inquirer=self.evm_inquirer,
@@ -145,7 +146,11 @@ class UmamiBalances(ProtocolWithBalance):
             token_amount=balance,
             token_decimals=vault_token.decimals,
         )
+        if CachedSettings().main_currency != A_USD:
+            price = usd_price * Inquirer.find_main_currency_price(Inquirer.usd)
+        else:
+            price = usd_price
         balances[user_address].assets[vault_token][self.counterparty] += Balance(
             amount=amount,
-            usd_value=amount * price,
+            value=amount * price,
         )

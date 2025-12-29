@@ -1,12 +1,13 @@
-import type { Exchange } from '@/types/exchanges';
 import type { TaskMeta } from '@/types/task';
 import { groupBy, omit } from 'es-toolkit';
 import { useHistoryEventsApi } from '@/composables/api/history/events';
 import { useModules } from '@/composables/session/modules';
 import { useExternalApiKeys } from '@/composables/settings/api-keys/external';
+import { useMoneriumOAuth } from '@/modules/external-services/monerium/use-monerium-auth';
 import { useNotificationsStore } from '@/store/notifications';
 import { useSessionSettingsStore } from '@/store/settings/session';
 import { useTaskStore } from '@/store/tasks';
+import { type Exchange, QueryExchangeEventsPayload } from '@/types/exchanges';
 import { OnlineHistoryEventsQueryType } from '@/types/history/events/schemas';
 import { Module } from '@/types/modules';
 import { TaskType } from '@/types/task-type';
@@ -26,7 +27,8 @@ export function useRefreshHandlers(): UseRefreshHandlersReturn {
   const { awaitTask } = useTaskStore();
   const { isModuleEnabled } = useModules();
   const isEth2Enabled = isModuleEnabled(Module.ETH2);
-  const { apiKey, credential } = useExternalApiKeys(t);
+  const { apiKey } = useExternalApiKeys(t);
+  const { authenticated: moneriumAuthenticated, refreshStatus } = useMoneriumOAuth();
 
   const queryOnlineEvent = async (queryType: OnlineHistoryEventsQueryType): Promise<void> => {
     const eth2QueryTypes: OnlineHistoryEventsQueryType[] = [
@@ -41,8 +43,11 @@ export function useRefreshHandlers(): UseRefreshHandlersReturn {
       return;
     }
 
-    if (!get(credential('monerium')) && queryType === OnlineHistoryEventsQueryType.MONERIUM) {
-      return;
+    if (queryType === OnlineHistoryEventsQueryType.MONERIUM) {
+      await refreshStatus();
+      if (!get(moneriumAuthenticated)) {
+        return;
+      }
     }
 
     logger.debug(`querying for ${queryType} events`);
@@ -81,7 +86,7 @@ export function useRefreshHandlers(): UseRefreshHandlersReturn {
 
   const queryExchange = async (payload: Exchange): Promise<void> => {
     logger.debug(`querying exchange events for ${payload.location} (${payload.name})`);
-    const exchange = omit(payload, ['krakenAccountType']);
+    const exchange = omit(payload, ['krakenAccountType', 'okxLocation']);
     const taskType = TaskType.QUERY_EXCHANGE_EVENTS;
     const taskMeta = {
       description: t('actions.exchange_events.task.description', exchange),
@@ -90,7 +95,8 @@ export function useRefreshHandlers(): UseRefreshHandlersReturn {
     };
 
     try {
-      const { taskId } = await queryExchangeEvents(exchange);
+      const payload = QueryExchangeEventsPayload.parse(exchange);
+      const { taskId } = await queryExchangeEvents(payload);
       await awaitTask<boolean, TaskMeta>(taskId, taskType, taskMeta, true);
     }
     catch (error: any) {
@@ -100,7 +106,7 @@ export function useRefreshHandlers(): UseRefreshHandlersReturn {
           display: true,
           message: t('actions.exchange_events.error.description', {
             error,
-            ...exchange,
+            ...payload,
           }),
           title: t('actions.exchange_events.error.title'),
         });

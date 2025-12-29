@@ -1,11 +1,12 @@
 import type { ActionStatus } from '@/types/action';
 import type { Exchange } from '@/types/exchanges';
 import type { TaskMeta } from '@/types/task';
+import { objectPick } from '@vueuse/shared';
 import { useExchangeApi } from '@/composables/api/balances/exchanges';
 import { useUsersApi } from '@/composables/api/session/users';
 import { useSettingsApi } from '@/composables/api/settings/settings-api';
 import { useSessionSettings } from '@/composables/session/settings';
-import { api } from '@/services/rotkehlchen-api';
+import { api } from '@/modules/api/rotki-api';
 import { useMonitorStore } from '@/store/monitor';
 import { useSessionAuthStore } from '@/store/session/auth';
 import { useTaskStore } from '@/store/tasks';
@@ -41,7 +42,7 @@ export function useLogin(): UseLoginReturn {
   const { start } = useMonitorStore();
 
   const { initialize } = useSessionSettings();
-  const { checkIfLogged, createAccount: callCreatAccount, login: callLogin } = useUsersApi();
+  const { checkIfLogged, colibriLogin, createAccount: callCreatAccount, login: callLogin } = useUsersApi();
   const { getRawSettings, setSettings } = useSettingsApi();
   const { getExchanges } = useExchangeApi();
 
@@ -100,7 +101,9 @@ export function useLogin(): UseLoginReturn {
         settings,
         username: payload.credentials.username,
       };
-      return await unlock(data);
+      const response = await unlock(data);
+      await colibriLogin(objectPick(payload.credentials, ['username', 'password']));
+      return response;
     }
     catch (error: any) {
       logger.error(error);
@@ -120,7 +123,7 @@ export function useLogin(): UseLoginReturn {
 
   const login = async (credentials: LoginCredentials): Promise<ActionStatus> => {
     try {
-      const username = credentials.username ? credentials.username : lastLogin();
+      const username = credentials.username ? credentials.username : get(lastLogin);
       const isLogged = await checkIfLogged(username);
 
       let settings: UserSettingsModel;
@@ -152,6 +155,8 @@ export function useLogin(): UseLoginReturn {
         }, TaskMeta>(taskId, taskType, {
           title: 'login in',
         });
+
+        await colibriLogin(objectPick(credentials, ['username', 'password']));
 
         result.settings.frontendSettings = await migrateAndSaveSettings(result.settings.frontendSettings);
 

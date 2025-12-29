@@ -35,7 +35,7 @@ export interface StakingValidatorManage extends AccountManageMode {
   data: Eth2Validator;
 }
 
-export interface AccountManageAdd extends AccountManageMode {
+interface AccountManageAdd extends AccountManageMode {
   readonly mode: 'add';
   chain: string;
   type: 'account';
@@ -46,7 +46,7 @@ export interface AccountManageAdd extends AccountManageMode {
   modules?: Module[];
 }
 
-export interface AccountManageEdit extends AccountManageMode {
+interface AccountManageEdit extends AccountManageMode {
   readonly mode: 'edit';
   chain: string;
   type: 'account';
@@ -67,7 +67,7 @@ export type AccountManageState = AccountManage | StakingValidatorManage | XpubMa
 
 export function createNewBlockchainAccount(): AccountManageAdd {
   return {
-    chain: 'evm',
+    chain: 'all',
     data: [
       {
         address: '',
@@ -191,7 +191,7 @@ export function useAccountManage(): UseAccountManageReturn {
         updateAccounts(state.chain, await editAccount(state.data, state.chain));
       }
       else {
-        if (state.chain === 'evm') {
+        if (state.chain === 'all') {
           await addEvmAccounts({
             modules: state.modules,
             payload: state.data,
@@ -273,7 +273,7 @@ export function useAccountManage(): UseAccountManageReturn {
         startPromise(fetchAccounts(Blockchain.ETH2));
       }
       else {
-        startPromise(refreshAccounts(Blockchain.ETH2));
+        startPromise(refreshAccounts({ blockchain: Blockchain.ETH2 }));
       }
     }
     else if (typeof result.message === 'string') {

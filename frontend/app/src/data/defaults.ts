@@ -1,4 +1,5 @@
 import { TimeFramePeriod } from '@rotki/common';
+import { SECONDS_PER_DAY } from '@/data/constraints';
 import { CurrencyLocation } from '@/types/currency-location';
 import { DateFormat } from '@/types/date-format';
 import { TableColumn } from '@/types/table-column';
@@ -8,6 +9,7 @@ export const Defaults = {
   BALANCE_SAVE_FREQUENCY: 24,
   BEACON_RPC_ENDPOINT: '', // same as Kusama, must be set by user
   BTC_DERIVATION_GAP_LIMIT: 20,
+  BTC_MEMPOOL_API: '',
   DEFAULT_CONNECT_TIMEOUT: 30,
   DEFAULT_CSV_EXPORT_DELIMITER: ',',
   DEFAULT_CURRENCY_LOCATION: CurrencyLocation.AFTER,
@@ -15,10 +17,12 @@ export const Defaults = {
   DEFAULT_DATE_DISPLAY_FORMAT: DateFormat.DateMonthYearHourMinuteSecondTimezone,
   DEFAULT_DATE_INPUT_FORMAT: DateFormat.DateMonthYearHourMinuteSecond,
   DEFAULT_DECIMAL_SEPARATOR: '.',
+  DEFAULT_EVENTS_PROCESSING_FREQUENCY: SECONDS_PER_DAY,
   DEFAULT_EVM_QUERY_INDICATOR_DISMISSAL_THRESHOLD: 6,
   DEFAULT_EVM_QUERY_INDICATOR_MIN_OUT_OF_SYNC_PERIOD: 12,
   DEFAULT_ORACLE_PENALTY_DURATION: 1800,
   DEFAULT_ORACLE_PENALTY_THRESHOLD_COUNT: 5,
+  DEFAULT_PASSWORD_CONFIRMATION_INTERVAL: SECONDS_PER_DAY * 7,
   DEFAULT_QUERY_PERIOD: 5,
   DEFAULT_QUERY_RETRY_LIMIT: 5,
   DEFAULT_READ_TIMEOUT: 30,

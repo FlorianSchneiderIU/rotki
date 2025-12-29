@@ -5,7 +5,7 @@ from rotkehlchen.chain.evm.types import string_to_evm_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.base.node_inquirer import BaseInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.user_messages import MessagesAggregator
 
 
@@ -14,7 +14,7 @@ class Aavev3Decoder(Aavev3LikeCommonDecoder):
     def __init__(
             self,
             evm_inquirer: 'BaseInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -25,6 +25,7 @@ class Aavev3Decoder(Aavev3LikeCommonDecoder):
             native_gateways=(
                 string_to_evm_address('0x729b3EA8C005AbC58c9150fb57Ec161296F06766'),
                 string_to_evm_address('0x8be473dCfA93132658821E67CbEB684ec8Ea2E74'),
+                string_to_evm_address('0xa0d9C1E9E48Ca30c8d8C3B5D69FF5dc1f6DFfC24'),
             ),
             treasury=string_to_evm_address('0xBA9424d650A4F5c80a0dA641254d1AcCE2A37057'),
             incentives=string_to_evm_address('0xf9cc4F0D883F1a1eb2c253bdb46c254Ca51E1F44'),

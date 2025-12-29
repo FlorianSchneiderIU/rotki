@@ -19,8 +19,8 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: 'set-dialog', value: boolean): void;
-  (e: 'regenerate'): void;
+  'set-dialog': [value: boolean];
+  'regenerate': [];
 }>();
 const ReportMissingAcquisitions = defineAsyncComponent(
   () => import('@/components/profitloss/ReportMissingAcquisitions.vue'),
@@ -106,7 +106,7 @@ const stepperContents = computed<
   }
 
   const missingPricesLength = get(actionableItemsLength).missingPricesLength;
-  if (missingPricesLength >= 0) {
+  if (missingPricesLength > 0) {
     contents.push({
       hint: t('profit_loss_report.actionable.missing_prices.hint'),
       items: get(actionableItems).missingPrices,

@@ -2,24 +2,24 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Final
 
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.balancer.balancer_cache import (
     read_balancer_pools_and_gauges_from_cache,
 )
-from rotkehlchen.chain.evm.decoding.balancer.constants import BALANCER_LABEL, CPT_BALANCER_V1
+from rotkehlchen.chain.evm.decoding.balancer.constants import CPT_BALANCER_V1
 from rotkehlchen.chain.evm.decoding.balancer.decoder import BalancerCommonDecoder
 from rotkehlchen.chain.evm.decoding.balancer.types import BalancerV1EventTypes
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     FAILED_ENRICHMENT_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
     EnricherContext,
+    EvmDecodingOutput,
     TransferEnrichmentOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.globaldb.cache import globaldb_get_general_cache_values
@@ -30,7 +30,7 @@ from rotkehlchen.types import CacheType, ChecksumEvmAddress, EvmTransaction
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
@@ -47,7 +47,7 @@ class Balancerv1CommonDecoder(BalancerCommonDecoder):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -149,10 +149,10 @@ class Balancerv1CommonDecoder(BalancerCommonDecoder):
 
         return FAILED_ENRICHMENT_OUTPUT
 
-    def _decode_pool_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_pool_events(self, context: DecoderContext) -> EvmDecodingOutput:
         """Not all balancer v1 pools are created via the UI. This method decodes the events of such pools."""  # noqa: E501
         if context.tx_log.topics[0] not in (JOIN_V1, EXIT_V1, ERC20_OR_ERC721_TRANSFER):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         from_event_subtype, to_event_type, to_event_subtype, location_label = HistoryEventSubType.NONE, None, None, None  # noqa: E501
         if context.tx_log.topics[0] == JOIN_V1:
@@ -183,7 +183,7 @@ class Balancerv1CommonDecoder(BalancerCommonDecoder):
                 else f'Return {amount} {token.symbol} to a Balancer v1 pool'
             )
 
-        return DecodingOutput(action_items=[ActionItem(
+        return EvmDecodingOutput(action_items=[ActionItem(
             action='transform',
             from_event_type=from_event_type,
             from_event_subtype=from_event_subtype,
@@ -239,7 +239,7 @@ class Balancerv1CommonDecoder(BalancerCommonDecoder):
     def counterparties() -> tuple[CounterpartyDetails, ...]:
         return (CounterpartyDetails(
             identifier=CPT_BALANCER_V1,
-            label=BALANCER_LABEL,
+            label=CPT_BALANCER_V1.capitalize().replace('-v', ' V'),
             image='balancer.svg',
         ),)
 
@@ -252,7 +252,7 @@ class Balancerv1CommonDecoder(BalancerCommonDecoder):
                         cursor=cursor,
                         key_parts=(
                             CacheType.BALANCER_V1_POOLS,
-                            str(self.evm_inquirer.chain_id.value),
+                            str(self.node_inquirer.chain_id.value),
                         ),
                     )
                 ],

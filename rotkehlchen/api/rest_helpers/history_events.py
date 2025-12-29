@@ -22,43 +22,43 @@ def edit_grouped_events_with_optional_fee(
     - Create fee entry if it wasn't present before
     - Update existing events when modifications occur
 
-    Evm swaps are more complex and must rely on the identifiers specified. This is handled
-    in edit_grouped_evm_swap_events.
+    Swaps are more complex and must rely on the identifiers specified, since they can have
+    multiple fees or even multiple spends and receives in multi trades. This is handled
+    in edit_grouped_swap_events.
 
     May raise:
     - InputError
     """
-    if (result := write_cursor.execute(  # Get the event_identifier, selecting by the identifier of the first event.  # noqa: E501
-        'SELECT event_identifier FROM history_events WHERE identifier=?',
+    if (result := write_cursor.execute(  # Get the group_identifier, selecting by the identifier of the first event.  # noqa: E501
+        'SELECT group_identifier FROM history_events WHERE identifier=?',
         (events[0].identifier,),
     ).fetchone()) is not None:
-        event_identifier = result[0]
+        group_identifier = result[0]
     else:
         raise InputError(f'Tried to edit event with id {events[0].identifier} but could not find it in the DB')  # noqa: E501
 
-    if events_type == HistoryBaseEntryType.EVM_SWAP_EVENT:
-        edit_grouped_evm_swap_events(  # Evm swaps must be handled differently.
+    if events_type in (HistoryBaseEntryType.EVM_SWAP_EVENT, HistoryBaseEntryType.SOLANA_SWAP_EVENT, HistoryBaseEntryType.SWAP_EVENT):  # noqa: E501
+        edit_grouped_swap_events(  # Swaps must be handled differently.
             events_db=events_db,
             write_cursor=write_cursor,
             events=events,
-            identifiers=identifiers,  # type: ignore[arg-type]  # will not be none for evm swaps
-            event_identifier=event_identifier,
+            identifiers=identifiers,  # type: ignore[arg-type]  # will not be none for swaps
+            group_identifier=group_identifier,
         )
         return
 
     existing_event_count = write_cursor.execute(
-        'SELECT COUNT(*) FROM history_events WHERE event_identifier=?',
-        (event_identifier,),
+        'SELECT COUNT(*) FROM history_events WHERE group_identifier=?',
+        (group_identifier,),
     ).fetchone()[0]
-    no_fee_num = 1 if events_type == HistoryBaseEntryType.ASSET_MOVEMENT_EVENT else 2
-    with_fee_num = no_fee_num + 1
-
+    no_fee_num, with_fee_num = 1, 2
     if (new_event_count := len(events)) == no_fee_num and existing_event_count == with_fee_num:
         # in the db we had a fee entry and now we have removed it
         events_to_edit = events[:new_event_count]
-        write_cursor.execute(
-            'DELETE FROM history_events WHERE event_identifier=? and sequence_index=?',
-            (events[0].event_identifier, events[0].sequence_index + no_fee_num),
+        events_db.delete_events_and_track(
+            write_cursor=write_cursor,
+            where_clause='WHERE group_identifier=? AND sequence_index=?',
+            where_bindings=(events[0].group_identifier, events[0].sequence_index + no_fee_num),
         )
     elif new_event_count == with_fee_num and existing_event_count == no_fee_num:
         # we didn't have a fee in the db and we have it now
@@ -76,14 +76,14 @@ def edit_grouped_events_with_optional_fee(
         events_db.edit_history_event(write_cursor=write_cursor, event=event)
 
 
-def edit_grouped_evm_swap_events(
+def edit_grouped_swap_events(
         events_db: 'DBHistoryEvents',
         write_cursor: 'DBCursor',
         events: list[HistoryBaseEntry],
         identifiers: list[int],
-        event_identifier: str,
+        group_identifier: str,
 ) -> None:
-    """Handle editing of grouped evm swap events.
+    """Handle editing of grouped swap events.
     Determines which events to add, edit, or remove using the `identifiers`
     and `events` lists as follows:
     - Inserts events that have no identifier.
@@ -103,18 +103,21 @@ def edit_grouped_evm_swap_events(
             edited_identifiers.append(event.identifier)
 
     if identifiers != edited_identifiers:  # There are identifiers with no corresponding events - these events need to be deleted.  # noqa: E501
-        write_cursor.executemany(
-            'DELETE FROM history_events WHERE identifier=?',
-            [(identifier,) for identifier in set(identifiers) - set(edited_identifiers)],
+        ids_to_delete = tuple(set(identifiers) - set(edited_identifiers))
+        placeholders = ','.join(['?'] * len(ids_to_delete))
+        events_db.delete_events_and_track(
+            write_cursor=write_cursor,
+            where_clause=f'WHERE identifier IN ({placeholders})',
+            where_bindings=ids_to_delete,
         )
 
     for event in new_events:
         if write_cursor.execute(  # Check if this event will hit a sequence_index that is already in use.  # noqa: E501
-            'SELECT COUNT(*) FROM history_events WHERE event_identifier=? AND sequence_index=?',
-            (event_identifier, event.sequence_index),
+            'SELECT COUNT(*) FROM history_events WHERE group_identifier=? AND sequence_index=?',
+            (group_identifier, event.sequence_index),
         ).fetchone()[0] != 0:
             raise InputError(
-                f'Tried to insert an event with event_identifier {event_identifier} and '
+                f'Tried to insert an event with group_identifier {group_identifier} and '
                 f'sequence_index {event.sequence_index}, but an event already exists at '
                 'that sequence_index.',
             )

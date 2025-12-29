@@ -598,7 +598,7 @@ def test_global_db_restore(globaldb, database):
             history=create_swap_events(
                 timestamp=TimestampMS(12312312000),
                 location=Location.BLOCKFI,
-                event_identifier='this-is-so-unique',
+                group_identifier='this-is-so-unique',
                 spend=AssetAmount(
                     asset=symbol_to_asset_or_token('LOLZ'),
                     amount=FVal(2),
@@ -1230,7 +1230,7 @@ def test_for_spam_tokens(database: 'DBHandler', ethereum_inquirer: EthereumInqui
         'LPBalancer.xyz',  # simple url with
         '$ BonusUSDC.com - Visit to claim bonus',
         'https://dydx2.pro to claim reward',
-        'Visit https://afcoc.xyz to claim rewards.'
+        'Visit https://afcoc.xyz to claim rewards.',
         'https://www.apitrade.pro/vipinvite.htm',
         'DAIBonus.com <- Visit to claim bonus',
         '$ https://agbonus.fun to receive reward.',
@@ -1337,3 +1337,32 @@ def test_solana_token_query_produces_no_deserialization_warnings(globaldb: Globa
        asset_type=AssetType.SOLANA_TOKEN,
     )
     assert 'has wrong asset type. Failed to deserialize TokenKind DB value from non string value: None' not in caplog.text  # noqa: E501
+
+
+def test_resolve_asset_from_packaged_and_store_edit_solana_token(globaldb: GlobalDBHandler) -> None:  # noqa: E501
+    """Test that resolve_asset_from_packaged_and_store calls
+    edit_solana_token when asset exists.
+    """
+    catino_asset = Asset('solana/token:1A3CZ3b8f878LfqpT3stoiDC7C1EDMjda6A1xHakkMF').resolve_to_solana_token()  # noqa: E501
+    assert catino_asset.asset_type == AssetType.SOLANA_TOKEN
+
+    # Modify the asset data in database to simulate an outdated version
+    with globaldb.conn.write_ctx() as write_cursor:
+        write_cursor.execute(
+            'UPDATE assets SET name=? WHERE identifier=?',
+            ('Modified Test Name', catino_asset.identifier),
+        )
+
+    # clear cache again to see the modified version
+    # and verify asset has modified name
+    AssetResolver.clean_memory_cache()
+    modified_asset = catino_asset.resolve_to_solana_token()
+    assert modified_asset.name == 'Modified Test Name'
+
+    # now call resolve_asset_from_packaged_and_store which should update the existing asset
+    # and verify asset is updated back to original packaged data
+    globaldb.resolve_asset_from_packaged_and_store(identifier=catino_asset.identifier)
+    AssetResolver.clean_memory_cache()
+    restored_asset = catino_asset.resolve_to_solana_token()
+    assert restored_asset.asset_type == AssetType.SOLANA_TOKEN
+    assert restored_asset.name != 'Modified Test Name'  # Should be restored to original name

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { UseHistoryEventsSelectionModeReturn } from '@/modules/history/events/composables/use-selection-mode';
 import type { HistoryEventDeletePayload } from '@/modules/history/events/types';
 import type { HistoryEventEditData } from '@/modules/history/management/forms/form-types';
 import type { HistoryEventEntry, HistoryEventRow } from '@/types/history/events/schemas';
@@ -7,14 +8,17 @@ import HistoryEventsListItem from '@/components/history/events/HistoryEventsList
 import HistoryEventsListSwap from '@/components/history/events/HistoryEventsListSwap.vue';
 
 interface HistoryEventsListTableProps {
+  allEvents: HistoryEventRow[];
   events: HistoryEventRow[];
   eventGroup: HistoryEventEntry;
   loading: boolean;
   total: number;
+  hideActions?: boolean;
   highlightedIdentifiers?: string[];
+  selection?: UseHistoryEventsSelectionModeReturn;
 }
 
-defineProps<HistoryEventsListTableProps>();
+const props = defineProps<HistoryEventsListTableProps>();
 
 const emit = defineEmits<{
   'edit-event': [data: HistoryEventEditData];
@@ -24,6 +28,16 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n({ useScope: 'global' });
+
+function findAllEventsFromArrayItem(items: HistoryEventEntry[]): HistoryEventEntry[] | undefined {
+  if (items.length === 0)
+    return undefined;
+
+  const firstId = items[0].identifier;
+
+  const arrayOnly: HistoryEventEntry[][] = props.allEvents.filter(event => Array.isArray(event));
+  return arrayOnly.find(event => event.map(item => item.identifier).includes(firstId));
+}
 </script>
 
 <template>
@@ -34,7 +48,10 @@ const { t } = useI18n({ useScope: 'global' });
           v-if="Array.isArray(item)"
           :key="`swap-${index}`"
           :events="item"
+          :all-events="findAllEventsFromArrayItem(item) || item"
+          :hide-actions="hideActions"
           :highlighted-identifiers="highlightedIdentifiers"
+          :selection="selection"
           @edit-event="emit('edit-event', $event)"
           @delete-event="emit('delete-event', $event)"
           @show:missing-rule-action="emit('show:missing-rule-action', $event)"
@@ -45,11 +62,13 @@ const { t } = useI18n({ useScope: 'global' });
           :key="item.identifier"
           class="flex-1"
           :item="item"
+          :hide-actions="hideActions"
           :index="index"
-          :events="flatten(events)"
+          :events="flatten(allEvents)"
           :event-group="eventGroup"
           :is-last="index === events.length - 1"
           :is-highlighted="highlightedIdentifiers?.includes(item.identifier.toString())"
+          :selection="selection"
           @edit-event="emit('edit-event', $event)"
           @delete-event="emit('delete-event', $event)"
           @show:missing-rule-action="emit('show:missing-rule-action', $event)"

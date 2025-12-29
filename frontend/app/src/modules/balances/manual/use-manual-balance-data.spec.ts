@@ -8,6 +8,7 @@ import { useManualBalanceData } from '@/modules/balances/manual/use-manual-balan
 import { useManualBalances } from '@/modules/balances/manual/use-manual-balances';
 import { useBalancesStore } from '@/modules/balances/use-balances-store';
 import { useBalancePricesStore } from '@/store/balances/prices';
+import { useGeneralSettingsStore } from '@/store/settings/general';
 import { useTaskStore } from '@/store/tasks';
 import { BalanceType } from '@/types/balances';
 
@@ -26,16 +27,16 @@ vi.mock('@/store/tasks', () => ({
   }),
 }));
 
-interface ManualBalance extends Omit<ManualBalanceWithValue, 'usdValue' | 'amount'> {
-  usdValue: string;
+interface ManualBalance extends Omit<ManualBalanceWithValue, 'amount' | 'value'> {
   amount: string;
+  value: string;
 }
 
 function toParsed(balance: ManualBalance): ManualBalanceWithValue {
   return {
     ...balance,
     amount: bigNumberify(balance.amount),
-    usdValue: bigNumberify(balance.usdValue),
+    value: bigNumberify(balance.value),
   };
 }
 
@@ -47,7 +48,7 @@ const balances: ManualBalance[] = [{
   label: 'My monero wallet',
   location: TRADE_LOCATION_BLOCKCHAIN,
   tags: [],
-  usdValue: '50',
+  value: '50',
 }, {
   amount: '30',
   asset: 'BTC',
@@ -56,7 +57,7 @@ const balances: ManualBalance[] = [{
   label: 'My another wallet',
   location: TRADE_LOCATION_BLOCKCHAIN,
   tags: [],
-  usdValue: '30',
+  value: '30',
 }, {
   amount: '60',
   asset: 'EUR',
@@ -65,7 +66,7 @@ const balances: ManualBalance[] = [{
   label: 'My Bank Account',
   location: TRADE_LOCATION_BANKS,
   tags: [],
-  usdValue: '60',
+  value: '60',
 }];
 
 async function updateBalances(balances: ManualBalance[]): Promise<void> {
@@ -92,6 +93,8 @@ describe('store::balances/manual', () => {
     setActivePinia(createPinia());
     store = useBalancesStore();
     const { exchangeRates, prices } = storeToRefs(useBalancePricesStore());
+    const { currency } = storeToRefs(useGeneralSettingsStore());
+    set(currency, { name: 'United States Dollar', tickerSymbol: 'USD', unicodeSymbol: '$', crypto: false });
     set(exchangeRates, { USD: bigNumberify(1) });
     set(prices, {
       ETH: ethPrice,
@@ -123,13 +126,13 @@ describe('store::balances/manual', () => {
     it('should show the total balance of a location', () => {
       const { manualBalanceByLocation } = useManualBalanceData();
       expect(get(manualBalanceByLocation)).toMatchObject([
-        { location: TRADE_LOCATION_BLOCKCHAIN, usdValue: bigNumberify(80) },
+        { location: TRADE_LOCATION_BLOCKCHAIN, value: bigNumberify(80) },
       ]);
     });
   });
 
   it('should update the prices for all assets and liabilities', () => {
-    const prices: AssetPrices = {
+    const newPrices: AssetPrices = {
       BTC: {
         isManualPrice: false,
         oracle: 'coingecko',
@@ -140,13 +143,22 @@ describe('store::balances/manual', () => {
         oracle: 'coingecko',
         value: bigNumberify(2),
       },
+      EUR: {
+        isManualPrice: false,
+        oracle: 'coingecko',
+        value: bigNumberify(1),
+      },
     };
 
-    store.updatePrices(prices);
+    // Update the price store so assetPriceInCurrentCurrency can find the prices
+    const { prices } = storeToRefs(useBalancePricesStore());
+    set(prices, newPrices);
+
+    store.updatePrices(newPrices);
     const { manualBalances, manualLiabilities } = storeToRefs(store);
-    expect(get(manualBalances)[0].usdValue).toEqual(bigNumberify(50).multipliedBy(2));
-    expect(get(manualBalances)[1].usdValue).toEqual(bigNumberify(30).multipliedBy(3));
-    expect(get(manualLiabilities)[0].usdValue).toEqual(bigNumberify(60).multipliedBy(1));
+    expect(get(manualBalances)[0].value).toEqual(bigNumberify(50).multipliedBy(2));
+    expect(get(manualBalances)[1].value).toEqual(bigNumberify(30).multipliedBy(3));
+    expect(get(manualLiabilities)[0].value).toEqual(bigNumberify(60).multipliedBy(1));
   });
 
   describe('should run create/update/delete operations', () => {

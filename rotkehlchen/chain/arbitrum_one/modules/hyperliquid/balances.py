@@ -33,17 +33,17 @@ class HyperliquidBalances(ProtocolWithBalance):
 
     def query_balances(self) -> 'BalancesSheetType':
         balances: BalancesSheetType = defaultdict(BalanceSheet)
-        if len(addresses_with_deposits := list(self.addresses_with_deposits(products=None))) == 0:
+        if len(addresses_with_deposits := list(self.addresses_with_deposits())) == 0:
             return balances
 
         hyperliquid = HyperliquidAPI()
         for user in addresses_with_deposits:
             user_balances = hyperliquid.query_balances(address=user)
             for asset, amount in user_balances.items():
-                token_price = Inquirer.find_usd_price(asset)
+                token_price = Inquirer.find_main_currency_price(asset)
                 balances[user].assets[asset][self.counterparty] += Balance(
                     amount=amount,
-                    usd_value=token_price * amount,
+                    value=token_price * amount,
                 )
 
         return balances

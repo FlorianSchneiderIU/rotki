@@ -4,13 +4,12 @@ from typing import TYPE_CHECKING
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.chain.evm.decoding.gearbox.constants import CPT_GEARBOX
 from rotkehlchen.errors.misc import RemoteError
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -44,7 +43,7 @@ class GearboxCommonBalances(ProtocolWithBalance):
     def query_balances(self) -> 'BalancesSheetType':
         """Query balances of staked gear tokens if deposit events are found."""
         balances: BalancesSheetType = defaultdict(BalanceSheet)
-        if len(addresses_with_deposits := list(self.addresses_with_deposits(products=[EvmProduct.STAKING]))) == 0:  # noqa: E501
+        if len(addresses_with_deposits := list(self.addresses_with_deposits())) == 0:
             return balances
 
         staking_contract = EvmContract(
@@ -69,7 +68,7 @@ class GearboxCommonBalances(ProtocolWithBalance):
         if len(results) == 0:
             return balances
 
-        gear_price = Inquirer.find_usd_price(self.gear_token)
+        gear_price = Inquirer.find_main_currency_price(self.gear_token)
         for idx, result in enumerate(results):
             staked_amount_raw = staking_contract.decode(
                 result=result,
@@ -82,7 +81,7 @@ class GearboxCommonBalances(ProtocolWithBalance):
             )
             balances[user_address].assets[self.gear_token][self.counterparty] += Balance(
                 amount=amount,
-                usd_value=amount * gear_price,
+                value=amount * gear_price,
             )
 
         return balances

@@ -3,22 +3,26 @@ import { builtinModules } from 'node:module';
 import path, { join, resolve } from 'node:path';
 import process from 'node:process';
 import VueI18nPlugin from '@intlify/unplugin-vue-i18n/vite';
+import { ruiIconsPlugin } from '@rotki/ui-library/vite-plugin';
 import vue from '@vitejs/plugin-vue';
 import AutoImport from 'unplugin-auto-import/vite';
 import Components from 'unplugin-vue-components/vite';
 import { VueRouterAutoImports } from 'unplugin-vue-router';
 import VueRouter from 'unplugin-vue-router/vite';
 import checker from 'vite-plugin-checker';
-import istanbul from 'vite-plugin-istanbul';
 import vueDevTools from 'vite-plugin-vue-devtools';
 import { defineConfig } from 'vitest/config';
+import { backendIcons } from './backend-icons.generated';
+import { backendIconsCachePlugin } from './scripts/extract-backend-icons';
 
 const PACKAGE_ROOT = __dirname;
+const PROJECT_ROOT = resolve(PACKAGE_ROOT, '../..');
+
 const envPath = process.env.VITE_PUBLIC_PATH;
 const publicPath = envPath || '/';
 const isDevelopment = process.env.NODE_ENV === 'development';
-const isCypress = !!process.env.VITE_CYPRESS;
 const isTest = !!process.env.VITE_TEST;
+const isCoverage = !!process.env.VITE_COVERAGE;
 const hmrEnabled = isDevelopment && !(process.env.CI && isTest);
 
 function RuiComponentResolver(): ComponentResolver {
@@ -84,6 +88,7 @@ export default defineConfig({
     ],
   },
   plugins: [
+    backendIconsCachePlugin(PROJECT_ROOT),
     VueRouter({
       importMode: 'async',
     }),
@@ -132,30 +137,39 @@ export default defineConfig({
         },
       ],
     }),
+    ruiIconsPlugin({
+      include: [
+        ...backendIcons,
+        // icons used by the components
+        'lu-minus',
+        'lu-message-square-quote',
+        'lu-equal',
+        'lu-map-pin-check-inside',
+        'lu-square-kanban',
+        'lu-corner-up-left',
+        'lu-droplets',
+        'lu-receipt-cent',
+        'lu-deposits',
+        'lu-liabilities',
+        'lu-palette',
+        'lu-slash',
+        'lu-monitor',
+      ],
+    }),
     VueI18nPlugin({
       include: [path.resolve(__dirname, './src/locales/**')],
     }),
     ...(!isTest && process.env.ENABLE_DEV_TOOLS ? [vueDevTools()] : []),
-    ...(isCypress
-      ? [
-          istanbul({
-            include: 'src/*',
-            exclude: ['node_modules', 'tests/', '**/*.d.ts'],
-            extension: ['.ts', '.vue'],
-            forceBuildInstrument: true,
-          }),
-        ]
-      : []),
   ],
   server: {
     port: 8080,
     hmr: hmrEnabled,
     watch: {
-      ignored: ['**/.e2e/**', '**/.nyc_output/**'],
+      ignored: ['**/.e2e/**'],
     },
   },
   build: {
-    sourcemap: isDevelopment || isTest,
+    sourcemap: isDevelopment || isTest || isCoverage,
     outDir: 'dist',
     assetsDir: '.',
     minify: true,
@@ -178,7 +192,7 @@ export default defineConfig({
           'vue-vendor': ['vue', 'vue-router', 'pinia', 'vue-i18n'],
           'common': ['@rotki/common', 'bignumber.js'],
           'ui-vendor': ['@rotki/ui-library'],
-          'chart': ['echarts', 'vue-echarts'],
+          'chart': ['echarts/core', 'echarts/charts', 'echarts/components', 'echarts/renderers', 'vue-echarts'],
           'editor': ['vanilla-jsoneditor'],
           'utils': [
             '@vueuse/math',
@@ -186,7 +200,7 @@ export default defineConfig({
             '@vueuse/shared',
             '@vuelidate/core',
             '@vuelidate/validators',
-            'axios',
+            'ofetch',
             'es-toolkit',
             'imask',
             'dayjs',

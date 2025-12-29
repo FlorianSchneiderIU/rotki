@@ -19,11 +19,15 @@ from rotkehlchen.chain.optimism.constants import OPTIMISM_GENESIS
 from rotkehlchen.chain.polygon_pos.constants import POLYGON_POS_GENESIS
 from rotkehlchen.chain.scroll.constants import SCROLL_GENESIS
 from rotkehlchen.db.constants import (
-    EVMTX_DECODED,
-    EVMTX_SPAM,
     EXTRAINTERNALTXPREFIX,
+    TX_DECODED,
+    TX_SPAM,
 )
-from rotkehlchen.db.filtering import EvmTransactionsFilterQuery, TransactionsNotDecodedFilterQuery
+from rotkehlchen.db.dbtx import DBCommonTx
+from rotkehlchen.db.filtering import (
+    EvmTransactionsFilterQuery,
+    EvmTransactionsNotDecodedFilterQuery,
+)
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -52,28 +56,14 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 if TYPE_CHECKING:
-    from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.db.drivers.gevent import DBCursor
 
 
-# This is only used in get_transaction_hashes_not_decoded and count_hashes_not_decoded
-# in conjunction with TransactionsNotDecodedFilterQuery. In that filter query we also
-# make sure to check that the evmtx_mapping value is that of the decoded attribute
-# The reason it happens there is that it needs to be in the WHERE
-TRANSACTIONS_MISSING_DECODING_QUERY = (
-    'evmtx_receipts AS A LEFT OUTER JOIN evm_tx_mappings AS B ON A.tx_id=B.tx_id '
-    'LEFT JOIN evm_transactions AS C ON A.tx_id=C.identifier '
-)
-
-
-class DBEvmTx:
+class DBEvmTx(DBCommonTx[ChecksumEvmAddress, EvmTransaction, EVMTxHash, EvmTransactionsFilterQuery, EvmTransactionsNotDecodedFilterQuery]):  # noqa: E501
     # Index in the SQL result tuple where authorization fields (nonce, delegated_address) begin  # noqa: E501
     AUTHORIZATION_DATA_START_INDEX: ClassVar[int] = 13
 
-    def __init__(self, database: 'DBHandler') -> None:
-        self.db = database
-
-    def add_evm_transactions(
+    def add_transactions(
             self,
             write_cursor: 'DBCursor',
             evm_transactions: list[EvmTransaction],
@@ -204,7 +194,7 @@ class DBEvmTx:
 
         return transactions
 
-    def get_evm_transactions(
+    def get_transactions(
             self,
             cursor: 'DBCursor',
             filter_: EvmTransactionsFilterQuery,
@@ -302,52 +292,22 @@ class DBEvmTx:
 
         return hashes
 
-    def get_transaction_hashes_not_decoded(
-            self,
-            chain_id: ChainID | None,
-            limit: int | None,
-    ) -> list[EVMTxHash]:
-        """Get transaction hashes for the transactions that have not been decoded.
-        Optionally by chain id.
-        If the limit argument is provided then it is used in the SQL query with
-        the default order.
-        When the addresses argument is provided only the transactions involving those
-        addresses are decoded.
-        """
-        query, bindings = TransactionsNotDecodedFilterQuery.make(
-            limit=limit,
-            chain_id=chain_id,
-        ).prepare()
-        querystr = 'SELECT C.tx_hash from ' + TRANSACTIONS_MISSING_DECODING_QUERY + query
+    def deserialize_tx_hash_from_db(self, raw_tx_hash: bytes) -> EVMTxHash:
+        """Given a raw tx hash from the DB, deserialize it to an EVMTxHash"""
+        return deserialize_evm_tx_hash(raw_tx_hash)
 
-        with self.db.conn.read_ctx() as cursor:
-            cursor.execute(querystr, bindings)
-            return [deserialize_evm_tx_hash(x[0]) for x in cursor]
-
-    def count_hashes_not_decoded(
-            self,
-            chain_id: ChainID | None,
-    ) -> int:
-        """
-        Count the number of transactions queried that have not been decoded. When the addresses
-        argument is provided only the transactions involving those addresses are decoded.
-        """
-        query, bindings = TransactionsNotDecodedFilterQuery.make(
-            limit=None,
-            chain_id=chain_id,
-        ).prepare()
-
-        querystr = 'SELECT COUNT(*) FROM ' + TRANSACTIONS_MISSING_DECODING_QUERY + query
-        with self.db.conn.read_ctx() as cursor:
-            cursor.execute(querystr, bindings)
-            return cursor.fetchone()[0]
+    def _get_txs_not_decoded_column_and_query(self) -> tuple[str, str]:
+        return 'C.tx_hash', (
+            'evmtx_receipts AS A LEFT OUTER JOIN evm_tx_mappings AS B ON A.tx_id=B.tx_id '
+            'LEFT JOIN evm_transactions AS C ON A.tx_id=C.identifier '
+        )
 
     def add_or_ignore_receipt_data(
             self,
             write_cursor: 'DBCursor',
             chain_id: ChainID,
             data: dict[str, Any],
-    ) -> None:
+    ) -> int:
         """Add tx receipt data as they are returned by the chain to the DB
 
         Also need to provide the chain id.
@@ -355,6 +315,7 @@ class DBEvmTx:
         This assumes the transaction is already in the DB. If the receipt data
         is already in the DB do nothing.
 
+        Returns the db identifier of the transaction corresponding to this receipt.
         May raise:
         - Key Error if any of the expected fields are missing
         - DeserializationError if there is a problem deserializing a value
@@ -384,7 +345,7 @@ class DBEvmTx:
             if 'UNIQUE constraint failed: evmtx_receipts.tx_id' not in str(e):
                 log.error(f'Failed to insert transaction {tx_id} receipt to the DB due to {e!s}')
                 raise
-            return  # otherwise something else added the receipt so we continue
+            return tx_id  # otherwise something else added the receipt so we continue
 
         for log_entry in data['logs']:
             write_cursor.execute(
@@ -411,6 +372,8 @@ class DBEvmTx:
                     'VALUES(? ,? ,?)',
                     topic_tuples,
                 )
+
+        return tx_id
 
     def get_receipt(
             self,
@@ -465,7 +428,7 @@ class DBEvmTx:
                         WITHDRAWAL_REQUEST_CONTRACT,
                     )
                 ):  # skip anonymous logs unless they are from specific addresses whose decoders properly handle it.  # noqa: E501
-                    log.debug(f'Ignoring anonymous tx log in {tx_hash.hex()} at {chain_id}')
+                    log.debug(f'Ignoring anonymous tx log in {tx_hash!s} at {chain_id}')
                     continue
 
                 tx_receipt.logs.append(tx_receipt_log)
@@ -522,20 +485,24 @@ class DBEvmTx:
                 return
             genesis_tx_id = genesis_tx_id[0]
 
-        dbevents.delete_events_by_tx_hash(
+        dbevents.delete_events_by_tx_ref(
             write_cursor=write_cursor,
-            tx_hashes=tx_hashes,
+            tx_refs=tx_hashes,
             location=Location.from_chain_id(chain_id),
         )
-        write_cursor.execute(  # delete genesis tx events related to the provided address
-            'DELETE FROM history_events WHERE identifier IN ('
-            'SELECT H.identifier from history_events H INNER JOIN evm_events_info E '
-            'ON H.identifier=E.identifier WHERE E.tx_hash=? AND H.location_label=?)',
-            (GENESIS_HASH, address),
+        # Delete genesis tx events related to the provided address
+        dbevents.delete_events_and_track(
+            write_cursor=write_cursor,
+            where_clause=(
+                'WHERE identifier IN (SELECT H.identifier from history_events H '
+                'INNER JOIN chain_events_info C ON H.identifier=C.identifier '
+                'WHERE C.tx_ref=? AND H.location_label=?)'
+            ),
+            where_bindings=(GENESIS_HASH, address),
         )
         genesis_events_count = write_cursor.execute(
-            'SELECT COUNT (*) FROM history_events H INNER JOIN evm_events_info E'
-            ' WHERE H.identifier=E.identifier and E.tx_hash=?',
+            'SELECT COUNT (*) FROM history_events H INNER JOIN chain_events_info C'
+            ' WHERE H.identifier=C.identifier and C.tx_ref=?',
             (GENESIS_HASH,),
         ).fetchone()[0]
         if genesis_events_count == 0:
@@ -547,18 +514,18 @@ class DBEvmTx:
         # Now delete all relevant transactions. By deleting all relevant transactions all tables
         # are cleared thanks to cascading (except for history_events which was cleared above)
         write_cursor.executemany(
-            'DELETE FROM evm_transactions WHERE tx_hash=? AND chain_id=? AND tx_hash NOT IN (SELECT tx_hash FROM evm_events_info)',  # noqa: E501
+            'DELETE FROM evm_transactions WHERE tx_hash=? AND chain_id=? AND tx_hash NOT IN (SELECT tx_ref FROM chain_events_info)',  # noqa: E501
             [(x, chain_id_serialized) for x in tx_hashes],
         )
         # Delete all remaining evm_tx_mappings so decoding can happen again
         write_cursor.executemany(
             'DELETE FROM evm_tx_mappings WHERE tx_id=? AND value IN (?, ?)',
-            [(x, EVMTX_DECODED, EVMTX_SPAM) for x in tx_ids],
+            [(x, TX_DECODED, TX_SPAM) for x in tx_ids],
         )
         # Delete any key_value_cache entries
         write_cursor.executemany(
             'DELETE FROM key_value_cache WHERE name LIKE ?',
-            [(f'{EXTRAINTERNALTXPREFIX}_{chain_id.value}_%_{tx_hash.hex()}',) for tx_hash in tx_hashes],  # noqa: E501
+            [(f'{EXTRAINTERNALTXPREFIX}_{chain_id.value}_%_{tx_hash!s}',) for tx_hash in tx_hashes],  # noqa: E501
         )
 
     def get_queried_range(
@@ -603,7 +570,7 @@ class DBEvmTx:
             chain_id: SUPPORTED_CHAIN_IDS,
     ) -> EvmTransaction:
         with self.db.conn.read_ctx() as cursor:
-            tx_in_db = self.get_evm_transactions(
+            tx_in_db = self.get_transactions(
                 cursor=cursor,
                 filter_=EvmTransactionsFilterQuery.make(
                     tx_hash=GENESIS_HASH,
@@ -645,7 +612,7 @@ class DBEvmTx:
                 nonce=0,
             )
             with self.db.user_write() as cursor:
-                self.add_evm_transactions(
+                self.add_transactions(
                     write_cursor=cursor,
                     evm_transactions=[tx],
                     relevant_address=account,
@@ -711,7 +678,7 @@ class DBEvmTx:
             return None
         return result[0]
 
-    def get_transactions_in_range(
+    def count_transactions_in_range(
             self,
             chain_id: SUPPORTED_CHAIN_IDS,
             from_ts: Timestamp,

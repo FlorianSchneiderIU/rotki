@@ -3,7 +3,7 @@ from typing import Any, Final, TypedDict, Unpack, overload
 
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.db.constants import EXTRAINTERNALTXPREFIX
-from rotkehlchen.types import BTCAddress, ChecksumEvmAddress, Timestamp
+from rotkehlchen.types import BTCAddress, ChecksumEvmAddress, SolanaAddress, Timestamp
 from rotkehlchen.utils.mixins.enums import Enum
 
 
@@ -28,6 +28,11 @@ class DBCacheStatic(Enum):
     LAST_SPARK_ASSETS_UPDATE: Final = 'last_spark_assets_update'
     LAST_DB_UPGRADE: Final = 'last_db_upgrade'
     DOCKER_DEVICE_INFO: Final = 'docker_device_info'
+    MONERIUM_OAUTH_CREDENTIALS: Final = 'monerium_oauth_credentials'
+    # Earliest timestamp from which balance caches are stale due to event modifications.
+    # When events are added/edited/deleted, balances must be recalculated from this point.
+    STALE_BALANCES_FROM_TS: Final = 'stale_balances_from_ts'
+    LAST_HISTORICAL_BALANCE_PROCESSING_TS: Final = 'last_historical_balance_processing_ts'
 
 
 class LabeledLocationArgsType(TypedDict):
@@ -42,8 +47,8 @@ class LabeledLocationIdArgsType(LabeledLocationArgsType):
 
 
 class AddressArgType(TypedDict):
-    """Type of kwargs, used to get the value of `DBCacheDynamic.WITHDRAWALS_TS`, `DBCacheDynamic.WITHDRAWALS_IDX` and `DBCacheDynamic.LAST_BITCOIN_TX_ID`"""  # noqa: E501
-    address: ChecksumEvmAddress | BTCAddress
+    """Type of kwargs, used to get the value of following `WITHDRAWALS_TS`, `WITHDRAWALS_IDX`, `LAST_BTC_TX_BLOCK`, `LAST_BCH_TX_BLOCK` and `SOLANA_TOKEN_ACCOUNT`"""  # noqa: E501
+    address: ChecksumEvmAddress | BTCAddress | SolanaAddress
 
 
 class IndexArgType(TypedDict):
@@ -67,12 +72,26 @@ class BinancePairLastTradeArgsType(TypedDict):
     queried_pair: str
 
 
+class IdentifierArgType(TypedDict):
+    """Type of kwargs, used to get the value of `DBCacheDynamic.MATCHED_ASSET_MOVEMENT`"""
+    identifier: int
+
+
 def _deserialize_int_from_str(value: str) -> int | None:
     return int(value)
 
 
 def _deserialize_timestamp_from_str(value: str) -> Timestamp | None:
     return Timestamp(int(value))
+
+
+def _deserialize_solana_token_account_from_str(value: str) -> tuple[SolanaAddress, SolanaAddress] | None:  # noqa: E501
+    """Deserialize cached token account data as (owner, mint) tuple from comma-separated string."""
+    try:
+        owner, mint = value.split(',')
+        return SolanaAddress(owner), SolanaAddress(mint)
+    except ValueError:
+        return None
 
 
 class DBCacheDynamic(Enum):
@@ -89,6 +108,9 @@ class DBCacheDynamic(Enum):
     BINANCE_PAIR_LAST_ID: Final = '{location}_{location_name}_{queried_pair}', _deserialize_int_from_str  # noqa: E501  # notice that location is added because it can be either binance or binance_us
     LAST_BTC_TX_BLOCK: Final = 'last_btc_tx_block_{address}', _deserialize_int_from_str
     LAST_BCH_TX_BLOCK: Final = 'last_bch_tx_block_{address}', _deserialize_int_from_str
+    LINEA_AIRDROP_ALLOCATION: Final = 'linea_airdrop_allocation_{address}', lambda x: x
+    SOLANA_TOKEN_ACCOUNT: Final = 'solana_token_account_{address}', _deserialize_solana_token_account_from_str  # noqa: E501
+    MATCHED_ASSET_MOVEMENT: Final = 'matched_asset_movement_{identifier}', _deserialize_int_from_str  # noqa: E501
 
     @overload
     def get_db_key(self, **kwargs: Unpack[LabeledLocationArgsType]) -> str:
@@ -108,6 +130,10 @@ class DBCacheDynamic(Enum):
 
     @overload
     def get_db_key(self, **kwargs: Unpack[IndexArgType]) -> str:
+        ...
+
+    @overload
+    def get_db_key(self, **kwargs: Unpack[IdentifierArgType]) -> str:
         ...
 
     def get_db_key(self, **kwargs: Any) -> str:

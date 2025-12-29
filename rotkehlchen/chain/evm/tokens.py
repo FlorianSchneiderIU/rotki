@@ -5,11 +5,11 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from rotkehlchen.assets.asset import Asset, EvmToken, Nft
-from rotkehlchen.balances.historical import HistoricalBalancesManager
-from rotkehlchen.chain.ethereum.utils import (
+from rotkehlchen.assets.utils import (
     token_normalized_value,
     token_normalized_value_decimals,
 )
+from rotkehlchen.balances.historical import HistoricalBalancesManager
 from rotkehlchen.chain.evm.proxies_inquirer import ProxyType
 from rotkehlchen.chain.evm.types import WeightedNode, asset_id_is_evm_token
 from rotkehlchen.chain.structures import EvmTokenDetectionData
@@ -138,10 +138,10 @@ def get_chunk_size_call_order(
     """
     if evm_inquirer.connected_to_any_node():
         chunk_size = web3_node_chunk_size
-        call_order = evm_inquirer.default_call_order(skip_etherscan=True)
+        call_order = evm_inquirer.default_call_order(skip_indexers=True)
     else:
         chunk_size = etherscan_chunk_size if evm_inquirer.chain_id != ChainID.ARBITRUM_ONE else arbiscan_chunksize  # noqa: E501
-        call_order = [evm_inquirer.etherscan_node]
+        call_order = [evm_inquirer.indexers_node]
 
     return chunk_size, call_order
 
@@ -500,8 +500,8 @@ class EvmTokens(ABC):  # noqa: B024
                     else:
                         addresses_to_balances[address][token] = balance
 
-        token_usd_price = cast('dict[EvmToken, Price]', Inquirer.find_usd_prices(list(tokens_with_balance)))  # noqa: E501
-        return dict(addresses_to_balances), token_usd_price
+        token_price = cast('dict[EvmToken, Price]', Inquirer.find_main_currency_prices(list(tokens_with_balance)))  # noqa: E501
+        return dict(addresses_to_balances), token_price
 
     def _get_token_exceptions(self) -> set[ChecksumEvmAddress]:
         """Returns a list of token addresses for which balances will not be queried"""
@@ -571,15 +571,16 @@ class EvmTokensWithProxies(EvmTokens, ABC):
                 proxy_last_queried_timestamp = None
                 for proxy_type in ProxyType:
                     proxy_detected_tokens: set[EvmToken] = set()
-                    if (proxy_address := proxies_mapping.get(proxy_type, {}).get(address, None)):
-                        single_proxy_detected_tokens, proxy_last_queried_timestamp = self.db.get_tokens_for_address(  # noqa: E501
-                            cursor=cursor,
-                            address=proxy_address,
-                            blockchain=self.evm_inquirer.blockchain,
-                            token_exceptions=self._per_chain_token_exceptions(),
-                        )
-                        if single_proxy_detected_tokens:
-                            proxy_detected_tokens |= set(single_proxy_detected_tokens)
+                    if (proxy_addresses := proxies_mapping.get(proxy_type, {}).get(address)) is not None:  # noqa: E501
+                        for proxy_address in proxy_addresses:
+                            single_proxy_detected_tokens, proxy_last_queried_timestamp = self.db.get_tokens_for_address(  # noqa: E501
+                                cursor=cursor,
+                                address=proxy_address,
+                                blockchain=self.evm_inquirer.blockchain,
+                                token_exceptions=self._per_chain_token_exceptions(),
+                            )
+                            if single_proxy_detected_tokens:
+                                proxy_detected_tokens |= set(single_proxy_detected_tokens)
 
                     if len(proxy_detected_tokens) != 0:
                         if detected_tokens_without_proxies is None:

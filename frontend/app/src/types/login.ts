@@ -4,9 +4,12 @@ import { z } from 'zod/v4';
 
 export type SyncApproval = 'yes' | 'no' | 'unknown';
 
-export interface LoginCredentials {
+export interface BasicLoginCredentials {
   readonly username: string;
   readonly password: string;
+}
+
+export interface LoginCredentials extends BasicLoginCredentials {
   readonly syncApproval?: SyncApproval;
   readonly resumeFromBackup?: boolean;
 }
@@ -17,7 +20,7 @@ export interface PremiumSetup {
   readonly syncDatabase: boolean;
 }
 
-export interface InitialSettings {
+interface InitialSettings {
   readonly submitUsageAnalytics: boolean;
 }
 

@@ -1,6 +1,8 @@
+from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.serialization.deserialize import deserialize_evm_address
 from rotkehlchen.types import (
-    EVM_TOKEN_KINDS,
-    SOLANA_TOKEN_KINDS,
+    EVM_TOKEN_KINDS_TYPE,
+    SOLANA_TOKEN_KINDS_TYPE,
     ChainID,
     ChecksumEvmAddress,
     SolanaAddress,
@@ -16,7 +18,7 @@ SOLANA_CHAIN_DIRECTIVE = 'solana'
 def evm_address_to_identifier(
         address: str,
         chain_id: ChainID,
-        token_type: EVM_TOKEN_KINDS = TokenKind.ERC20,
+        token_type: EVM_TOKEN_KINDS_TYPE = TokenKind.ERC20,
         collectible_id: str | None = None,
 ) -> str:
     """Format EVM token information into the CAIPs identifier format"""
@@ -24,6 +26,17 @@ def evm_address_to_identifier(
     if collectible_id is not None:
         return ident + f'/{collectible_id}'
     return ident
+
+
+def identifier_to_evm_address(identifier: str) -> ChecksumEvmAddress | None:
+    """Parse CAIPs identifier format and return the EVM address or None on error."""
+    if len(parts := identifier.split(':')) < 3 or parts[0] != EVM_CHAIN_DIRECTIVE:
+        return None
+
+    try:
+        return deserialize_evm_address(parts[2].split('/')[0])  # Don't include the token id for erc721  # noqa: E501
+    except DeserializationError:
+        return None
 
 
 def tokenid_to_collectible_id(identifier: str) -> str | None:
@@ -58,7 +71,10 @@ def strethaddress_to_identifier(address: str) -> str:
     )
 
 
-def solana_address_to_identifier(address: SolanaAddress, token_type: SOLANA_TOKEN_KINDS) -> str:
+def solana_address_to_identifier(
+        address: SolanaAddress,
+        token_type: SOLANA_TOKEN_KINDS_TYPE = TokenKind.SPL_TOKEN,
+) -> str:
     """Converts a Solana address and token type into a CAIP-19 identifier.
 
     Uses 'solana' prefix instead of full CAIP-2 chain reference to save database space.

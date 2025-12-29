@@ -4,7 +4,7 @@ import pytest
 
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.accounting.pnl import PNL, PnlTotals
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.fval import FVal
@@ -27,7 +27,7 @@ def test_receiving_value_from_tx(accountant, google_service):
     tx_hash = deserialize_evm_tx_hash('0x5cc0e6e62753551313412492296d5e57bea0a9d1ce507cc96aa4aa076c5bde7a')  # noqa: E501
     history = [
         EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=Timestamp(1569924574000),
             location=Location.ETHEREUM,
@@ -61,7 +61,7 @@ def test_gas_fees_after_year(accountant, google_service):
     tx_hash = deserialize_evm_tx_hash('0x5cc0e6e62753551313412492296d5e57bea0a9d1ce507cc96aa4aa076c5bde7a')  # noqa: E501
     history = [
         HistoryEvent(
-            event_identifier='1',
+            group_identifier='1',
             sequence_index=0,
             timestamp=TimestampMS(1539713238000),  # 178.615 EUR/ETH
             location=Location.ETHEREUM,
@@ -70,7 +70,7 @@ def test_gas_fees_after_year(accountant, google_service):
             asset=A_ETH,
             amount=ONE,
         ), EvmEvent(
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=TimestampMS(1640493374000),  # 4072.51 EUR/ETH
             location=Location.ETHEREUM,
@@ -110,7 +110,7 @@ def test_ignoring_transaction_from_accounting(accountant, google_service, databa
     history = [
         EvmEvent(
             identifier=1,
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=TimestampMS(1569924574000),
             location=Location.OPTIMISM,
@@ -123,7 +123,7 @@ def test_ignoring_transaction_from_accounting(accountant, google_service, databa
             address=addr2,
         ), EvmEvent(
             identifier=2,
-            tx_hash=tx_hash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=TimestampMS(1569924574000),
             location=Location.ETHEREUM,
@@ -138,7 +138,7 @@ def test_ignoring_transaction_from_accounting(accountant, google_service, databa
     with database.user_write() as write_cursor:
         database.add_to_ignored_action_ids(
             write_cursor=write_cursor,
-            identifiers=['10' + tx_hash.hex()],  # pylint: disable=no-member
+            identifiers=[f'10{tx_hash!s}'],
         )
     events = accounting_history_process(
         accountant,

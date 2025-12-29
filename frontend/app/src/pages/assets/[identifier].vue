@@ -14,7 +14,6 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import { type AssetResolutionOptions, useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useSpamAsset } from '@/composables/assets/spam';
 import { useAggregatedBalances } from '@/composables/balances/use-aggregated-balances';
-import { useSupportedChains } from '@/composables/info/chains';
 import { usePremium } from '@/composables/premium';
 import HashLink from '@/modules/common/links/HashLink.vue';
 import { AssetAmountAndValueOverTime } from '@/premium/premium';
@@ -22,6 +21,7 @@ import { useIgnoredAssetsStore } from '@/store/assets/ignored';
 import { useWhitelistedAssetsStore } from '@/store/assets/whitelisted';
 import { EVM_TOKEN } from '@/types/asset';
 import { NoteLocation } from '@/types/notes';
+import { getPublicServiceImagePath } from '@/utils/file';
 
 definePage({
   meta: {
@@ -50,8 +50,7 @@ const { coingeckoAsset, cryptocompareAsset } = externalLinks;
 const { ignoreAssetWithConfirmation, unignoreAsset, useIsAssetIgnored } = useIgnoredAssetsStore();
 const { isAssetWhitelisted, unWhitelistAsset, whitelistAsset } = useWhitelistedAssetsStore();
 const { markAssetsAsSpam, removeAssetFromSpamList } = useSpamAsset();
-const { assetInfo, assetName, assetSymbol, refetchAssetInfo, tokenAddress } = useAssetInfoRetrieval();
-const { getChain } = useSupportedChains();
+const { assetContractInfo, assetInfo, assetName, assetSymbol, refetchAssetInfo } = useAssetInfoRetrieval();
 const premium = usePremium();
 const { balances } = useAggregatedBalances();
 
@@ -74,14 +73,8 @@ const assetRetrievalOption = computed<AssetResolutionOptions>(() => ({
 const name = assetName(identifier, assetRetrievalOption);
 const symbol = assetSymbol(identifier, assetRetrievalOption);
 const asset = assetInfo(identifier, assetRetrievalOption);
-const address = tokenAddress(identifier);
-const chain = computed(() => {
-  const evmChain = get(asset)?.evmChain;
-  if (evmChain)
-    return getChain(evmChain);
+const contractInfo = assetContractInfo(identifier, assetRetrievalOption);
 
-  return undefined;
-});
 const isCustomAsset = computed(() => get(asset)?.isCustomAsset);
 
 const collectionId = computed<number | undefined>(() => {
@@ -194,19 +187,17 @@ async function toggleWhitelistAsset() {
 
         <div class="flex items-center gap-2 ml-4">
           <HashLink
-            v-if="address"
-            :location="chain"
+            v-if="contractInfo"
+            :location="contractInfo.location"
             type="token"
-            :text="address"
+            :text="contractInfo.address"
             display-mode="link"
             hide-text
             size="18"
             class="[&_a]:!p-2.5"
           />
 
-          <template
-            v-if="asset"
-          >
+          <template v-if="asset">
             <ExternalLink
               v-if="asset.coingecko"
               custom
@@ -219,7 +210,7 @@ async function toggleWhitelistAsset() {
                 <template #prepend>
                   <AppImage
                     size="30px"
-                    src="./assets/images/services/coingecko.svg"
+                    :src="getPublicServiceImagePath('coingecko.svg')"
                   />
                 </template>
               </RuiButton>
@@ -236,7 +227,7 @@ async function toggleWhitelistAsset() {
                 <template #prepend>
                   <AppImage
                     size="30px"
-                    src="./assets/images/services/cryptocompare.svg"
+                    :src="getPublicServiceImagePath('cryptocompare.svg')"
                   />
                 </template>
               </RuiButton>

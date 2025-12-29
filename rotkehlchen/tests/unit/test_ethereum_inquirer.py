@@ -1,21 +1,22 @@
 import json
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from unittest.mock import patch
 
 import pytest
 import requests
 
 from rotkehlchen.chain.accounts import BlockchainAccountData
-from rotkehlchen.chain.ethereum.constants import ETHEREUM_ETHERSCAN_NODE
+from rotkehlchen.chain.ethereum.constants import EVM_INDEXERS_NODE, EVM_INDEXERS_NODE_NAME
 from rotkehlchen.chain.ethereum.modules.thegraph.constants import CONTRACT_STAKING
 from rotkehlchen.chain.evm.constants import SWAPPED_TOPIC, ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
 from rotkehlchen.chain.evm.decoding.thegraph.constants import GRAPH_DELEGATION_TRANSFER_ABI
 from rotkehlchen.chain.evm.node_inquirer import _query_web3_get_logs
 from rotkehlchen.chain.evm.structures import EvmTxReceipt, EvmTxReceiptLog
-from rotkehlchen.chain.evm.types import WeightedNode, string_to_evm_address
+from rotkehlchen.chain.evm.types import EvmIndexer, WeightedNode, string_to_evm_address
 from rotkehlchen.db.evmtx import DBEvmTx
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.misc import EventNotInABI, RemoteError
 from rotkehlchen.tests.utils.checks import assert_serialized_dicts_equal
 from rotkehlchen.tests.utils.ethereum import (
@@ -28,7 +29,6 @@ from rotkehlchen.tests.utils.ethereum import (
 )
 from rotkehlchen.tests.utils.factories import make_evm_address
 from rotkehlchen.types import ChainID, EvmTransaction, SupportedBlockchain, deserialize_evm_tx_hash
-from rotkehlchen.utils.hexbytes import hexstring_to_bytes
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
@@ -84,7 +84,7 @@ def test_get_transaction_receipt(
                 BlockchainAccountData(chain=SupportedBlockchain.ETHEREUM, address=to_addy),
             ],
         )
-        db.add_evm_transactions(
+        db.add_transactions(
             cursor,
             [EvmTransaction(  # need to add the tx first
                 tx_hash=tx_hash,
@@ -140,7 +140,7 @@ def test_get_transaction_by_hash(ethereum_inquirer, call_order, ethereum_manager
         evm_inquirer=ethereum_inquirer,
     )
     result, _ = ethereum_inquirer.get_transaction_by_hash(
-        hexstring_to_bytes('0x5b180e3dcc19cd29c918b98c876f19393e07b74c07fd728102eb6241db3c2d5c'),
+        deserialize_evm_tx_hash('0x5b180e3dcc19cd29c918b98c876f19393e07b74c07fd728102eb6241db3c2d5c'),
         call_order=call_order,
     )
     expected_tx = EvmTransaction(
@@ -209,7 +209,7 @@ def test_call_contract(ethereum_inquirer, ethereum_manager_connect_at_start):
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
-@pytest.mark.parametrize('ethereum_manager_connect_at_start', [(INFURA_ETH_NODE, ETHEREUM_ETHERSCAN_NODE)])  # noqa: E501
+@pytest.mark.parametrize('ethereum_manager_connect_at_start', [(INFURA_ETH_NODE, EVM_INDEXERS_NODE)])  # noqa: E501
 def test_rpc_request_timeout(
         ethereum_inquirer: 'EthereumInquirer',
         ethereum_manager_connect_at_start: list[WeightedNode],
@@ -335,7 +335,7 @@ def test_get_log_and_receipt_etherscan_bad_tx_index(
     # Test getting the transaction receipt (also containing the log entries) does not raise
     # They seem to all be 0
     result = ethereum_inquirer.get_transaction_receipt(
-        hexstring_to_bytes('0x00eea6359d247c9433d32620358555a0fd3265378ff146b9511b7cff1ecb7829'),
+        deserialize_evm_tx_hash('0x00eea6359d247c9433d32620358555a0fd3265378ff146b9511b7cff1ecb7829'),
         call_order=call_order,
     )
     assert all(x['transactionIndex'] == 0 for x in result['logs'])
@@ -356,26 +356,81 @@ def test_get_log_and_receipt_etherscan_bad_tx_index(
         )
 
 
+BLOCKNUMBER_BY_TS: Final = 1577836800
+BLOCKNUMBER_BY_TS_BLOCK: Final = 9193265
+
+
 def _test_get_blocknumber_by_time(ethereum_inquirer):
-    result = ethereum_inquirer.get_blocknumber_by_time(1577836800)
-    assert result == 9193265
+    result = ethereum_inquirer.get_blocknumber_by_time(BLOCKNUMBER_BY_TS)
+    assert result == BLOCKNUMBER_BY_TS_BLOCK
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
-def test_get_blocknumber_by_time_blockscout(ethereum_inquirer):
-    """Queries blockscout api for known block times"""
-    _test_get_blocknumber_by_time(ethereum_inquirer)
+@pytest.mark.parametrize(
+    ('order', 'effects', 'expected_calls'),
+    [
+        (
+            (EvmIndexer.ETHERSCAN, EvmIndexer.ROUTESCAN, EvmIndexer.BLOCKSCOUT),
+            {
+                'etherscan': BLOCKNUMBER_BY_TS_BLOCK,
+                'routescan': RemoteError('Routescan should not be queried'),
+                'blockscout': RemoteError('Blockscout should not be queried'),
+            },
+            ['etherscan'],
+        ),
+        (
+            (EvmIndexer.ETHERSCAN, EvmIndexer.ROUTESCAN, EvmIndexer.BLOCKSCOUT),
+            {
+                'etherscan': RemoteError('Intentional etherscan error'),
+                'routescan': BLOCKNUMBER_BY_TS_BLOCK,
+                'blockscout': RemoteError('Blockscout should not be queried'),
+            },
+            ['etherscan', 'routescan'],
+        ),
+        (
+            (EvmIndexer.ROUTESCAN, EvmIndexer.BLOCKSCOUT, EvmIndexer.ETHERSCAN),
+            {
+                'etherscan': RemoteError('Etherscan should not be queried'),
+                'routescan': RemoteError('Intentional routescan error'),
+                'blockscout': BLOCKNUMBER_BY_TS_BLOCK,
+            },
+            ['routescan', 'blockscout'],
+        ),
+    ],
+)
+def test_get_blocknumber_by_time(
+        ethereum_inquirer,
+        order,
+        effects,
+        expected_calls,
+):
+    cached_settings = CachedSettings()
+    previous_order = cached_settings.get_entry('evm_indexers_order')
+    cached_settings.update_entry('evm_indexers_order', {ChainID.ETHEREUM: order})
+    calls: list[str] = []
 
+    def _side_effect(indexer_name: str) -> Callable[..., int]:
+        def _effect(*args, **kwargs) -> int:
+            calls.append(indexer_name)
+            response = effects[indexer_name]
+            if isinstance(response, Exception):
+                raise response
+            return response
+        return _effect
 
-@pytest.mark.vcr(filter_query_parameters=['apikey'])
-def test_get_blocknumber_by_time_etherscan(ethereum_inquirer):
-    """Queries etherscan for known block times"""
-    with patch.object(
-        ethereum_inquirer.blockscout,
-        'get_blocknumber_by_time',
-        side_effect=RemoteError('Intentional blockscout remote error to test etherscan'),
-    ):
-        _test_get_blocknumber_by_time(ethereum_inquirer)
+    try:
+        ethereum_inquirer.timestamp_to_block_cache[ChainID.ETHEREUM].remove(BLOCKNUMBER_BY_TS)
+        with (
+                patch.object(ethereum_inquirer.etherscan, 'get_blocknumber_by_time', side_effect=_side_effect('etherscan')),  # noqa: E501
+                patch.object(ethereum_inquirer.routescan, 'get_blocknumber_by_time', side_effect=_side_effect('routescan')),  # noqa: E501
+                patch.object(ethereum_inquirer.blockscout, 'get_blocknumber_by_time', side_effect=_side_effect('blockscout')),  # noqa: E501
+        ):
+            _test_get_blocknumber_by_time(ethereum_inquirer)
+    finally:
+        cached_settings.update_entry('evm_indexers_order', previous_order)
+        ethereum_inquirer.timestamp_to_block_cache[ChainID.ETHEREUM].remove(BLOCKNUMBER_BY_TS)
+
+    assert calls == expected_calls
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -398,7 +453,7 @@ def test_ethereum_nodes_prune_and_archive_status(
             assert not web3_node.is_pruned
             assert web3_node.is_archive
 
-    if ethereum_manager_connect_at_start[0].node_info.name == 'etherscan':
+    if ethereum_manager_connect_at_start[0].node_info.name == EVM_INDEXERS_NODE_NAME:
         assert len(ethereum_inquirer.rpc_mapping) == 0  # excluding etherscan
     else:
         assert len(ethereum_inquirer.rpc_mapping) == 1
@@ -471,7 +526,7 @@ def test_get_pruned_nodes_behaviour_in_txn_queries(
         side_effect=mock_etherscan_get_tx,
         autospec=True,
     )
-    call_order = pruned_node + [ETHEREUM_ETHERSCAN_NODE]
+    call_order = pruned_node + [EVM_INDEXERS_NODE]
     with etherscan_get_tx_patch, etherscan_get_tx_receipt_patch:
         ethereum_inquirer.maybe_get_transaction_by_hash(txn_hash, call_order)
         ethereum_inquirer.maybe_get_transaction_receipt(txn_hash, call_order)

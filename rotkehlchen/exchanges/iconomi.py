@@ -20,7 +20,7 @@ from rotkehlchen.exchanges.data_structures import Location, MarginPosition
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.exchanges.utils import SignatureGeneratorMixin
 from rotkehlchen.history.events.structures.swap import create_swap_events
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_fval, deserialize_fval_or_zero
@@ -173,17 +173,6 @@ class Iconomi(ExchangeInterface, SignatureGeneratorMixin):
                 asset = asset_from_iconomi(ticker)
 
                 try:
-                    usd_value = deserialize_fval(balance_info['value'], 'usd_value', 'iconomi')
-                except (DeserializationError, KeyError) as e:
-                    msg = str(e)
-                    if isinstance(e, KeyError):
-                        msg = f'missing key entry for {msg}.'
-                    self.msg_aggregator.add_warning(
-                        f'Skipping iconomi balance entry {balance_info} due to {msg}',
-                    )
-                    continue
-
-                try:
                     amount = deserialize_fval(balance_info['balance'])
                 except (DeserializationError, KeyError) as e:
                     msg = str(e)
@@ -194,9 +183,18 @@ class Iconomi(ExchangeInterface, SignatureGeneratorMixin):
                     )
                     continue
 
+                try:
+                    price = Inquirer.find_main_currency_price(asset)
+                except RemoteError as e:
+                    self.msg_aggregator.add_error(
+                        f'Error processing Iconomi balance entry due to inability to '
+                        f'query price: {e!s}. Skipping balance entry',
+                    )
+                    continue
+
                 assets_balance[asset] = Balance(
                     amount=amount,
-                    usd_value=usd_value,
+                    value=amount * price,
                 )
             except UnsupportedAsset:
                 self.msg_aggregator.add_warning(
@@ -245,9 +243,19 @@ class Iconomi(ExchangeInterface, SignatureGeneratorMixin):
                     )
                     continue
 
+                amount = usd_value / aust_usd_price
+                try:
+                    price = Inquirer.find_main_currency_price(self.aust)
+                except RemoteError as e:
+                    self.msg_aggregator.add_error(
+                        f'Error processing Iconomi balance entry due to inability to '
+                        f'query price: {e!s}. Skipping balance entry',
+                    )
+                    continue
+
                 assets_balance[self.aust] = Balance(
-                    amount=usd_value / aust_usd_price,
-                    usd_value=usd_value,
+                    amount=amount,
+                    value=amount * price,
                 )
             else:
                 self.msg_aggregator.add_warning(
@@ -261,6 +269,7 @@ class Iconomi(ExchangeInterface, SignatureGeneratorMixin):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
+            force_refresh: bool = False,
     ) -> tuple['Sequence[HistoryBaseEntry]', Timestamp]:
         page, all_transactions, events = 0, [], []
         while True:
@@ -296,7 +305,7 @@ class Iconomi(ExchangeInterface, SignatureGeneratorMixin):
                         amount=deserialize_fval_or_zero(tx['fee_amount']),
                     ),
                     location_label=self.name,
-                    event_identifier=create_event_identifier_from_unique_id(
+                    group_identifier=create_group_identifier_from_unique_id(
                         location=self.location,
                         unique_id=str(tx['transactionId']),
                     ),

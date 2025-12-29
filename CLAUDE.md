@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance for AI coding assistants (e.g., OpenAI Codex CLI, Claude Code, GitHub Copilot Chat) working with code in this repository.
 
 ## Project Overview
 
@@ -11,10 +11,19 @@ Rotki is a privacy-focused crypto portfolio management and tax reporting applica
 
 ## Development Commands
 
+### Prerequisites
+- Node.js 22+, pnpm 10+
+- Python 3.11+
+- Rust (stable toolchain)
+- uv (https://docs.astral.sh/uv/)
+
 ### Quick Start
 ```bash
-# Install dependencies (requires Node.js 22+, Python 3.11+, pnpm 10+)
+# Install JS dependencies at repo root
 pnpm install
+
+# (Python) Create/sync virtual env via uv
+uv sync
 
 # Run full development environment (frontend + backend + colibri)
 pnpm dev
@@ -26,7 +35,7 @@ pnpm dev:web
 ### Backend Development
 ```bash
 # Run backend server
-python -m rotkehlchen --api-port 4242 --websockets-port 4333
+uv run python -m rotkehlchen --api-port 4242 --websockets-port 4333
 
 # Run all backend tests
 uv run python pytestgeventwrapper.py
@@ -36,6 +45,9 @@ uv run python pytestgeventwrapper.py rotkehlchen/tests/api/test_assets.py
 
 # Run specific test
 uv run python pytestgeventwrapper.py rotkehlchen/tests/api/test_assets.py::test_add_user_asset
+
+# Filter tests with -k
+uv run python pytestgeventwrapper.py -k add_user_asset
 
 # Lint Python code
 uv run make lint
@@ -136,6 +148,8 @@ cargo run -- --database ../data/global.db --port 4343
 - **Always return explicit types from functions**: `function getName(): string { ... }`
 - **Always type reactive variables**: `const isLoading = ref<boolean>(false)`
 - **Always type computed properties**: `const fullName = computed<string>(() => ...)`
+- If a ref type can be undefined and the default value is undefined, **Don't explicitly put it as type or default value**: `const newId = ref<number>()`
+- **Always use `{ useScope: 'global' }` parameter for `useI18n()`**: `const { t } = useI18n({ useScope: 'global' });`
 
 #### Correct Examples:
 
@@ -148,8 +162,11 @@ const count = ref<number>(0);
 const items = ref<string[]>([]);
 const user = ref<User>();
 
+const { t } = useI18n({ useScope: 'global' });
+
 const isEven = computed<boolean>(() => get(count) % 2 === 0);
 const formattedName = computed<string>(() => `${get(firstName)} ${get(lastName)}`);
+const newId = ref<number>(); // this newId type is number | undefined.
 
 function getUserById(id: number): User | undefined {
   return get(users).find(user => user.id === id) || undefined;
@@ -173,8 +190,11 @@ const count = ref(0);
 const items = ref([]);
 const user = ref();
 
+const { t } = useI18n();
+
 const isEven = computed(() => count.value % 2 === 0);
 const formattedName = computed(() => `${firstName.value} ${lastName.value}`);
+const newId = ref<number | undefined>(undefined);
 
 function getUserById(id: number) {
   return users.value.find(user => user.id === id) || undefined;
@@ -210,18 +230,18 @@ async function fetchData() {
     'update:msg': [msg: string];
   }>();
   ```
-- Use `$style` in templates instead of `useCssModules`
 - Use `$attrs` in templates instead of `useAttrs`
 
 #### Pinia Store Structure
 1. State definitions
-2. Computed getters  
+2. Computed getters
 3. Actions
 4. Optional watchers
 
 #### Styling
-- Transitioning from scoped SCSS with BEM to tailwind
-- Follow existing patterns for consistency
+- Use Tailwind CSS for all styling
+- Scoped CSS modules (`<style module>`) should only be used for Vue `TransitionGroup` animations
+- Do not use scoped SCSS with BEM naming conventions
 
 #### Localization
 - For the localization files (en.json, es.json, etc.), the keys should be ordered alphabetically.
@@ -234,7 +254,7 @@ async function fetchData() {
   // Example structure:
   src/modules/balances/use-balances-store.ts
   src/modules/balances/use-balances-store.spec.ts
-  
+
   src/composables/accounts/use-account-import-export.ts
   src/composables/accounts/use-account-import-export.spec.ts
   ```
@@ -281,7 +301,7 @@ In very simple terms, the way the decoding works is that we go through all the t
 
 The event creation consists of creating a `HistoryBaseEntry`. These are the most basic form of events in rotki and are used everywhere. The fields as far as decoded transactions are concerned are explained below:
 
-- `event_identifier` is always the transaction hash. This identifies history events in the same transaction.
+- `group_identifier` is always the transaction hash. This identifies history events in the same transaction.
 - `sequence_index` is the order of the event in the transaction. Many times this is the log index, but decoders tend to play with this to make events appear in a specific way.
 - `asset` is the asset involved in the event.
 - `balance` is the balance of the involved asset.
@@ -317,14 +337,11 @@ The mapping of these HistoryEvents types, subtypes, and categories is done in [r
 
 ### Frontend Testing
 - Vitest for unit tests with Vue Test Utils
-- Cypress for E2E testing
-- Component testing with jsdom
+- Playwright for E2E testing
+- Component tests should follow existing patterns in `frontend/app/tests/` and `*.spec.ts`
 
-## Build and Packaging
+## Packaging
 ```bash
-# Build Electron app for current platform
-pnpm electron:build
-
 # Package for distribution (requires proper environment setup)
 python package.py
 ```
@@ -343,16 +360,15 @@ python package.py
 5. WebSocket messages follow specific format - check `api/websockets/typedefs.py`
 6. For all python backend constants make sure to use the `Final` type specifier.
 
-
 ## Committing
 - Commits should be just to the point, not too long and not too short.
 - Commit titles should not exceed 50 characters.
 - Give a description of what the commit does in a short title. If more information is needed, then add a blank line and afterward elaborate with as much information as needed.
 - Commits should do one thing; if two commits both do the same thing, that's a good sign they should be combined.
-- Do not add Co-Authored-By: Claude or similar anywhere in the commit.
+- Do not add Co-Authored-By entries for any AI tool.
 
 ## Opening PRs
-- Do not add Co-Authored-By: Claude or similar anywhere.
+- Do not add Co-Authored-By entries for any AI tool.
 
 ## Common Issues & Solutions
 - Frontend build fails: Run `pnpm run clean:modules` then `pnpm install --frozen-lockfile`
@@ -426,4 +442,4 @@ When reviewing code changes, follow this systematic approach:
   ✅ CORRECT: '0x5A0b54D5dc17e0AadC383d2db43B0a0D3E029c4c'
   ❌ WRONG: '0x5a0b54d5dc17e0aadc383d2db43b0a0d3e029c4c'
 - If you see "Invalid XXX account in DB" it's almost certain the address is not checksummed. Always checksum addresses you use with to_checksum_address
-- string_to_evm_address() is just a no-op typing function. It will not checksum the literal argument to a checksummed evm address. That means you should make sure to only give checksummed EVM address literals to it
+- `string_to_evm_address()` is just a no-op typing function. It will not checksum the literal argument to a checksummed evm address. That means you should make sure to only give checksummed EVM address literals to it

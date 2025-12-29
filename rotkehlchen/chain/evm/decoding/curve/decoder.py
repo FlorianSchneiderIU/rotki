@@ -3,8 +3,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.assets.utils import TokenEncounterInfo
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value, asset_raw_value
+from rotkehlchen.assets.utils import TokenEncounterInfo, asset_normalized_value, asset_raw_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import (
     ADD_LIQUIDITY_DYNAMIC_ASSETS,
     DEPOSIT_TOPIC_V2,
@@ -36,34 +37,31 @@ from rotkehlchen.chain.evm.decoding.curve.curve_cache import (
     read_curve_pools_and_gauges,
 )
 from rotkehlchen.chain.evm.decoding.interfaces import (
-    DecoderInterface,
+    EvmDecoderInterface,
     ReloadablePoolsAndGaugesDecoderMixin,
 )
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     FAILED_ENRICHMENT_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
     EnricherContext,
+    EvmDecodingOutput,
     TransferEnrichmentOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.resolver import evm_address_to_identifier
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.misc import NotERC20Conformant, NotERC721Conformant
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import CacheType, ChecksumEvmAddress, EvmTransaction, TokenKind
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.user_messages import MessagesAggregator
@@ -73,12 +71,12 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin):
+class CurveCommonDecoder(EvmDecoderInterface, ReloadablePoolsAndGaugesDecoderMixin):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',  # pylint: disable=unused-argument
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             native_currency: 'Asset',
             aave_pools: set['ChecksumEvmAddress'],
@@ -143,7 +141,7 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
             all_logs: list[EvmTxReceiptLog],
             decoded_events: list['EvmEvent'],
             user_or_contract_address: ChecksumEvmAddress,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """Decode information related to withdrawing assets from curve pools"""
         withdrawal_events: list[EvmEvent] = []
         return_event: EvmEvent | None = None
@@ -163,7 +161,7 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
                 event.event_type = HistoryEventType.WITHDRAWAL
                 event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
                 event.counterparty = CPT_CURVE
-                event.notes = f'Remove {event.amount} {crypto_asset.symbol} from the curve pool'
+                event.notes = f'Remove {event.amount} {crypto_asset.symbol} from {tx_log.address} curve pool'  # noqa: E501
                 withdrawal_events.append(event)
             elif (  # Withdraw send wrapped
                 event.event_type == HistoryEventType.SPEND and
@@ -242,13 +240,13 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
         if return_event is not None:  # find withdrawn assets through the logs
             withdrawn_assets = [event.asset for event in withdrawal_events] + [
                 withdrawn_asset
-                for _log in all_logs[all_logs.index(tx_log) + 1:] if (
-                    (_log.topics[0] == ERC20_OR_ERC721_TRANSFER) and
-                    (bytes_to_address(_log.topics[1]) == return_event.address) and
-                    self.base.is_tracked(bytes_to_address(_log.topics[2])) and
+                for i_log in all_logs[all_logs.index(tx_log) + 1:] if (
+                    (i_log.topics[0] == ERC20_OR_ERC721_TRANSFER) and
+                    (bytes_to_address(i_log.topics[1]) == return_event.address) and
+                    self.base.is_tracked(bytes_to_address(i_log.topics[2])) and
                     (withdrawn_asset := self._read_curve_asset(
-                        asset_address=_log.address,
-                        encounter=TokenEncounterInfo(tx_hash=transaction.tx_hash),
+                        asset_address=i_log.address,
+                        encounter=TokenEncounterInfo(tx_ref=transaction.tx_hash),
                     )) is not None
                 )
             ]
@@ -275,7 +273,7 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
                         to_counterparty=CPT_CURVE,
                     ) for withdrawal_asset in withdrawn_assets]
                     action_items[0].paired_events_data = ((return_event,), True)
-                    return DecodingOutput(action_items=action_items)
+                    return EvmDecodingOutput(action_items=action_items)
 
                 maybe_reshuffle_events(
                     ordered_events=[return_event] + withdrawal_events,
@@ -286,11 +284,11 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
             log.error(
                 f'Expected to see a return pool token event and '
                 f'withdrawal events for a curve pool, but have not found them. '
-                f'Tx_hash: {transaction.tx_hash.hex()} '
+                f'Tx_hash: {transaction.tx_hash!s} '
                 f'User address: {user_or_contract_address}',
             )
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _decode_curve_deposit_events(
             self,
@@ -299,7 +297,7 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
             all_logs: list[EvmTxReceiptLog],
             decoded_events: list['EvmEvent'],
             user_or_contract_address: ChecksumEvmAddress,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """Decode information related to depositing assets in curve pools"""
         deposit_events: list[EvmEvent] = []
         receive_event: EvmEvent | None = None
@@ -338,8 +336,8 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
                 event.event_subtype == HistoryEventSubType.NONE
             ):
                 is_deposit_and_stake = any(  # check if this is a deposit-and-stake operation
-                    _log.topics[0] == ADD_LIQUIDITY_IN_DEPOSIT_AND_STAKE
-                    for _log in all_logs
+                    i_log.topics[0] == ADD_LIQUIDITY_IN_DEPOSIT_AND_STAKE
+                    for i_log in all_logs
                 )
 
                 if (
@@ -380,14 +378,14 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
                     # we need to check if there is a transfer targeting the same contract address
                     # (should not be the user address) and if so save the address of the pool
                     # example: https://gnosisscan.io/tx/0xcbeaaee59405d5f7fd456dc510f1b841cc1329cd9624255ce64c894ac6643bd7  # noqa: E501
-                    for _log in all_logs:
+                    for i_log in all_logs:
                         if (
-                            _log.topics[0] == ERC20_OR_ERC721_TRANSFER and
-                            bytes_to_address(_log.topics[1]) == ZERO_ADDRESS and
-                            bytes_to_address(_log.topics[2]) == user_or_contract_address and
-                            _log.log_index < tx_log.log_index
+                            i_log.topics[0] == ERC20_OR_ERC721_TRANSFER and
+                            bytes_to_address(i_log.topics[1]) == ZERO_ADDRESS and
+                            bytes_to_address(i_log.topics[2]) == user_or_contract_address and
+                            i_log.log_index < tx_log.log_index
                         ):
-                            event.extra_data = {'address_pool_tokens_received': _log.address}
+                            event.extra_data = {'address_pool_tokens_received': i_log.address}
                             break
             elif (
                 event.event_type == HistoryEventType.DEPOSIT and
@@ -405,25 +403,25 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
 
         if received_asset is None:  # find lp_tokens through the logs
             lp_and_gauge_token_addresses = None
-            for _log in all_logs:
+            for x_log in all_logs:
                 # first search for the pool address, because it may come after the receive event
-                if _log.topics[0] in ADD_LIQUIDITY_EVENTS:
+                if x_log.topics[0] in ADD_LIQUIDITY_EVENTS:
                     lp_and_gauge_token_addresses = get_lp_and_gauge_token_addresses(
-                        pool_address=_log.address,
-                        chain_id=self.evm_inquirer.chain_id,
+                        pool_address=x_log.address,
+                        chain_id=self.node_inquirer.chain_id,
                     )
 
             if lp_and_gauge_token_addresses is not None:
                 deposit_addresses = {event.address for event in deposit_events} | {ZERO_ADDRESS}
-                for _log in all_logs[all_logs.index(tx_log) + 1:]:
+                for i_log in all_logs[all_logs.index(tx_log) + 1:]:
                     if (  # find the first log after deposit, where user receives the token from a deposit address  # noqa: E501
-                        (_log.topics[0] == ERC20_OR_ERC721_TRANSFER) and
-                        (bytes_to_address(_log.topics[1]) in deposit_addresses) and
-                        self.base.is_tracked(bytes_to_address(_log.topics[2])) and
-                        _log.address in lp_and_gauge_token_addresses and
+                        (i_log.topics[0] == ERC20_OR_ERC721_TRANSFER) and
+                        (bytes_to_address(i_log.topics[1]) in deposit_addresses) and
+                        self.base.is_tracked(bytes_to_address(i_log.topics[2])) and
+                        i_log.address in lp_and_gauge_token_addresses and
                         (received_asset := self._read_curve_asset(
-                            asset_address=_log.address,
-                            encounter=TokenEncounterInfo(tx_hash=transaction.tx_hash),
+                            asset_address=i_log.address,
+                            encounter=TokenEncounterInfo(tx_ref=transaction.tx_hash),
                         )) is not None
                     ):
                         break
@@ -438,7 +436,7 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
             len(deposit_events) > 0 and
             received_asset is not None
         ):  # for deposit zap contracts, this is handled using an action item
-            return DecodingOutput(
+            return EvmDecodingOutput(
                 action_items=[ActionItem(
                     action='transform',
                     from_event_type=HistoryEventType.RECEIVE,
@@ -460,13 +458,13 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
             log.warning(  # can happen as part of complicated swaps
                 f'Expected to see a receive pool token event and deposit '
                 f'events for a curve pool, but have not found them. '
-                f'Tx_hash: {transaction.tx_hash.hex()} '
+                f'Tx_hash: {transaction.tx_hash!s} '
                 f'User address: {user_or_contract_address}',
             )
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_curve_trades(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_curve_trades(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode curve trades made via single pools or curve swap router
         First determine:
         - `spender_address`
@@ -553,13 +551,13 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
         if spender_address is None or receiver_address is None or raw_bought_amount is None:
             log.error(
                 f'Did not find spend or receive addresses or raw bought amount for a curve swap. '
-                f'{context.transaction.tx_hash.hex()}.',
+                f'{context.transaction.tx_hash!s}.',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         sold_asset = self._read_curve_asset(
             asset_address=sold_token_address,
-            encounter=(encounter := TokenEncounterInfo(tx_hash=context.transaction.tx_hash)),
+            encounter=(encounter := TokenEncounterInfo(tx_ref=context.transaction.tx_hash)),
         )
         bought_asset = self._read_curve_asset(
             asset_address=bought_token_address,
@@ -603,13 +601,13 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
         else:
             log.debug(
                 f'Did not find spend and receive events for a curve swap. '
-                f'{context.transaction.tx_hash.hex()}. Probably some aggregator was used and '
+                f'{context.transaction.tx_hash!s}. Probably some aggregator was used and '
                 f'decoding needs to happen in the aggregator-specific decoder.',
             )
 
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)
 
-    def _decode_deposit_and_stake(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_deposit_and_stake(self, context: DecoderContext) -> EvmDecodingOutput:
         """
         Enrich the transfer for deposit and stake to save the amount of gauge tokens
         received. We need to match against transfers manually because they are not
@@ -617,10 +615,10 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
         """
         if (pool_addresses := self.pools.get(context.tx_log.address)) is None:
             log.error(
-                f'Curve pool for {self.evm_inquirer.chain_name} {context.tx_log.address} '
-                f'not present in cache at {context.transaction.tx_hash.hex()}. Skipping',
+                f'Curve pool for {self.node_inquirer.chain_name} {context.tx_log.address} '
+                f'not present in cache at {context.transaction.tx_hash!s}. Skipping',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         provider = bytes_to_address(context.tx_log.topics[1])
         deposited_amounts = [
@@ -631,7 +629,7 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
         pool_assets = [
             Asset(evm_address_to_identifier(
                 address=address,
-                chain_id=self.evm_inquirer.chain_id,
+                chain_id=self.node_inquirer.chain_id,
                 token_type=TokenKind.ERC20,
             )) if address != ETH_SPECIAL_ADDRESS else A_ETH for address in pool_addresses
         ]
@@ -674,9 +672,9 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
             else:
                 log.error(f'Could not find event depositing any of {deposited_amounts} in {context.transaction}. Continuing')  # noqa: E501
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_pool_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_pool_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] in REMOVE_LIQUIDITY_EVENTS:
             # it can either be the user or a deposit zap contract
             user_or_contract_address = bytes_to_address(context.tx_log.topics[1])
@@ -709,11 +707,11 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
         ):
             return self._decode_curve_trades(context=context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_gauge_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_gauge_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] not in (DEPOSIT_TOPIC_V2, WITHDRAW_TOPIC_V2):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         provider = bytes_to_address(context.tx_log.topics[1])
         gauge_address = context.tx_log.address
@@ -723,7 +721,7 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
         # get pool tokens for this gauge
         lp_and_gauge_token_addresses = get_lp_and_gauge_token_addresses(
             pool_address=context.tx_log.address,
-            chain_id=self.evm_inquirer.chain_id,
+            chain_id=self.node_inquirer.chain_id,
         )
         pool_tokens = []
         for address in lp_and_gauge_token_addresses:
@@ -732,7 +730,7 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
         # if gauge token is None, that means the gauge is an old one, without any token
         if (gauge_token := self._read_curve_asset(
             asset_address=gauge_address,
-            encounter=TokenEncounterInfo(tx_hash=context.transaction.tx_hash),
+            encounter=TokenEncounterInfo(tx_ref=context.transaction.tx_hash),
         )) is not None:
             try:
                 gauge_token = gauge_token.resolve_to_evm_token()
@@ -765,7 +763,6 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
             ):
                 evm_asset = event.asset.resolve_to_evm_token()
                 event.counterparty = CPT_CURVE
-                event.product = EvmProduct.GAUGE
                 found_event_modifying_balances = True
                 gauge_events.append(event)
                 if context.tx_log.topics[0] == DEPOSIT_TOPIC_V2:
@@ -801,7 +798,7 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
             paired_events_data=(gauge_events, from_event_type == HistoryEventType.RECEIVE),  # pyright: ignore  # the above if check makes sure from_event_type exists
         )]
 
-        return DecodingOutput(
+        return EvmDecodingOutput(
             refresh_balances=found_event_modifying_balances,
             matched_counterparty=CPT_CURVE,
             action_items=action_items,
@@ -826,13 +823,13 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
             return TransferEnrichmentOutput(matched_counterparty=CPT_CURVE)
         return FAILED_ENRICHMENT_OUTPUT
 
-    def decode_gauge_mints(self, context: DecoderContext) -> DecodingOutput:
+    def decode_gauge_mints(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes minting of CRV happening in L2s via the ChildLiquidityGaugeFactory contract"""
         if (
             context.tx_log.topics[0] != MINTED_CRV or
             not self.base.is_tracked(user_address := bytes_to_address(context.tx_log.topics[1]))
         ):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if len(context.tx_log.topics) == 2:  # CRV minter, gauge adddres not indexed
             gauge_address = bytes_to_address(context.tx_log.data[:32])
@@ -854,13 +851,9 @@ class CurveCommonDecoder(DecoderInterface, ReloadablePoolsAndGaugesDecoderMixin)
         else:
             log.error(f'Failed to match curve mint event in {context.transaction}. Skipping...')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
-
-    @staticmethod
-    def possible_products() -> dict[str, list[EvmProduct]]:
-        return {CPT_CURVE: [EvmProduct.GAUGE]}
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:
         mappings = dict.fromkeys(self.curve_swap_routers, (self._decode_pool_events,))

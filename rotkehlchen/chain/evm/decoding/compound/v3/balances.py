@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import EvmToken
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.constants import ZERO
@@ -69,20 +69,23 @@ class Compoundv3Balances(ProtocolWithBalance):
         """Fetch the unique collateral tokens we need to query the comet contracts for"""
         unique_collaterals: dict[ChecksumEvmAddress, set[CompoundArguments]] = defaultdict(set)
         for user_address, events in self.addresses_with_activity(
-            event_types={(HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_FOR_WRAPPED)},
+            event_types={(HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET)},
         ).items():
             for event in events:
                 if event.address is None:
                     continue
 
-                try:
-                    compound_token = event.asset.resolve_to_evm_token()
-                except (UnknownAsset, WrongAssetType):
-                    log.warning(
-                        'Skipping compound v3 supply event during balance query since the asset '
-                        'is not an EVM token so not needed in COMET query',
-                    )
-                    continue
+                if event.asset == self.evm_inquirer.native_token:
+                    compound_token = self.evm_inquirer.wrapped_native_token
+                else:
+                    try:
+                        compound_token = event.asset.resolve_to_evm_token()
+                    except (UnknownAsset, WrongAssetType):
+                        log.warning(
+                            'Skipping compound v3 supply event during balance query since '
+                            'the asset is not an EVM token so not needed in COMET query',
+                        )
+                        continue
 
                 unique_collaterals[event.address].add(
                     CompoundArguments(
@@ -134,7 +137,7 @@ class Compoundv3Balances(ProtocolWithBalance):
                 except (UnknownAsset, WrongAssetType) as e:
                     log.error(
                         "Failed to resolve compound v3 borrow event's token and/or its "
-                        f'underlying token in {event.location} {event.tx_hash.hex()} due to {e!s}. Skipping.',  # noqa: E501
+                        f'underlying token in {event.location} {event.tx_ref!s} due to {e!s}. Skipping.',  # noqa: E501
                     )
                     continue
 
@@ -193,7 +196,7 @@ class Compoundv3Balances(ProtocolWithBalance):
                 token_decimals=collateral_asset.decimals,
             )
 
-            if (asset_price := Inquirer.find_usd_price(asset=collateral_asset)) == ZERO:
+            if (asset_price := Inquirer.find_main_currency_price(collateral_asset)) == ZERO:
                 log.error(
                     f'Failed to query price of {collateral_asset!s} '
                     'while fetching the collateral balances of Compound v3',
@@ -202,7 +205,7 @@ class Compoundv3Balances(ProtocolWithBalance):
 
             balances[calls_arguments[idx].user_address].assets[collateral_asset][self.counterparty] += Balance(  # noqa: E501
                 amount=collateral_balance,
-                usd_value=collateral_balance * asset_price,
+                value=collateral_balance * asset_price,
             )
 
         return balances
@@ -262,7 +265,7 @@ class Compoundv3Balances(ProtocolWithBalance):
             )
 
             # query the current price of the underlying asset
-            if (asset_price := Inquirer.find_usd_price(asset=underlying_token[calls[idx][0]])) == ZERO:  # noqa: E501
+            if (asset_price := Inquirer.find_main_currency_price(underlying_token[calls[idx][0]])) == ZERO:  # noqa: E501
                 log.error(
                     f'Failed to query price of {underlying_token[calls[idx][0]]!s} '
                     'while fetching the liability balances of Compound v3',
@@ -271,7 +274,7 @@ class Compoundv3Balances(ProtocolWithBalance):
 
             balances[calls_arguments[idx].user_address].liabilities[underlying_token[calls[idx][0]]][self.counterparty] += Balance(  # noqa: E501
                 amount=borrow_balance,
-                usd_value=borrow_balance * asset_price,
+                value=borrow_balance * asset_price,
             )
 
         return balances

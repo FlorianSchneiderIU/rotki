@@ -5,17 +5,15 @@ from typing import TYPE_CHECKING, Final
 from eth_typing.abi import ABI
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
-from rotkehlchen.assets.utils import get_or_create_evm_token
+from rotkehlchen.assets.utils import asset_normalized_value, get_or_create_evm_token
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
 from rotkehlchen.chain.ethereum.modules.eigenlayer.utils import get_eigenpods_to_owners_mapping
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.db.filtering import EvmEventFilterQuery
 from rotkehlchen.errors.misc import NotERC20Conformant, RemoteError
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -89,7 +87,7 @@ class EigenlayerBalances(ProtocolWithBalance):
         self.evm_inquirer: EthereumInquirer
 
     def _query_lst_deposits(self, balances: 'BalancesSheetType') -> 'BalancesSheetType':
-        addresses_with_deposits = self.addresses_with_deposits(products=[EvmProduct.STAKING])
+        addresses_with_deposits = self.addresses_with_deposits()
         # remap all events into a list that will contain all pairs (depositor, strategy)
         deposits = set()
         for depositor, event_list in addresses_with_deposits.items():
@@ -115,10 +113,10 @@ class EigenlayerBalances(ProtocolWithBalance):
                 )
                 continue
 
-            token_price = Inquirer.find_usd_price(token)
+            token_price = Inquirer.find_main_currency_price(token)
             balances[depositor].assets[token][self.counterparty] += Balance(
                 amount=amount,
-                usd_value=token_price * amount,
+                value=token_price * amount,
             )
 
         return balances
@@ -149,7 +147,7 @@ class EigenlayerBalances(ProtocolWithBalance):
 
             # here we are with a completed withdrawal that has not been matched, so redecode to try and match  # noqa: E501
             self.tx_decoder.decode_transaction_hashes(
-                tx_hashes=[completed_withdrawal.tx_hash],
+                tx_hashes=[completed_withdrawal.tx_ref],
                 ignore_cache=True,
             )
 
@@ -177,10 +175,10 @@ class EigenlayerBalances(ProtocolWithBalance):
                     log.error(f'Unexpected eigenlayer withdrawal queueing event {event}. Missing amount from extra data. Skipping.')  # noqa: E501
                     continue
 
-                token_price = Inquirer.find_usd_price(event.asset)
+                token_price = Inquirer.find_main_currency_price(event.asset)
                 balances[withdrawer].assets[event.asset][self.counterparty] += Balance(
                     amount=(amount := FVal(str_amount)),
-                    usd_value=token_price * amount,
+                    value=token_price * amount,
                 )
 
         return balances
@@ -190,12 +188,12 @@ class EigenlayerBalances(ProtocolWithBalance):
         if len(eigenpod_to_owner := get_eigenpods_to_owners_mapping(self.event_db.db)) == 0:
             return balances
 
-        eth_price = Inquirer.find_usd_price(A_ETH)  # now query all eigenpod balances and add it
+        eth_price = Inquirer.find_main_currency_price(A_ETH)  # now query all eigenpod balances and add it  # noqa: E501
         for eigenpod_address, amount in self.evm_inquirer.get_multi_balance(accounts=list(eigenpod_to_owner.keys())).items():  # noqa: E501
             if amount > ZERO:
                 balances[eigenpod_to_owner[eigenpod_address]].assets[A_ETH][self.counterparty] += Balance(  # noqa: E501
                     amount=amount,
-                    usd_value=eth_price * amount,
+                    value=eth_price * amount,
                 )
 
         return balances

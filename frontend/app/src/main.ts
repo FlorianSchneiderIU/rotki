@@ -10,12 +10,11 @@ import { usePremiumApi } from '@/premium/setup-interface';
 import { router } from '@/router';
 import { StoreStatePersistsPlugin } from '@/store/debug';
 import { StoreResetPlugin, StoreTrackPlugin } from '@/store/plugins';
-import { attemptPolyfillResizeObserver } from '@/utils/cypress';
 import { setupDayjs } from '@/utils/date';
+import { attemptPolyfillResizeObserver } from '@/utils/e2e';
 import { setupFormatter } from '@/utils/setup-formatter';
 
-/* istanbul ignore file */
-import './main.scss';
+import './main.css';
 import 'roboto-fontface/css/roboto/roboto-fontface.css';
 import 'typeface-roboto-mono';
 import 'flag-icons/css/flag-icons.min.css';
@@ -38,7 +37,12 @@ const itemsPerPage = useItemsPerPage();
 const { isMdAndDown } = useBreakpoint();
 
 const rui = createRuiPlugin({
-  table: { globalItemsPerPage: true, itemsPerPage, limits: [10, 25, 50, 100], stickyOffset: computed(() => get(isMdAndDown) ? 56 : 64) },
+  table: {
+    globalItemsPerPage: true,
+    itemsPerPage,
+    limits: [10, 25, 50, 100],
+    stickyOffset: computed(() => get(isMdAndDown) ? 56 : 64),
+  },
 });
 
 const search = window.location.search;

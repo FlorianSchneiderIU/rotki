@@ -9,12 +9,13 @@ import CalendarColorInput from '@/components/calendar/CalendarColorInput.vue';
 import CalendarReminder from '@/components/calendar/CalendarReminder.vue';
 import BlockchainAccountSelector from '@/components/helper/BlockchainAccountSelector.vue';
 import CounterpartyInput from '@/components/inputs/CounterpartyInput.vue';
+import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
 import { useFormStateWatcher } from '@/composables/form';
 import { useBlockchainAccountsStore } from '@/modules/accounts/use-blockchain-accounts-store';
 import { isBlockchain } from '@/types/blockchain/chains';
 import { hasAccountAddress } from '@/utils/blockchain/accounts';
 import { getAccountAddress } from '@/utils/blockchain/accounts/utils';
-import { useRefPropVModel } from '@/utils/model';
+import { refOptional, useRefPropVModel } from '@/utils/model';
 import { toMessages } from '@/utils/validation';
 
 const modelValue = defineModel<CalendarEvent>({ required: true });
@@ -28,7 +29,7 @@ defineProps<{
 const { t } = useI18n({ useScope: 'global' });
 
 const name = useRefPropVModel(modelValue, 'name');
-const description = useRefPropVModel(modelValue, 'description');
+const description = refOptional(useRefPropVModel(modelValue, 'description'), '');
 const counterparty = useRefPropVModel(modelValue, 'counterparty');
 const color = useRefPropVModel(modelValue, 'color');
 const autoDelete = useRefPropVModel(modelValue, 'autoDelete');
@@ -112,11 +113,10 @@ defineExpose({
 <template>
   <div class="flex flex-col gap-4">
     <div>
-      <RuiDateTimePicker
+      <DateTimePicker
         v-model="timestamp"
         :label="t('common.datetime')"
         persistent-hint
-        color="primary"
         variant="outlined"
         data-cy="datetime"
         type="epoch"

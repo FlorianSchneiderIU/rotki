@@ -3,8 +3,8 @@ import { createPinia, type Pinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSettingsApi } from '@/composables/api/settings/settings-api';
 import { Defaults } from '@/data/defaults';
+import { camelCaseTransformer } from '@/modules/api/transformers';
 import { DARK_COLORS, LIGHT_COLORS } from '@/plugins/theme';
-import { camelCaseTransformer } from '@/services/axios-transformers';
 import { useFrontendSettingsStore } from '@/store/settings/frontend';
 import { CurrencyLocation } from '@/types/currency-location';
 import { DateFormat } from '@/types/date-format';
@@ -88,7 +88,7 @@ describe('settings:frontend', () => {
       enableAliasNames: true,
       blockchainRefreshButtonBehaviour: BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
       savedFilters: {},
-      balanceUsdValueThreshold: {},
+      balanceValueThreshold: {},
       persistPrivacySettings: false,
     });
   });
@@ -102,7 +102,7 @@ describe('settings:frontend', () => {
   it('restore', () => {
     const store = useFrontendSettingsStore(pinia);
     const state: FrontendSettings = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       defiSetupDone: true,
       language: SupportedLanguage.EN,
       timeframeSetting: TimeFramePeriod.YEAR,
@@ -164,10 +164,11 @@ describe('settings:frontend', () => {
       dateInputFormat: DateFormat.DateMonthYearHourMinuteSecond,
       versionUpdateCheckFrequency: 24,
       enableAliasNames: true,
+      enablePasswordConfirmation: true,
       blockchainRefreshButtonBehaviour: BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
       subscriptDecimals: false,
       savedFilters: {},
-      balanceUsdValueThreshold: {
+      balanceValueThreshold: {
         [BalanceSource.EXCHANGES]: '0',
         [BalanceSource.BLOCKCHAIN]: '0',
         [BalanceSource.MANUAL]: '0',
@@ -179,6 +180,8 @@ describe('settings:frontend', () => {
       persistPrivacySettings: false,
       evmQueryIndicatorMinOutOfSyncPeriod: 12,
       evmQueryIndicatorDismissalThreshold: 6,
+      lastPasswordConfirmed: 0,
+      passwordConfirmationInterval: 604800,
     };
 
     store.update(state);

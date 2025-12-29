@@ -1,32 +1,32 @@
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.types import ChecksumEvmAddress
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
 from .constants import CPT_ONEINCH, ONEINCH_ICON
 
 
-class OneinchCommonDecoder(DecoderInterface, ABC):
+class OneinchCommonDecoder(EvmDecoderInterface, ABC):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             router_address: 'ChecksumEvmAddress',
             swapped_signatures: list[bytes],
@@ -46,11 +46,11 @@ class OneinchCommonDecoder(DecoderInterface, ABC):
             destination_token_address: ChecksumEvmAddress,
             spent_amount_raw: int,
             return_amount_raw: int,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """Function to abstract the functionality of oneinch decoding where Once
         the data has been pulled from the log we create the decoded events"""
         if not self.base.any_tracked([sender, receiver]):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         source_token = self.base.get_or_create_evm_asset(source_token_address)
         destination_token = self.base.get_or_create_evm_asset(destination_token_address)
@@ -79,7 +79,7 @@ class OneinchCommonDecoder(DecoderInterface, ABC):
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events,
         )
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)
 
     @staticmethod
     def generate_counterparty_details(counterparty: str) -> tuple[CounterpartyDetails, ...]:
@@ -90,14 +90,14 @@ class OneinchCommonDecoder(DecoderInterface, ABC):
         ),)
 
     @abstractmethod
-    def _decode_swapped(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_swapped(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode the swapped log for the particular 1inch version"""
 
-    def decode_action(self, context: DecoderContext) -> DecodingOutput:
+    def decode_action(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] in self.swapped_signatures:
             return self._decode_swapped(context=context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

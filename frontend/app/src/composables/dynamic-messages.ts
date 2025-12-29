@@ -1,7 +1,7 @@
 import { checkIfDevelopment } from '@shared/utils';
-import { AxiosError, type AxiosResponse } from 'axios';
-import { camelCaseTransformer } from '@/services/axios-transformers';
-import { api } from '@/services/rotkehlchen-api';
+import { FetchError, ofetch } from 'ofetch';
+import { usePremium } from '@/composables/premium';
+import { camelCaseTransformer } from '@/modules/api/transformers';
 import { DashboardSchema, type VisibilityPeriod, WelcomeSchema } from '@/types/dynamic-messages';
 import { logger } from '@/utils/logging';
 
@@ -18,6 +18,8 @@ export const useDynamicMessages = createSharedComposable(() => {
   const dashboardMessages = useSessionStorage<DashboardSchema>('rotki.messages.dashboard', null, {
     serializer,
   });
+
+  const premium = usePremium();
 
   const welcomeHeader = computed(() => {
     if (!isDefined(welcomeMessages))
@@ -59,25 +61,33 @@ export const useDynamicMessages = createSharedComposable(() => {
     if (!isDefined(dashboardMessages))
       return [];
 
-    return getValidMessages(get(dashboardMessages));
+    const isPremium = get(premium);
+    const validMessages = getValidMessages(get(dashboardMessages));
+
+    return validMessages.filter((message) => {
+      // If target is 'free', only show to free users
+      if (message.target === 'free' && isPremium)
+        return false;
+
+      // If target is 'premium', only show to premium users
+      if (message.target === 'premium' && !isPremium)
+        return false;
+
+      return true;
+    });
   });
-
-  const getData = <T>(response: AxiosResponse<T>): T => {
-    if (typeof response.data === 'string')
-      return camelCaseTransformer(JSON.parse(response.data));
-
-    return response.data;
-  };
 
   const getWelcomeData = async (): Promise<WelcomeSchema | null> => {
     try {
-      const response = await api.instance.get<WelcomeSchema>(
+      const response = await ofetch<object>(
         `https://raw.githubusercontent.com/rotki/data/${branch}/messages/welcome.json`,
+        { responseType: 'json' },
       );
-      return WelcomeSchema.parse(getData(response));
+
+      return WelcomeSchema.parse(camelCaseTransformer(response));
     }
     catch (error: any) {
-      if (!(error instanceof AxiosError))
+      if (!(error instanceof FetchError))
         logger.error(error);
 
       return null;
@@ -86,13 +96,14 @@ export const useDynamicMessages = createSharedComposable(() => {
 
   const getDashboardData = async (): Promise<DashboardSchema | null> => {
     try {
-      const response = await api.instance.get<DashboardSchema>(
+      const response = await ofetch<object>(
         `https://raw.githubusercontent.com/rotki/data/${branch}/messages/dashboard.json`,
+        { responseType: 'json' },
       );
-      return DashboardSchema.parse(getData(response));
+      return DashboardSchema.parse(camelCaseTransformer(response));
     }
     catch (error: any) {
-      if (!(error instanceof AxiosError))
+      if (!(error instanceof FetchError))
         logger.error(error);
 
       return null;

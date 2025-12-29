@@ -2,22 +2,19 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
-from rotkehlchen.chain.ethereum.utils import (
-    asset_normalized_value,
-    should_update_protocol_cache,
-)
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface, ReloadableDecoderMixin
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.ethereum.utils import should_update_protocol_cache
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface, ReloadableDecoderMixin
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.evm.decoding.utils import get_protocol_token_addresses
 from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
-from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.db.evmtx import DBEvmTx
-from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import CacheType, ChecksumEvmAddress, EvmTransaction
@@ -34,7 +31,7 @@ from .utils import query_beefy_vaults
 
 if TYPE_CHECKING:
     from rotkehlchen.assets.asset import CryptoAsset
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.fval import FVal
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
@@ -44,7 +41,7 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class BeefyFinanceCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
+class BeefyFinanceCommonDecoder(EvmDecoderInterface, ReloadableDecoderMixin):
     """Decodes Beefy Finance vault transactions into structured history events.
 
     Handles both direct vault interactions and zap contract operations for
@@ -54,7 +51,7 @@ class BeefyFinanceCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -63,7 +60,7 @@ class BeefyFinanceCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             msg_aggregator=msg_aggregator,
         )
         self.vaults: set[ChecksumEvmAddress] = set()
-        self.zap_contract_address = SUPPORTED_BEEFY_CHAINS[self.evm_inquirer.chain_id]
+        self.zap_contract_address = SUPPORTED_BEEFY_CHAINS[self.node_inquirer.chain_id]
 
     def _process_beefy_events(
             self,
@@ -141,7 +138,7 @@ class BeefyFinanceCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
                 tx_logs = tx_receipt.logs if (tx_receipt := DBEvmTx(self.base.database).get_receipt(  # noqa: E501
                     cursor=cursor,
                     tx_hash=transaction.tx_hash,
-                    chain_id=self.evm_inquirer.chain_id,
+                    chain_id=self.node_inquirer.chain_id,
                 )) is not None else []
 
             for tx_log in tx_logs:
@@ -190,14 +187,14 @@ class BeefyFinanceCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             transaction=transaction,
         )
 
-    def _decode_zap_deposits_and_withdrawals(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_zap_deposits_and_withdrawals(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes zap contract transactions that bundle token swaps with vault operations.
 
         Zap contracts allow users to deposit any token into a vault by automatically
         swapping it for the required LP tokens, or withdraw vault tokens as any desired token.
         """
         if context.tx_log.topics[0] != FULFILLED_ORDER_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         amounts_and_assets = []
         for tx_log in context.all_logs:
@@ -221,27 +218,25 @@ class BeefyFinanceCommonDecoder(DecoderInterface, ReloadableDecoderMixin):
             expected_amounts_and_assets=amounts_and_assets,
         )
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def reload_data(self) -> Mapping['ChecksumEvmAddress', tuple[Any, ...]] | None:
         if (is_cache_updated := should_update_protocol_cache(
                 userdb=self.base.database,
                 cache_key=CacheType.BEEFY_VAULTS,
-                args=(str(self.evm_inquirer.chain_id.serialize()),),
+                args=(str(self.node_inquirer.chain_id.serialize()),),
         )) is True:
-            query_beefy_vaults(self.evm_inquirer)
+            query_beefy_vaults(self.node_inquirer)
             is_cache_updated = True
 
         if len(self.vaults) != 0 and not is_cache_updated:  # Skip database query if we already have vault data and cache wasn't updated  # noqa: E501
             return None
 
-        with GlobalDBHandler().conn.read_ctx() as cursor:
-            cursor.execute(
-                'SELECT address FROM evm_tokens WHERE protocol=? AND chain=?',
-                (CPT_BEEFY_FINANCE, self.evm_inquirer.chain_id.serialize_for_db()),
-            )
-            self.vaults = {string_to_evm_address(row[0]) for row in cursor}
-
+        self.vaults = get_protocol_token_addresses(
+            protocol=CPT_BEEFY_FINANCE,
+            chain_id=self.node_inquirer.chain_id,
+            existing_tokens=self.vaults,
+        )
         return self.addresses_to_decoders()
 
     def addresses_to_decoders(self) -> dict[ChecksumEvmAddress, tuple[Any, ...]]:

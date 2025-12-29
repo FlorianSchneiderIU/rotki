@@ -35,7 +35,7 @@ from rotkehlchen.history.events.structures.swap import (
     deserialize_trade_type_is_buy,
     get_swap_spend_receive,
 )
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -85,16 +85,19 @@ def gemini_symbol_to_base_quote(symbol: str) -> tuple[AssetWithOracles, AssetWit
         raise UnprocessableTradePair(symbol)
 
     special_cases = {
-        'xrprlusd': ('XRP', 'RLUSD'),
         'moodengusd': ('solana/token:ED5nyyWEzpPPiWimP8vYm7sD7TD3LAt3Q3gRTWHzPJBY', 'USD'),  # moodeng solana identifier  # noqa: E501
     }
     if symbol in special_cases:
         base, quote = special_cases[symbol]
         return asset_from_gemini(base), asset_from_gemini(quote)
 
-    # from gemini api, quote assets are either 4 chars ('gusd', 'usdt')
-    # or 3 chars ('usd', 'btc', etc). Try 4-char quotes first.
-    if len(symbol) >= 4 and symbol[-4:] in {'gusd', 'usdt', 'paxg'}:
+    # from gemini api, quote assets are either:
+    # - 5 chars ('rlusd')
+    # - 4 chars ('gusd', 'usdt', 'lusd', 'usdc')
+    # - 3 chars ('usd', 'btc', etc)
+    if len(symbol) >= 5 and symbol[-5:] == 'rlusd':
+        split_at = -5
+    elif len(symbol) >= 4 and symbol[-4:] in {'gusd', 'usdt', 'paxg', 'usdc'}:
         split_at = -4
     else:
         split_at = -3
@@ -337,17 +340,17 @@ class Gemini(ExchangeInterface, SignatureGeneratorMixin):
 
                 asset = asset_from_gemini(entry['currency'])
                 try:
-                    usd_price = Inquirer.find_usd_price(asset=asset)
+                    price = Inquirer.find_main_currency_price(asset)
                 except RemoteError as e:
                     self.msg_aggregator.add_error(
                         f'Error processing gemini {balance_type} balance result due to '
-                        f'inability to query USD price: {e!s}. Skipping balance entry',
+                        f'inability to query price: {e!s}. Skipping balance entry',
                     )
                     continue
 
                 returned_balances[asset] += Balance(
                     amount=amount,
-                    usd_value=amount * usd_price,
+                    value=amount * price,
                 )
             except UnknownAsset as e:
                 self.send_unknown_asset_message(
@@ -491,7 +494,7 @@ class Gemini(ExchangeInterface, SignatureGeneratorMixin):
                             amount=deserialize_fval_or_zero(entry['fee_amount']),
                         ),
                         location_label=self.name,
-                        event_identifier=create_event_identifier_from_unique_id(
+                        group_identifier=create_group_identifier_from_unique_id(
                             location=self.location,
                             unique_id=unique_id,
                         ),
@@ -591,6 +594,7 @@ class Gemini(ExchangeInterface, SignatureGeneratorMixin):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
+            force_refresh: bool = False,
     ) -> tuple['Sequence[HistoryBaseEntry]', Timestamp]:
         events: list[AssetMovement | SwapEvent] = []
         for query_func in (

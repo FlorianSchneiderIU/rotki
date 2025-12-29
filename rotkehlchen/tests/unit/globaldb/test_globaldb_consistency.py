@@ -20,6 +20,8 @@ from rotkehlchen.constants.misc import GLOBALDIR_NAME, ONE
 from rotkehlchen.db.constants import UpdateType
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.asset_updates.manager import AssetsUpdater
+from rotkehlchen.globaldb.migrations.manager import LAST_GLOBALDB_DATA_MIGRATION
+from rotkehlchen.tests.conftest import TestEnvironment, requires_env
 from rotkehlchen.tests.fixtures.globaldb import create_globaldb
 from rotkehlchen.types import (
     SPAM_PROTOCOL,
@@ -83,6 +85,7 @@ class DBToken:
         }
 
 
+@requires_env([TestEnvironment.STANDARD])  # skip in nightlies due to github api rate limits
 def test_asset_updates_consistency_with_packaged_db(
         tmpdir_factory: 'pytest.TempdirFactory',
         messages_aggregator: 'MessagesAggregator',
@@ -120,7 +123,9 @@ def test_asset_updates_consistency_with_packaged_db(
         # - `apply_pending_compatible_updates` runs during create_globaldb() and pulls all compatible asset updates up to v32 and then v36 (max compatible)  # noqa: E501
         # - At this point we are sure that assets updates up until 36 are applied
         assert old_globaldb_cursor.execute("SELECT value FROM settings WHERE name='assets_version'").fetchone()[0] == '36'  # noqa: E501
-        assert packaged_db_cursor.execute("SELECT value FROM settings WHERE name='assets_version'").fetchone()[0] == '37'  # noqa: E501
+        assert packaged_db_cursor.execute("SELECT value FROM settings WHERE name='assets_version'").fetchone()[0] == '38'  # noqa: E501
+
+        assert packaged_db_cursor.execute("SELECT value FROM settings WHERE name='last_data_migration'").fetchone()[0] == str(LAST_GLOBALDB_DATA_MIGRATION)  # noqa: E501
 
     assets_updater = AssetsUpdater(
         globaldb=globaldb,
@@ -449,6 +454,7 @@ def test_oracle_ids_in_asset_collections(globaldb: 'GlobalDBHandler'):
         pytest.fail('oracle IDs do not match:\n' + '\n'.join(mismatches))
 
 
+@requires_env([TestEnvironment.STANDARD])  # skip in nightlies due to github api rate limits
 @pytest.mark.parametrize('our_version', ['1.40.0'])  # set latest version so data can be updated
 def test_remote_updates_consistency_with_packaged_db(
         tmpdir_factory: 'pytest.TempdirFactory',

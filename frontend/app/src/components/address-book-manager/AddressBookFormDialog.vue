@@ -26,8 +26,8 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: 'update:tab', tab: number): void;
-  (e: 'refresh'): void;
+  'update:tab': [tab: number];
+  'refresh': [];
 }>();
 
 const { editableItem, editMode, location, selectedChain } = toRefs(props);
@@ -39,11 +39,10 @@ const loading = ref(false);
 const errorMessages = ref<Record<string, string[]>>({});
 const form = useTemplateRef<InstanceType<typeof LatestPriceForm>>('form');
 const stateUpdated = ref(false);
-const forAllChains = ref<boolean>(false);
 
 const emptyForm: () => AddressBookPayload = () => ({
   address: '',
-  blockchain: get(selectedChain) ?? null,
+  blockchain: get(selectedChain) ?? 'all',
   location: get(location) || 'private',
   name: '',
 });
@@ -65,7 +64,7 @@ async function save() {
   const isEdit = get(editMode) ?? !!get(editableItem);
   const payload = {
     address: address.trim(),
-    blockchain: get(forAllChains) ? null : blockchain,
+    blockchain: blockchain === 'all' ? null : blockchain,
     name: name.trim(),
   };
 
@@ -73,7 +72,7 @@ async function save() {
   try {
     if (get(isEdit))
       success = await updateAddressBook(location, [payload]);
-    else success = await addAddressBook(location, [payload]);
+    else success = await addAddressBook(location, [payload], props.root);
   }
   catch (error: any) {
     success = false;
@@ -127,7 +126,10 @@ watchImmediate([open, editableItem], ([open, editableItem]) => {
   }
   else {
     if (editableItem) {
-      set(modelValue, editableItem);
+      set(modelValue, {
+        ...editableItem,
+        blockchain: editableItem.blockchain || 'all',
+      });
     }
     else {
       set(modelValue, emptyForm());
@@ -152,7 +154,6 @@ watchImmediate([open, editableItem], ([open, editableItem]) => {
       v-model="modelValue"
       v-model:error-messages="errorMessages"
       v-model:state-updated="stateUpdated"
-      v-model:for-all-chains="forAllChains"
       :edit-mode="editMode ?? !!editableItem"
     />
   </BigDialog>

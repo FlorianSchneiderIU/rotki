@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import type { Account, Blockchain, HistoryEventEntryType } from '@rotki/common';
+import type { HistoryEventEntry, HistoryEventRow } from '@/types/history/events/schemas';
+import { get, set } from '@vueuse/shared';
 import RefreshButton from '@/components/helper/RefreshButton.vue';
 import { DIALOG_TYPES, type HistoryEventsToggles } from '@/components/history/events/dialog-types';
 import HistoryEventsDialogContainer from '@/components/history/events/HistoryEventsDialogContainer.vue';
@@ -12,7 +14,11 @@ import CardTitle from '@/components/typography/CardTitle.vue';
 import { HISTORY_EVENT_ACTIONS, type HistoryEventAction } from '@/composables/history/events/types';
 import { useHistoryEventsActions } from '@/composables/history/events/use-history-events-actions';
 import { useHistoryEventsFilters } from '@/composables/history/events/use-history-events-filters';
+import { useUnmatchedAssetMovements } from '@/composables/history/events/use-unmatched-asset-movements';
 import HistoryEventsTable from '@/modules/history/events/components/HistoryEventsTable.vue';
+import { useHistoryEventsDeletion } from '@/modules/history/events/composables/use-history-events-deletion';
+import { useHistoryEventsSelectionActions } from '@/modules/history/events/composables/use-history-events-selection-actions';
+import { useHistoryEventsSelectionMode } from '@/modules/history/events/composables/use-selection-mode';
 import { useHistoryEventsStatus } from '@/modules/history/events/use-history-events-status';
 
 type Period = { fromTimestamp?: string; toTimestamp?: string } | { fromTimestamp?: number; toTimestamp?: number };
@@ -82,10 +88,14 @@ const {
   shouldFetchEventsRegularly,
 } = useHistoryEventsStatus();
 
+const {
+  fetchUnmatchedAssetMovements,
+  unmatchedCount,
+} = useUnmatchedAssetMovements();
+
 const usedTitle = computed<string>(() => get(sectionTitle) || t('transactions.title'));
 
 const {
-  accounts,
   fetchData,
   filters,
   groupLoading,
@@ -93,9 +103,10 @@ const {
   highlightedIdentifiers,
   identifiers,
   includes,
+  locationLabels,
   locations,
   matchers,
-  onFilterAccountsChanged,
+  onLocationLabelsChanged,
   pageParams,
   pagination,
   setPage,
@@ -125,6 +136,45 @@ const actions = useHistoryEventsActions({
   shouldFetchEventsRegularly,
 });
 
+const selectionMode = useHistoryEventsSelectionMode();
+
+// Store grouped events for checking complete EVM transactions
+const groupedEventsByTxRef = ref<Record<string, HistoryEventRow[]>>({});
+// Store original groups data to preserve swap groups
+const originalGroups = ref<HistoryEventRow[]>([]);
+
+const deletion = useHistoryEventsDeletion(
+  selectionMode,
+  groupedEventsByTxRef,
+  originalGroups,
+  () => actions.fetch.dataAndLocations(),
+);
+
+const {
+  accountingRuleToEdit,
+  handleAccountingRuleRefresh,
+  handleSelectionAction,
+  ignoreStatus,
+  selectedEventIds,
+} = useHistoryEventsSelectionActions({
+  deletion,
+  originalGroups,
+  refreshCallback: () => actions.fetch.dataAndLocations(),
+  selectionMode,
+});
+
+// Handle updating available event IDs from the table
+function handleUpdateEventIds({ eventIds, groupedEvents, rawEvents }: { eventIds: number[]; groupedEvents: Record<string, HistoryEventRow[]>; rawEvents?: HistoryEventRow[] }): void {
+  // Create mock event entries with just the identifiers
+  const events: HistoryEventEntry[] = eventIds.map(id => ({ identifier: id } as HistoryEventEntry));
+  selectionMode.setAvailableIds(events);
+
+  // Store the grouped events for checking complete transactions
+  set(groupedEventsByTxRef, groupedEvents);
+  // Store the original groups data - prefer rawEvents if available, otherwise use groups.data
+  set(originalGroups, rawEvents || get(groups).data);
+}
+
 watchImmediate(route, async (route) => {
   if (!route.query.openDecodingStatusDialog) {
     return;
@@ -134,13 +184,24 @@ watchImmediate(route, async (route) => {
   await router.replace({ query: {} });
 });
 
-watch(anyEventsDecoding, async (isLoading, wasLoading) => {
+watch(processing, async (isLoading, wasLoading) => {
   if (!isLoading && wasLoading)
     await actions.fetch.dataAndLocations();
 });
 
-onMounted(async () => {
+// Wait until the route doesn't change anymore to give time for the persisted filter to be set.
+watchDebounced(route, async () => {
   await actions.refresh.all();
+}, { debounce: 500, immediate: true, once: true });
+
+function openMatchAssetMovementsDialog(): void {
+  get(dialogContainer)?.show({ type: DIALOG_TYPES.MATCH_ASSET_MOVEMENTS });
+}
+
+onMounted(async () => {
+  if (get(mainPage)) {
+    await fetchUnmatchedAssetMovements();
+  }
 });
 </script>
 
@@ -161,6 +222,23 @@ onMounted(async () => {
     </template>
 
     <div>
+      <RuiAlert
+        v-if="mainPage && unmatchedCount > 0"
+        type="warning"
+        class="mb-4 [&>div]:items-center"
+      >
+        <div class="flex items-center gap-4">
+          {{ t('asset_movement_matching.banner.message', { count: unmatchedCount }) }}
+          <RuiButton
+            size="sm"
+            color="warning"
+            @click="openMatchAssetMovementsDialog()"
+          >
+            {{ t('asset_movement_matching.banner.action') }}
+          </RuiButton>
+        </div>
+      </RuiAlert>
+
       <RuiCard>
         <template
           v-if="!mainPage"
@@ -179,14 +257,17 @@ onMounted(async () => {
         <HistoryEventsTableActions
           v-model:filters="filters"
           v-model:toggles="toggles"
-          :accounts="accounts"
+          :location-labels="locationLabels"
           :processing="processing"
           :matchers="matchers"
           :export-params="pageParams"
           :hide-redecode-buttons="!mainPage"
           :hide-account-selector="useExternalAccountFilter"
-          @update:accounts="onFilterAccountsChanged($event)"
+          :selection="selectionMode.state.value"
+          :ignore-status="ignoreStatus"
+          @update:location-labels="onLocationLabelsChanged($event)"
           @redecode="actions.redecode.by($event)"
+          @selection:action="handleSelectionAction($event)"
         />
 
         <HistoryEventsFiltersChips />
@@ -200,10 +281,12 @@ onMounted(async () => {
           :exclude-ignored="!toggles.showIgnoredAssets"
           :identifiers="identifiers"
           :highlighted-identifiers="highlightedIdentifiers"
+          :selection="selectionMode"
           @show:dialog="dialogContainer?.show($event)"
           @refresh="actions.fetch.dataAndRedecode($event)"
           @refresh:block-event="actions.redecode.blocks($event)"
           @set-page="setPage($event)"
+          @update-event-ids="handleUpdateEventIds($event)"
         >
           <template #query-status="{ colspan }">
             <HistoryQueryStatus
@@ -220,10 +303,14 @@ onMounted(async () => {
 
       <HistoryEventsDialogContainer
         ref="dialogContainer"
+        v-model:accounting-rule-to-edit="accountingRuleToEdit"
+        v-model:current-action="currentAction"
         :loading="processing"
         :refreshing="refreshing"
         :section-loading="sectionLoading"
         :event-handlers="actions.dialogHandlers"
+        :selected-event-ids="selectedEventIds"
+        @accounting-rule-refresh="handleAccountingRuleRefresh()"
       />
     </div>
   </TablePageLayout>

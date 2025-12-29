@@ -1,5 +1,6 @@
 <script lang="ts" setup>
 import type { CreateAccountPayload, LoginCredentials, PremiumSetup } from '@/types/login';
+import { externalLinks } from '@shared/external-links';
 import CreateAccountSubmitAnalytics
   from '@/components/account-management/create-account/analytics/CreateAccountSubmitAnalytics.vue';
 import CreateAccountCredentials
@@ -8,10 +9,12 @@ import CreateAccountIntroduction
   from '@/components/account-management/create-account/introduction/CreateAccountIntroduction.vue';
 import CreateAccountPremium from '@/components/account-management/create-account/premium/CreateAccountPremium.vue';
 import RotkiLogo from '@/components/common/RotkiLogo.vue';
+import ExternalLink from '@/components/helper/ExternalLink.vue';
+
+const step = defineModel<number>('step', { required: true });
 
 const props = withDefaults(
   defineProps<{
-    step: number;
     loading: boolean;
     error?: string;
   }>(),
@@ -19,32 +22,44 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  (e: 'cancel'): void;
-  (e: 'update:step', step: number): void;
-  (e: 'confirm', payload: CreateAccountPayload): void;
-  (e: 'clear-error'): void;
+  'cancel': [];
+  'confirm': [payload: CreateAccountPayload];
+  'clear-error': [];
 }>();
 
-const { error, step } = toRefs(props);
+const { error } = toRefs(props);
 
-function setStep(newStep: number) {
-  emit('update:step', newStep);
-}
+const cancel = (): void => emit('cancel');
+const errorClear = (): void => emit('clear-error');
 
-const cancel = () => emit('cancel');
-const errorClear = () => emit('clear-error');
-
-function prevStep() {
-  setStep(get(step) - 1);
+function prevStep(): void {
+  set(step, get(step) - 1);
   if (get(error))
     errorClear();
 }
 
-function nextStep() {
-  setStep(get(step) + 1);
+function nextStep(): void {
+  set(step, get(step) + 1);
 }
 
 const { t } = useI18n({ useScope: 'global' });
+
+const parsedError = computed<{ hasLink: boolean; parts: string[] }>(() => {
+  const errorMessage = get(error);
+  const linkPlaceholder = '_DEVICE_LIMIT_LINK_';
+
+  if (!errorMessage || !errorMessage.includes(linkPlaceholder)) {
+    return {
+      hasLink: false,
+      parts: [errorMessage],
+    };
+  }
+
+  return {
+    hasLink: true,
+    parts: errorMessage.split(linkPlaceholder),
+  };
+});
 
 const premiumEnabled = ref<boolean>(false);
 const premiumSetupForm = ref<PremiumSetup>({
@@ -86,8 +101,8 @@ function confirm() {
     leave-to-class="-translate-y-5 opacity-0"
     leave-active-class="transform duration-100"
   >
-    <div :class="$style.register">
-      <div :class="$style.register__wrapper">
+    <div>
+      <div class="max-w-[22.5rem] mx-auto">
         <div class="flex flex-col items-center">
           <RotkiLogo unique-key="1b" />
           <h4 class="text-h4 mb-3 mt-8">
@@ -131,7 +146,23 @@ function confirm() {
                     v-if="error"
                     type="error"
                   >
-                    {{ error }}
+                    <template v-if="parsedError.hasLink">
+                      {{ parsedError.parts[0] }}
+                      <i18n-t keypath="create_account.error.device_limit_link">
+                        <template #here>
+                          <ExternalLink
+                            :url="externalLinks.premiumDevices"
+                            custom
+                          >
+                            {{ t('common.here') }}
+                          </ExternalLink>
+                        </template>
+                      </i18n-t>
+                      {{ parsedError.parts[1] }}
+                    </template>
+                    <template v-else>
+                      {{ error }}
+                    </template>
                   </RuiAlert>
                   <div class="grid grid-cols-2 gap-4">
                     <RuiButton
@@ -158,7 +189,7 @@ function confirm() {
               </RuiTabItem>
             </RuiTabItems>
           </div>
-          <div :class="$style.register__actions__footer">
+          <div class="items-center flex justify-stretch py-6 text-rui-text-secondary">
             <span>{{ t('create_account.have_account.description') }}</span>
             <RuiButton
               color="primary"
@@ -178,17 +209,3 @@ function confirm() {
     </div>
   </Transition>
 </template>
-
-<style module lang="scss">
-.register {
-  &__wrapper {
-    @apply max-w-[22.5rem] mx-auto;
-  }
-
-  &__actions {
-    &__footer {
-      @apply items-center flex justify-stretch py-6 text-rui-text-secondary;
-    }
-  }
-}
-</style>

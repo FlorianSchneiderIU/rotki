@@ -1,16 +1,16 @@
 import logging
 from typing import TYPE_CHECKING
 
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
-from rotkehlchen.chain.evm.decoding.structures import DEFAULT_DECODING_OUTPUT
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.assets.utils import asset_normalized_value
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
+from rotkehlchen.chain.evm.decoding.structures import DEFAULT_EVM_DECODING_OUTPUT
 from rotkehlchen.chain.evm.decoding.weth.decoder import WethDecoder as EthBaseWethDecoder
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.structures import DecoderContext, DecodingOutput
+    from rotkehlchen.chain.evm.decoding.structures import DecoderContext, EvmDecodingOutput
 
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ log = RotkehlchenLogsAdapter(logger)
 
 
 class WethDecoder(EthBaseWethDecoder):
-    def _decode_deposit_event(self, context: 'DecoderContext') -> 'DecodingOutput':
+    def _decode_deposit_event(self, context: 'DecoderContext') -> 'EvmDecodingOutput':
         depositor = bytes_to_address(context.tx_log.topics[1])
         deposited_amount_raw = int.from_bytes(context.tx_log.data[:32])
         deposited_amount = asset_normalized_value(
@@ -49,11 +49,11 @@ class WethDecoder(EthBaseWethDecoder):
                 event.location_label = depositor
                 event.address = context.transaction.to_address
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_withdrawal_event(self, context: 'DecoderContext') -> 'DecodingOutput':
+    def _decode_withdrawal_event(self, context: 'DecoderContext') -> 'EvmDecodingOutput':
         if not self.base.is_tracked(withdrawer := bytes_to_address(context.tx_log.topics[1])):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         withdrawn_amount_raw = int.from_bytes(context.tx_log.data[:32])
         withdrawn_amount = asset_normalized_value(
@@ -70,6 +70,8 @@ class WethDecoder(EthBaseWethDecoder):
             ):
                 in_event = event
                 event.notes = f'Receive {withdrawn_amount} ETH'
+                event.event_type = HistoryEventType.WITHDRAWAL
+                event.event_subtype = HistoryEventSubType.REDEEM_WRAPPED
                 event.counterparty = self.counterparty
             elif (
                 event.event_type == HistoryEventType.SPEND and
@@ -85,11 +87,11 @@ class WethDecoder(EthBaseWethDecoder):
                 out_event = event
 
         if in_event is None or out_event is None:
-            log.error(f'Could not find the corresponding events when decoding weth scroll withdrawal {context.transaction.tx_hash.hex()}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            log.error(f'Could not find the corresponding events when decoding weth scroll withdrawal {context.transaction.tx_hash!s}')  # noqa: E501
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         maybe_reshuffle_events(
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events,
         )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT

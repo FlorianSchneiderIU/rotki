@@ -73,7 +73,7 @@ export function useAssetBalancesBreakdown(): UseAssetBalancesBreakdownReturn {
         amount: balance.amount,
         location: balance.location,
         tags: balance.tags && balance.tags.length > 0 ? balance.tags : undefined,
-        usdValue: balance.usdValue,
+        value: balance.value,
       });
     }
     return breakdown;
@@ -111,7 +111,7 @@ export function useAssetBalancesBreakdown(): UseAssetBalancesBreakdownReturn {
 
           const summedBalance = perProtocolBalanceSum({
             amount: Zero,
-            usdValue: Zero,
+            value: Zero,
           }, assetBalance);
 
           breakdown.push({

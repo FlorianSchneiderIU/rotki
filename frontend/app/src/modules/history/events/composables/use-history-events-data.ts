@@ -1,11 +1,12 @@
 import type { ComputedRef, Ref } from 'vue';
-import type { HistoryEventsTableEmitFn } from './types';
 import type { HistoryEventRequestPayload } from '@/modules/history/events/request-types';
+import type { HistoryEventsTableEmitFn } from '@/modules/history/events/types';
 import type { Collection } from '@/types/collection';
 import type { HistoryEventEntry, HistoryEventRow } from '@/types/history/events/schemas';
 import { flatten } from 'es-toolkit';
 import { useHistoryEvents } from '@/composables/history/events';
 import { useRefWithDebounce } from '@/composables/ref';
+import { useIgnoredAssetsStore } from '@/store/assets/ignored';
 import { useFrontendSettingsStore } from '@/store/settings/frontend';
 import { useStatusStore } from '@/store/status';
 import { Section } from '@/types/status';
@@ -33,10 +34,12 @@ interface UseHistoryEventsDataReturn {
   showUpgradeRow: ComputedRef<boolean>;
 
   // Event data
-  eventsGroupedByEventIdentifier: ComputedRef<Record<string, HistoryEventRow[]>>;
+  allEventsMapped: ComputedRef<Record<string, HistoryEventRow[]>>;
+  displayedEventsMapped: ComputedRef<Record<string, HistoryEventRow[]>>;
   hasIgnoredEvent: ComputedRef<boolean>;
   groups: ComputedRef<HistoryEventEntry[]>;
   events: ComputedRef<HistoryEventEntry[]>;
+  rawEvents: Ref<HistoryEventRow[]>;
 }
 
 export function useHistoryEventsData(
@@ -53,6 +56,7 @@ export function useHistoryEventsData(
   const { data, entriesFoundTotal, found, limit, total } = getCollectionData(groups);
   const { showUpgradeRow } = setupEntryLimit(limit, found, total, entriesFoundTotal);
   const { fetchHistoryEvents } = useHistoryEvents();
+  const { isAssetIgnored } = useIgnoredAssetsStore();
 
   const sectionLoading = computed(() => get(isLoading(Section.HISTORY)));
 
@@ -64,9 +68,9 @@ export function useHistoryEventsData(
 
     const response = await fetchHistoryEvents({
       ...get(pageParams),
-      eventIdentifiers: dataValue.flatMap(item => Array.isArray(item) ? item.map(i => i.eventIdentifier) : item.eventIdentifier),
-      excludeIgnoredAssets: get(excludeIgnored),
-      groupByEventIds: false,
+      aggregateByGroupIds: false,
+      excludeIgnoredAssets: false,
+      groupIdentifiers: dataValue.flatMap(item => Array.isArray(item) ? item.map(i => i.groupIdentifier) : item.groupIdentifier),
       identifiers: get(identifiers),
       limit: -1,
       offset: 0,
@@ -89,19 +93,19 @@ export function useHistoryEventsData(
   function processArrayEvent(event: HistoryEventEntry[], mapping: Record<string, HistoryEventRow[]>): void {
     const filtered = event.filter(({ hidden }) => !hidden);
     if (filtered.length > 0) {
-      const eventId = filtered[0].eventIdentifier;
+      const eventId = filtered[0].groupIdentifier;
       addEventToMapping(mapping, eventId, filtered);
     }
   }
 
   function processSingleEvent(event: HistoryEventEntry, mapping: Record<string, HistoryEventRow[]>): void {
     if (!event.hidden) {
-      const eventId = event.eventIdentifier;
+      const eventId = event.groupIdentifier;
       addEventToMapping(mapping, eventId, event);
     }
   }
 
-  const eventsGroupedByEventIdentifier = computed<Record<string, HistoryEventRow[]>>(() => {
+  function getMappedEvents(events: HistoryEventRow[], hideIgnored: boolean): Record<string, HistoryEventRow[]> {
     const eventsList = get(events);
 
     if (eventsList.length === 0)
@@ -111,15 +115,26 @@ export function useHistoryEventsData(
 
     for (const event of eventsList) {
       if (Array.isArray(event)) {
-        processArrayEvent(event, mapping);
+        const usedEvents = !hideIgnored ? event : event.filter(item => !isAssetIgnored(item.asset));
+        processArrayEvent(usedEvents, mapping);
       }
       else {
-        processSingleEvent(event, mapping);
+        if (!hideIgnored || !isAssetIgnored(event.asset)) {
+          processSingleEvent(event, mapping);
+        }
       }
     }
 
     return mapping;
-  });
+  }
+
+  // Events grouped by the event identifiers.
+  // Hide ignored assets if `excludeIgnored` is true
+  const displayedEventsMapped = computed<Record<string, HistoryEventRow[]>>(() => getMappedEvents(get(events), get(excludeIgnored)));
+
+  // Events grouped by the event identifiers.
+  // Always show ignored assets
+  const allEventsMapped = computed<Record<string, HistoryEventRow[]>>(() => getMappedEvents(get(events), false));
 
   const loading = useRefWithDebounce(logicOr(groupLoading, eventsLoading), 100);
   const hasIgnoredEvent = useArraySome(events, event => Array.isArray(event) && event.some(item => item.ignoredInAccounting));
@@ -136,15 +151,17 @@ export function useHistoryEventsData(
   });
 
   return {
+    allEventsMapped,
+    displayedEventsMapped,
     entriesFoundTotal,
     events: flattenedEvents,
-    eventsGroupedByEventIdentifier,
     eventsLoading,
     found,
     groups: flattenedGroups,
     hasIgnoredEvent,
     limit,
     loading,
+    rawEvents: events,
     sectionLoading,
     showUpgradeRow,
     total,

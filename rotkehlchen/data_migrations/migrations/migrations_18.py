@@ -10,7 +10,7 @@ from rotkehlchen.chain.gnosis.modules.monerium.constants import (
 from rotkehlchen.chain.polygon_pos.modules.monerium.constants import (
     V1_TO_V2_MONERIUM_MAPPINGS as POLYGON_MONERIUM_MAPPINGS,
 )
-from rotkehlchen.db.constants import EVMTX_SPAM
+from rotkehlchen.db.constants import TX_SPAM
 from rotkehlchen.db.filtering import EvmEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.asset import UnknownAsset
@@ -121,11 +121,11 @@ def data_migration_18(rotki: 'Rotkehlchen', progress_handler: 'MigrationProgress
         JOIN evmtx_receipts er ON et.identifier = er.tx_id
         JOIN evmtx_receipt_logs erl ON er.tx_id = erl.tx_id
         WHERE erl.address = '0xF55041E37E12cD407ad00CE2910B8269B01263b9'
-    ) AND tx_hash NOT IN (SELECT tx_hash from evm_events_info)"""
+    ) AND tx_hash NOT IN (SELECT tx_ref from chain_events_info)"""
         if len(to_keep_hashes) != 0:
             # we have also performed a thorough logs query above in case some were not decoded.
             # As if the transactions were not decoded yet then the
-            # tx_hash NOT IN (SELECT tx_hash from evm_events_info) won't help avoid
+            # tx_hash NOT IN (SELECT tx_hash from chain_events_info) won't help avoid
             # deleting important transactions
             to_keep_placeholders = ','.join('?' * len(to_keep_hashes))
             querystr += f' AND tx_hash NOT IN ({to_keep_placeholders})'
@@ -185,7 +185,7 @@ def data_migration_18(rotki: 'Rotkehlchen', progress_handler: 'MigrationProgress
             write_cursor.execute(
                 'DELETE FROM evm_tx_mappings WHERE tx_id IN (SELECT tx_id FROM '
                 'evm_tx_mappings WHERE value=?)',
-                (EVMTX_SPAM,),
+                (TX_SPAM,),
             )
 
     @progress_step(description='Removing manual current price oracle.')

@@ -2,14 +2,14 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Final
 
 from rotkehlchen.assets.asset import EvmToken
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.constants import BURN_TOPIC, MINT_TOPIC
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.uniswap.constants import CPT_UNISWAP_V2, UNISWAP_ICON
 from rotkehlchen.chain.evm.decoding.uniswap.utils import decode_basic_uniswap_info
 from rotkehlchen.chain.evm.decoding.uniswap.v2.utils import (
@@ -23,7 +23,7 @@ from rotkehlchen.types import EvmTransaction
 from .constants import UNISWAP_V2_SWAP_SIGNATURE
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
     from rotkehlchen.types import ChecksumEvmAddress
@@ -32,12 +32,12 @@ if TYPE_CHECKING:
 UNISWAP_V2_INIT_CODE_HASH: Final = '0x96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f'  # noqa: E501
 
 
-class Uniswapv2CommonDecoder(DecoderInterface):
+class Uniswapv2CommonDecoder(EvmDecoderInterface):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             router_address: 'ChecksumEvmAddress',
             factory_address: 'ChecksumEvmAddress',
@@ -54,7 +54,7 @@ class Uniswapv2CommonDecoder(DecoderInterface):
             self,
             tx_log: EvmTxReceiptLog,
             decoded_events: list['EvmEvent'],
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """
         Decodes only basic swap info. Basic swap info includes trying to find approval, spend and
         receive events for this particular swap but doesn't include ensuring order of events if the
@@ -76,7 +76,7 @@ class Uniswapv2CommonDecoder(DecoderInterface):
             decoded_events=decoded_events,
             counterparty=CPT_UNISWAP_V2,
             notify_user=self.notify_user,
-            native_currency=self.evm_inquirer.native_token,
+            native_currency=self.node_inquirer.native_token,
         )
 
     def _maybe_decode_v2_swap(
@@ -87,7 +87,7 @@ class Uniswapv2CommonDecoder(DecoderInterface):
             decoded_events: list['EvmEvent'],
             action_items: list[ActionItem],  # pylint: disable=unused-argument
             all_logs: list[EvmTxReceiptLog],  # pylint: disable=unused-argument
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         if tx_log.topics[0] == UNISWAP_V2_SWAP_SIGNATURE:
             if transaction.to_address == self.router_address:
                 # If uniswap v2 router is used, then we can decode an entire swap.
@@ -99,8 +99,8 @@ class Uniswapv2CommonDecoder(DecoderInterface):
                     transaction=transaction,
                     counterparty=CPT_UNISWAP_V2,
                     router_address=self.router_address,
-                    database=self.evm_inquirer.database,
-                    evm_inquirer=self.evm_inquirer,
+                    database=self.node_inquirer.database,
+                    evm_inquirer=self.node_inquirer,
                     notify_user=self.notify_user,
                 )
 
@@ -108,7 +108,7 @@ class Uniswapv2CommonDecoder(DecoderInterface):
             # and other properties should be decoded by the aggregator decoding methods later.
             return self._decode_basic_swap_info(tx_log=tx_log, decoded_events=decoded_events)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _maybe_decode_v2_liquidity_addition_and_removal(
             self,
@@ -118,7 +118,7 @@ class Uniswapv2CommonDecoder(DecoderInterface):
             decoded_events: list['EvmEvent'],
             action_items: list[ActionItem],  # pylint: disable=unused-argument
             all_logs: list[EvmTxReceiptLog],
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         if tx_log.topics[0] == MINT_TOPIC:
             return decode_uniswap_like_deposit_and_withdrawals(
                 tx_log=tx_log,
@@ -126,8 +126,8 @@ class Uniswapv2CommonDecoder(DecoderInterface):
                 all_logs=all_logs,
                 is_deposit=True,
                 counterparty=CPT_UNISWAP_V2,
-                evm_inquirer=self.evm_inquirer,
-                database=self.evm_inquirer.database,
+                evm_inquirer=self.node_inquirer,
+                database=self.node_inquirer.database,
                 factory_address=self.factory_address,
                 init_code_hash=UNISWAP_V2_INIT_CODE_HASH,
                 tx_hash=transaction.tx_hash,
@@ -139,13 +139,13 @@ class Uniswapv2CommonDecoder(DecoderInterface):
                 all_logs=all_logs,
                 is_deposit=False,
                 counterparty=CPT_UNISWAP_V2,
-                evm_inquirer=self.evm_inquirer,
-                database=self.evm_inquirer.database,
+                evm_inquirer=self.node_inquirer,
+                database=self.node_inquirer.database,
                 factory_address=self.factory_address,
                 init_code_hash=UNISWAP_V2_INIT_CODE_HASH,
                 tx_hash=transaction.tx_hash,
             )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

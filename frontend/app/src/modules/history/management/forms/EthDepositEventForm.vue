@@ -7,6 +7,7 @@ import dayjs from 'dayjs';
 import { isEmpty } from 'es-toolkit/compat';
 import AmountInput from '@/components/inputs/AmountInput.vue';
 import AutoCompleteWithSearchSync from '@/components/inputs/AutoCompleteWithSearchSync.vue';
+import DateTimePicker from '@/components/inputs/DateTimePicker.vue';
 import JsonInput from '@/components/inputs/JsonInput.vue';
 import { useFormStateWatcher } from '@/composables/form';
 import { useEditModeStateTracker } from '@/composables/history/events/edit-mode-state';
@@ -30,8 +31,8 @@ const { data } = toRefs(props);
 
 const assetPriceForm = useTemplateRef<InstanceType<typeof HistoryEventAssetPriceForm>>('assetPriceForm');
 
-const txHash = ref<string>('');
-const eventIdentifier = ref<string>('');
+const txRef = ref<string>('');
+const groupIdentifier = ref<string>('');
 const timestamp = ref<number>(0);
 const amount = ref<string>('');
 const sequenceIndex = ref<string>('');
@@ -47,10 +48,10 @@ const commonRules = createCommonRules();
 const rules = {
   amount: commonRules.createRequiredAmountRule(),
   depositor: commonRules.createRequiredValidDepositorRule(),
-  eventIdentifier: commonRules.createRequiredEventIdentifierRule(() => get(data).type === 'edit'),
+  groupIdentifier: commonRules.createRequiredGroupIdentifierRule(() => get(data).type === 'edit'),
   sequenceIndex: commonRules.createRequiredSequenceIndexRule(),
   timestamp: commonRules.createExternalValidationRule(),
-  txHash: commonRules.createValidTxHashRule(),
+  txRef: commonRules.createValidTxHashRule(),
   validatorIndex: commonRules.createRequiredValidatorIndexRule(),
 };
 
@@ -63,11 +64,11 @@ const { captureEditModeStateFromRefs, shouldSkipSaveFromRefs } = useEditModeStat
 const states = {
   amount,
   depositor,
-  eventIdentifier,
   extraData,
+  groupIdentifier,
   sequenceIndex,
   timestamp,
-  txHash,
+  txRef,
   validatorIndex,
 };
 
@@ -86,8 +87,8 @@ const depositorSuggestions = computed(() => getAddresses(Blockchain.ETH));
 
 function reset() {
   set(sequenceIndex, get(data)?.nextSequenceId || '0');
-  set(txHash, '');
-  set(eventIdentifier, null);
+  set(txRef, '');
+  set(groupIdentifier, null);
   set(timestamp, dayjs().valueOf());
   set(amount, '0');
   set(validatorIndex, '');
@@ -100,8 +101,8 @@ function reset() {
 
 function applyEditableData(entry: EthDepositEvent) {
   set(sequenceIndex, entry.sequenceIndex?.toString() ?? '');
-  set(txHash, entry.txHash);
-  set(eventIdentifier, entry.eventIdentifier);
+  set(txRef, entry.txRef);
+  set(groupIdentifier, entry.groupIdentifier);
   set(timestamp, entry.timestamp);
   set(amount, entry.amount.toFixed());
   set(validatorIndex, entry.validatorIndex.toString());
@@ -114,8 +115,8 @@ function applyEditableData(entry: EthDepositEvent) {
 
 function applyGroupHeaderData(entry: EthDepositEvent) {
   set(sequenceIndex, get(data)?.nextSequenceId || '0');
-  set(eventIdentifier, entry.eventIdentifier);
-  set(txHash, entry.txHash);
+  set(groupIdentifier, entry.groupIdentifier);
+  set(txRef, entry.txRef);
   set(validatorIndex, entry.validatorIndex.toString());
   set(depositor, entry.locationLabel ?? '');
   set(timestamp, entry.timestamp);
@@ -137,11 +138,11 @@ async function save(): Promise<boolean> {
     amount: get(numericAmount).isNaN() ? Zero : get(numericAmount),
     depositor: get(depositor),
     entryType: HistoryEventEntryType.ETH_DEPOSIT_EVENT,
-    eventIdentifier: get(eventIdentifier) ?? null,
     extraData: get(extraData) || null,
+    groupIdentifier: get(groupIdentifier) ?? null,
     sequenceIndex: get(sequenceIndex) || '0',
     timestamp: get(timestamp),
-    txHash: get(txHash),
+    txRef: get(txRef),
     validatorIndex: parseInt(get(validatorIndex)),
   };
 
@@ -175,18 +176,19 @@ onMounted(() => {
 
 defineExpose({
   save,
+  v$,
 });
 </script>
 
 <template>
   <div>
     <div class="grid md:grid-cols-2 gap-4 mb-4">
-      <RuiDateTimePicker
+      <DateTimePicker
         v-model="timestamp"
         :label="t('common.datetime')"
+        required
         persistent-hint
         max-date="now"
-        color="primary"
         variant="outlined"
         accuracy="millisecond"
         data-cy="datetime"
@@ -200,19 +202,21 @@ defineExpose({
         integer
         data-cy="validatorIndex"
         :label="t('transactions.events.form.validator_index.label')"
+        required
         :error-messages="toMessages(v$.validatorIndex)"
         @blur="v$.validatorIndex.$touch()"
       />
     </div>
 
     <RuiTextField
-      v-model="txHash"
+      v-model="txRef"
       variant="outlined"
       color="primary"
-      data-cy="tx-hash"
+      data-cy="tx-ref"
       :label="t('common.tx_hash')"
-      :error-messages="toMessages(v$.txHash)"
-      @blur="v$.txHash.$touch()"
+      required
+      :error-messages="toMessages(v$.txRef)"
+      @blur="v$.txRef.$touch()"
     />
 
     <RuiDivider class="mb-6 mt-2" />
@@ -235,6 +239,7 @@ defineExpose({
         :items="depositorSuggestions"
         data-cy="depositor"
         :label="t('transactions.events.form.depositor.label')"
+        required
         :error-messages="toMessages(v$.depositor)"
         auto-select-first
         @blur="v$.depositor.$touch()"
@@ -246,6 +251,7 @@ defineExpose({
         integer
         data-cy="sequence-index"
         :label="t('transactions.events.form.sequence_index.label')"
+        required
         :error-messages="toMessages(v$.sequenceIndex)"
         @blur="v$.sequenceIndex.$touch()"
       />
@@ -264,13 +270,13 @@ defineExpose({
         </template>
         <div class="py-2">
           <RuiTextField
-            v-model="eventIdentifier"
+            v-model="groupIdentifier"
             variant="outlined"
             color="primary"
-            data-cy="eventIdentifier"
+            data-cy="groupIdentifier"
             :label="t('transactions.events.form.event_identifier.label')"
-            :error-messages="toMessages(v$.eventIdentifier)"
-            @blur="v$.eventIdentifier.$touch()"
+            :error-messages="toMessages(v$.groupIdentifier)"
+            @blur="v$.groupIdentifier.$touch()"
           />
 
           <JsonInput

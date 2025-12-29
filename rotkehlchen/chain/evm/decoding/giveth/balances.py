@@ -6,8 +6,8 @@ from eth_typing.abi import ABI
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
 from rotkehlchen.chain.evm.contracts import EvmContract
 from rotkehlchen.chain.evm.decoding.giveth.constants import CPT_GIVETH
@@ -50,7 +50,7 @@ class GivethCommonBalances(ProtocolWithBalance):
     def query_balances(self) -> 'BalancesSheetType':
         """Query balances of staked/locked GIV"""
         balances: BalancesSheetType = defaultdict(BalanceSheet)
-        address_to_deposits = self.addresses_with_deposits(products=None)
+        address_to_deposits = self.addresses_with_deposits()
         staking_contract = EvmContract(
             address=self.staking_address,
             abi=DEPOSIT_BALANCE_ABI if self.query_method == 'depositTokenBalance' else self.evm_inquirer.contracts.abi('ERC20_TOKEN'),  # noqa: E501
@@ -75,7 +75,7 @@ class GivethCommonBalances(ProtocolWithBalance):
             return balances
 
         giv_asset = Asset(self.giv_token_id)
-        if (asset_price := Inquirer.find_usd_price(giv_asset)) == ZERO:
+        if (asset_price := Inquirer.find_main_currency_price(giv_asset)) == ZERO:
             log.error(
                 f'Failed to query price of GIV while querying '
                 f'{self.evm_inquirer.chain_name} staked GIV',
@@ -97,7 +97,7 @@ class GivethCommonBalances(ProtocolWithBalance):
             )
             balances[arguments[idx]].assets[giv_asset][self.counterparty] += Balance(
                 amount=amount,
-                usd_value=amount * asset_price,
+                value=amount * asset_price,
             )
 
         return balances

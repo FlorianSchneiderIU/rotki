@@ -129,7 +129,7 @@ class CalendarReminderCreator(CustomizableDateMixin):
         with self.database.conn.read_ctx() as cursor:
             return DBHistoryEvents(database=self.database).get_history_events_internal(
                 cursor=cursor,
-                group_by_event_ids=False,
+                aggregate_by_group_ids=False,
                 filter_query=EvmEventFilterQuery.make(
                     and_op=True,
                     counterparties=counterparties,
@@ -343,7 +343,10 @@ class CalendarReminderCreator(CustomizableDateMixin):
     def maybe_create_locked_crv_reminders(self) -> None:
         """Check for lock CRV in vote escrow history events and create reminders if needed."""
         if len(crv_events := self.get_history_events(
-            event_types=[(HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET)],
+            event_types=[
+                (HistoryEventType.DEPOSIT, HistoryEventSubType.DEPOSIT_ASSET),
+                (HistoryEventType.INFORMATIONAL, HistoryEventSubType.UPDATE),
+            ],
             counterparties=[CPT_CURVE],
         )) == 0:
             return
@@ -430,11 +433,15 @@ class CalendarReminderCreator(CustomizableDateMixin):
                 pretty_name = airdrop_name.replace('_', ' ').capitalize()
                 entry_name = f'{pretty_name} airdrop claim deadline'
 
-                # TODO: Add zksync era to SupportedBlockchain - https://github.com/orgs/rotki/projects/11/views/2?pane=issue&itemId=81788541  # noqa: E501
-                if asset.chain_id == ChainID.ZKSYNC_ERA:
-                    continue  # Skip airdrops on zksync era
+                try:
+                    blockchain = asset.chain_id.to_blockchain()
+                except KeyError:
+                    log.warning(
+                        f'Unsupported blockchain {asset.chain_id} for {airdrop_name} airdrop. '
+                        'Skipping reminder creation.',
+                    )
+                    continue
 
-                blockchain = asset.chain_id.to_blockchain()
                 if address not in self.blockchain_accounts.get(blockchain):
                     continue  # skip if address hasn't been added to this chain in rotki
 
@@ -510,7 +517,7 @@ class CalendarReminderCreator(CustomizableDateMixin):
                 )) is not None:
                     bridge_calendar_entries.append(entry_id)
             except UnknownAsset:
-                log.exception(f'Unable to add reminder for bridge event with hash {bridge_event.tx_hash.hex()} on {bridge_event.location.name}')  # noqa: E501
+                log.exception(f'Unable to add reminder for bridge event with hash {bridge_event.tx_ref!s} on {bridge_event.location.name}')  # noqa: E501
                 continue
 
         self.maybe_create_reminders(

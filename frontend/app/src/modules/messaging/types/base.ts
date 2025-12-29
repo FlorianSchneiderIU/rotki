@@ -3,7 +3,7 @@ import { z } from 'zod/v4';
 export const MESSAGE_WARNING = 'warning';
 const MESSAGE_ERROR = 'error';
 
-export const MessageVerbosity = z.enum([MESSAGE_WARNING, MESSAGE_ERROR]);
+const MessageVerbosity = z.enum([MESSAGE_WARNING, MESSAGE_ERROR]);
 
 export const LegacyMessageData = z.object({
   value: z.string(),
@@ -27,28 +27,25 @@ export const SocketMessageType = {
   HISTORY_EVENTS_STATUS: 'history_events_status',
   LEGACY: 'legacy',
   MISSING_API_KEY: 'missing_api_key',
-  NEW_EVM_TOKEN_DETECTED: 'new_evm_token_detected',
+  NEW_TOKEN_DETECTED: 'new_token_detected',
   PREMIUM_STATUS_UPDATE: 'premium_status_update',
   PROGRESS_UPDATES: 'progress_updates',
   REFRESH_BALANCES: 'refresh_balances',
   SOLANA_TOKENS_MIGRATION: 'solana_tokens_migration',
   TRANSACTION_STATUS: 'transaction_status',
+  UNMATCHED_ASSET_MOVEMENTS: 'unmatched_asset_movements',
 } as const;
 
 export type SocketMessageType = (typeof SocketMessageType)[keyof typeof SocketMessageType];
 
-export function isSocketMessageType(type: string): type is SocketMessageType {
-  return Object.values(SocketMessageType).includes(type as SocketMessageType);
-}
-
 export const SocketMessageProgressUpdateSubType = {
   CSV_IMPORT_RESULT: 'csv_import_result',
-  EVM_UNDECODED_TRANSACTIONS: 'evm_undecoded_transactions',
   HISTORICAL_PRICE_QUERY_STATUS: 'historical_price_query_status',
   LIQUITY_STAKING_QUERY: 'liquity_staking_query',
   MULTIPLE_PRICES_QUERY_STATUS: 'multiple_prices_query_status',
   PROTOCOL_CACHE_UPDATES: 'protocol_cache_updates',
   STATS_PRICE_QUERY: 'stats_price_query',
+  UNDECODED_TRANSACTIONS: 'undecoded_transactions',
 } as const;
 
 export type SocketMessageProgressUpdateSubType = (typeof SocketMessageProgressUpdateSubType)[keyof typeof SocketMessageProgressUpdateSubType];

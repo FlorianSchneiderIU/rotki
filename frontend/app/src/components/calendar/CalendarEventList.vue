@@ -10,7 +10,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'edit', event: CalendarEvent): void;
+  edit: [event: CalendarEvent];
 }>();
 
 function edit(event: CalendarEvent) {
@@ -23,10 +23,16 @@ const time = computed(() => dayjs(get(event).timestamp * 1000).format('HH:mm'));
 
 const MAX_LENGTH = 70;
 
-const showTooltip = computed(() => get(event).description.length > MAX_LENGTH);
-
-const description = computed(() => {
+const showTooltip = computed<boolean>(() => {
   const description = get(event).description;
+  return description !== undefined && description.length > MAX_LENGTH;
+});
+
+const description = computed<string>(() => {
+  const description = get(event).description;
+  if (description === undefined) {
+    return '';
+  }
   if (!get(showTooltip))
     return description;
 

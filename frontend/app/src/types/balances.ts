@@ -9,7 +9,7 @@ export interface Eth2Validator {
 
 export interface LocationBalance {
   readonly location: string;
-  readonly usdValue: BigNumber;
+  readonly value: BigNumber;
 }
 
 export type BalanceByLocation = Record<string, BigNumber>;
@@ -27,7 +27,7 @@ export enum BalanceType {
   LIABILITY = 'liability',
 }
 
-export const EvmTokens = z.object({
+const EvmTokens = z.object({
   lastUpdateTimestamp: z.number().nullish(),
   tokens: z.array(z.string()).nullish(),
 });

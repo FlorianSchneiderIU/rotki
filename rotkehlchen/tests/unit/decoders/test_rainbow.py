@@ -4,19 +4,20 @@ from unittest.mock import patch
 import pytest
 
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.rainbow.constants import (
     CPT_RAINBOW_SWAPS,
     RAINBOW_ROUTER_CONTRACT,
 )
 from rotkehlchen.chain.evm.transactions import EvmTransactions
-from rotkehlchen.constants.assets import A_BSC_BNB, A_ETH, A_OP, A_POLYGON_POS_MATIC
+from rotkehlchen.constants.assets import A_BSC_BNB, A_ETH, A_OP, A_POL
 from rotkehlchen.db.evmtx import DBEvmTx
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import (
     EvmInternalTransaction,
@@ -38,7 +39,7 @@ def test_rainbow_swap_eth_to_token(ethereum_inquirer, ethereum_accounts):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     swap_amount, received_amount, gas_fees, fee_amount, timestamp, user_address = '0.1983', '28827.267041421686554081', '0.000114360530468618', '0.0017', TimestampMS(1741808351000), ethereum_accounts[0]  # noqa: E501
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -50,7 +51,7 @@ def test_rainbow_swap_eth_to_token(ethereum_inquirer, ethereum_accounts):
         notes=f'Burn {gas_fees} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -62,7 +63,7 @@ def test_rainbow_swap_eth_to_token(ethereum_inquirer, ethereum_accounts):
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -74,7 +75,7 @@ def test_rainbow_swap_eth_to_token(ethereum_inquirer, ethereum_accounts):
         counterparty=CPT_RAINBOW_SWAPS,
         address=RAINBOW_ROUTER_CONTRACT,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=3,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -95,7 +96,7 @@ def test_rainbow_swap_token_to_eth(ethereum_inquirer, ethereum_accounts):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     swap_amount, received_amount, gas_fees, fee_amount, timestamp, user_address = '1010.887928111872496631', '0.089068967427375408', '0.000147805218572058', '0.000763576624440434', TimestampMS(1741892171000), ethereum_accounts[0]  # noqa: E501
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -107,7 +108,7 @@ def test_rainbow_swap_token_to_eth(ethereum_inquirer, ethereum_accounts):
         notes=f'Burn {gas_fees} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -119,7 +120,7 @@ def test_rainbow_swap_token_to_eth(ethereum_inquirer, ethereum_accounts):
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -131,7 +132,7 @@ def test_rainbow_swap_token_to_eth(ethereum_inquirer, ethereum_accounts):
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=3,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -152,7 +153,7 @@ def test_rainbow_swap_token_to_token(ethereum_inquirer, ethereum_accounts):
     events, _ = get_decoded_events_of_transaction(evm_inquirer=ethereum_inquirer, tx_hash=tx_hash)
     gas_fees, swap_amount, received_amount, approve_amount, fee_amount, timestamp, user_address = '0.000364910690805408', '77248.794187730822813278', '45110.517197738477939043', '115792089237316195423570985008687907853269984665640563961546.545997090312884234', '662.243823091993942423', TimestampMS(1741889531000), ethereum_accounts[0]  # noqa: E501
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -164,7 +165,7 @@ def test_rainbow_swap_token_to_token(ethereum_inquirer, ethereum_accounts):
         notes=f'Burn {gas_fees} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=281,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -176,7 +177,7 @@ def test_rainbow_swap_token_to_token(ethereum_inquirer, ethereum_accounts):
         notes=f'Set ZIG spending approval of {user_address} by {RAINBOW_ROUTER_CONTRACT} to {approve_amount}',  # noqa: E501
         address=RAINBOW_ROUTER_CONTRACT,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=282,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -188,7 +189,7 @@ def test_rainbow_swap_token_to_token(ethereum_inquirer, ethereum_accounts):
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=283,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -200,7 +201,7 @@ def test_rainbow_swap_token_to_token(ethereum_inquirer, ethereum_accounts):
         counterparty=CPT_RAINBOW_SWAPS,
         address=RAINBOW_ROUTER_CONTRACT,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=284,
         timestamp=timestamp,
         location=Location.ETHEREUM,
@@ -221,7 +222,7 @@ def test_rainbow_swap_on_arbitrum_one(arbitrum_one_inquirer, arbitrum_one_accoun
     events, _ = get_decoded_events_of_transaction(evm_inquirer=arbitrum_one_inquirer, tx_hash=tx_hash)  # noqa: E501
     gas_fees, swap_amount, received_amount, fee_amount, timestamp, user_address = '0.0000046705', '0.0305382', '57.839494', '0.0002618', TimestampMS(1742300433000), arbitrum_one_accounts[0]  # noqa: E501
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -233,7 +234,7 @@ def test_rainbow_swap_on_arbitrum_one(arbitrum_one_inquirer, arbitrum_one_accoun
         notes=f'Burn {gas_fees} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -245,7 +246,7 @@ def test_rainbow_swap_on_arbitrum_one(arbitrum_one_inquirer, arbitrum_one_accoun
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -257,7 +258,7 @@ def test_rainbow_swap_on_arbitrum_one(arbitrum_one_inquirer, arbitrum_one_accoun
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=3,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -272,13 +273,14 @@ def test_rainbow_swap_on_arbitrum_one(arbitrum_one_inquirer, arbitrum_one_accoun
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('base_accounts', [['0x4C855204c4EeD411a03D20acE673d08837A8F5ee']])
 def test_rainbow_swap_on_base(base_inquirer, base_accounts):
     tx_hash = deserialize_evm_tx_hash('0xa8ba1828b24608d3c3405a211bca5fcb57c5f4cdfde93d6a55b7f3b16f8f78f1')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=base_inquirer, tx_hash=tx_hash)
     gas_fees, swap_amount, received_amount, fee_amount, timestamp, user_address = '0.000000503840420226', '0.00007932', '2.062496993416307892', '0.00000068', TimestampMS(1742302681000), base_accounts[0]  # noqa: E501
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.BASE,
@@ -290,7 +292,7 @@ def test_rainbow_swap_on_base(base_inquirer, base_accounts):
         notes=f'Burn {gas_fees} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.BASE,
@@ -302,7 +304,7 @@ def test_rainbow_swap_on_base(base_inquirer, base_accounts):
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.BASE,
@@ -314,7 +316,7 @@ def test_rainbow_swap_on_base(base_inquirer, base_accounts):
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=3,
         timestamp=timestamp,
         location=Location.BASE,
@@ -380,7 +382,7 @@ def test_rainbow_swap_on_binance_sc(binance_sc_inquirer, binance_sc_accounts):
 
     gas_fees, swap_amount, received_amount, fee_amount, timestamp, user_address = '0.000561831', '0.0579036', '15021.487938841009576268', '0.0004964', TimestampMS(1742292986000), binance_sc_accounts[0]  # noqa: E501
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.BINANCE_SC,
@@ -392,7 +394,7 @@ def test_rainbow_swap_on_binance_sc(binance_sc_inquirer, binance_sc_accounts):
         notes=f'Burn {gas_fees} BNB for gas',
         counterparty=CPT_GAS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.BINANCE_SC,
@@ -404,7 +406,7 @@ def test_rainbow_swap_on_binance_sc(binance_sc_inquirer, binance_sc_accounts):
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.BINANCE_SC,
@@ -416,7 +418,7 @@ def test_rainbow_swap_on_binance_sc(binance_sc_inquirer, binance_sc_accounts):
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=3,
         timestamp=timestamp,
         location=Location.BINANCE_SC,
@@ -431,13 +433,14 @@ def test_rainbow_swap_on_binance_sc(binance_sc_inquirer, binance_sc_accounts):
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0x158E5aE870c64C0B48Dd062c62D160aBF13391b6']])
 def test_rainbow_swap_on_optimism(optimism_inquirer, optimism_accounts):
     tx_hash = deserialize_evm_tx_hash('0xc670f3c5efbeaf47e1c14349be3dc0f6df136b69d651b26e3a2cf371b6a63f6f')  # noqa: E501
     events, _ = get_decoded_events_of_transaction(evm_inquirer=optimism_inquirer, tx_hash=tx_hash)
     gas_fees, swap_amount, received_amount, fee_amount, timestamp, user_address = '0.000000048317451417', '0.01060905', '23.332130274980295506', '0.00009095', TimestampMS(1742305889000), optimism_accounts[0]  # noqa: E501
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.OPTIMISM,
@@ -449,7 +452,7 @@ def test_rainbow_swap_on_optimism(optimism_inquirer, optimism_accounts):
         notes=f'Burn {gas_fees} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.OPTIMISM,
@@ -461,7 +464,7 @@ def test_rainbow_swap_on_optimism(optimism_inquirer, optimism_accounts):
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.OPTIMISM,
@@ -473,7 +476,7 @@ def test_rainbow_swap_on_optimism(optimism_inquirer, optimism_accounts):
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=3,
         timestamp=timestamp,
         location=Location.OPTIMISM,
@@ -494,31 +497,31 @@ def test_rainbow_swap_on_polygon_pos(polygon_pos_inquirer, polygon_pos_accounts)
     events, _ = get_decoded_events_of_transaction(evm_inquirer=polygon_pos_inquirer, tx_hash=tx_hash)  # noqa: E501
     gas_fees, swap_amount, received_amount, fee_amount, timestamp, user_address = '0.0138519465', '9.915', '7.29700878889547439', '0.085', TimestampMS(1742309278000), polygon_pos_accounts[0]  # noqa: E501
     assert events == [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.POLYGON_POS,
         event_type=HistoryEventType.SPEND,
         event_subtype=HistoryEventSubType.FEE,
-        asset=A_POLYGON_POS_MATIC,
+        asset=A_POL,
         amount=FVal(gas_fees),
         location_label=user_address,
         notes=f'Burn {gas_fees} POL for gas',
         counterparty=CPT_GAS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.POLYGON_POS,
         event_subtype=HistoryEventSubType.SPEND,
-        asset=A_POLYGON_POS_MATIC,
+        asset=A_POL,
         amount=FVal(swap_amount),
         location_label=user_address,
         notes=f'Swap {swap_amount} POL in Rainbow',
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestamp,
         location=Location.POLYGON_POS,
@@ -530,12 +533,12 @@ def test_rainbow_swap_on_polygon_pos(polygon_pos_inquirer, polygon_pos_accounts)
         address=RAINBOW_ROUTER_CONTRACT,
         counterparty=CPT_RAINBOW_SWAPS,
     ), EvmSwapEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=3,
         timestamp=timestamp,
         location=Location.POLYGON_POS,
         event_subtype=HistoryEventSubType.FEE,
-        asset=A_POLYGON_POS_MATIC,
+        asset=A_POL,
         amount=FVal(fee_amount),
         location_label=user_address,
         notes=f'Spend {fee_amount} POL as Rainbow fee',

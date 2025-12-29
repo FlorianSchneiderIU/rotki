@@ -6,31 +6,35 @@ from enum import Enum, auto
 from typing import Any, Final, Generic, Literal, NamedTuple, Self, TypeVar
 
 from eth_utils import is_hex_address
+from solders.solders import Signature
 
 from rotkehlchen.accounting.types import SchemaEventType
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.ignored_assets_handling import IgnoredAssetsHandling
 from rotkehlchen.assets.types import AssetType
+from rotkehlchen.chain.bitcoin.bch.constants import BCH_GROUP_IDENTIFIER_PREFIX
+from rotkehlchen.chain.bitcoin.btc.constants import BTC_GROUP_IDENTIFIER_PREFIX
 from rotkehlchen.chain.ethereum.modules.nft.structures import NftLpHandling
 from rotkehlchen.chain.evm.types import EvmAccount
 from rotkehlchen.db.constants import (
+    CHAIN_EVENT_FIELDS,
     ETH_STAKING_EVENT_FIELDS,
-    EVM_EVENT_FIELDS,
-    EVMTX_DECODED,
     HISTORY_BASE_ENTRY_FIELDS,
     HISTORY_MAPPING_KEY_STATE,
     HISTORY_MAPPING_STATE_CUSTOMIZED,
+    TX_DECODED,
 )
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.cache import compute_cache_key
 from rotkehlchen.history.events.structures.base import HistoryBaseEntryType
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import (
+    ADDRESSBOOK_BLOCKCHAIN_GROUP_PREFIX,
     SUPPORTED_CHAIN_IDS,
+    BTCTxId,
     CacheType,
     ChainID,
     ChecksumEvmAddress,
@@ -54,9 +58,9 @@ log = RotkehlchenLogsAdapter(logger)
 
 
 ALL_EVENTS_DATA_JOIN: Final = """FROM history_events
-LEFT JOIN evm_events_info ON history_events.identifier=evm_events_info.identifier
+LEFT JOIN chain_events_info ON history_events.identifier=chain_events_info.identifier
 LEFT JOIN eth_staking_events_info ON history_events.identifier=eth_staking_events_info.identifier """  # noqa: E501
-EVM_EVENT_JOIN: Final = 'FROM history_events INNER JOIN evm_events_info ON history_events.identifier=evm_events_info.identifier '  # noqa: E501
+EVENTS_WITH_COUNTERPARTY_JOIN: Final = 'FROM history_events INNER JOIN chain_events_info ON history_events.identifier=chain_events_info.identifier '  # noqa: E501
 ETH_STAKING_EVENT_JOIN: Final = 'FROM history_events INNER JOIN eth_staking_events_info ON history_events.identifier=eth_staking_events_info.identifier '  # noqa: E501
 ETH_DEPOSIT_EVENT_JOIN = ALL_EVENTS_DATA_JOIN
 
@@ -193,17 +197,18 @@ class DBEvmTransactionJoinsFilter(DBFilter):
 @dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
 class DBTransactionsPendingDecodingFilter(DBFilter):
     """
-    This filter is used to find the ethereum transactions that have not been decoded yet
-    using the query in `TRANSACTIONS_MISSING_DECODING_QUERY`. It allows filtering by chain.
+    This filter is used to find evm or solana transactions that have not been decoded yet.
+    It allows filtering by chain when used with the evm query.
 
     Due to the joining we need to check for either value being NULL (meaning no entry
     in evm_tx_mappings) or not having the DECODED value.
     """
-    chain_id: ChainID | None
+    mappings_table_name: str
+    chain_id: ChainID | None = None
 
     def prepare(self) -> tuple[list[str], list[Any]]:
-        query_filters = ['(B.tx_id IS NULL OR B.tx_id NOT IN (SELECT tx_id FROM evm_tx_mappings WHERE value=?))']  # noqa: E501
-        bindings: list[int] = [EVMTX_DECODED]
+        query_filters = [f'(B.tx_id IS NULL OR B.tx_id NOT IN (SELECT tx_id FROM {self.mappings_table_name} WHERE value=?))']  # noqa: E501
+        bindings: list[int] = [TX_DECODED]
         if self.chain_id is not None:
             bindings.append(self.chain_id.serialize_for_db())
             query_filters.append('C.chain_id=?')
@@ -695,6 +700,20 @@ class DBNullFilter(DBFilter):
         return [f'{column} {self.verb} NULL' for column in self.columns], []
 
 
+@dataclass
+class DBAccountingRuleEventIdFilter(DBFilter):
+    """Filter rules that are linked to specific event IDs."""
+    values: list[int]
+
+    def prepare(self) -> tuple[list[str], list[Any]]:
+        placeholders = ','.join('?' for _ in self.values)
+        return [(
+            f'EXISTS (SELECT 1 FROM accounting_rule_events '
+            f'WHERE rule_id = accounting_rules.identifier '
+            f'AND event_id IN ({placeholders}))'
+        )], self.values
+
+
 @dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
 class HistoryEventCustomizedOnlyJoinsFilter(DBFilter):
     """This join finds customized history events (exclusively)."""
@@ -730,7 +749,7 @@ class HistoryBaseEntryFilterQuery(DBFilterQuery, FilterWithTimestamp, FilterWith
             ignored_ids: list[str] | None = None,
             null_columns: list[str] | None = None,
             identifiers: list[int] | None = None,
-            event_identifiers: list[str] | None = None,
+            group_identifiers: list[str] | None = None,
             entry_types: IncludeExcludeFilterData | None = None,
             exclude_ignored_assets: bool = False,
             customized_events_only: bool = False,
@@ -747,7 +766,7 @@ class HistoryBaseEntryFilterQuery(DBFilterQuery, FilterWithTimestamp, FilterWith
             limit=limit,
             offset=offset,
             order_by_rules=order_by_rules,
-            group_by_field='event_identifier',
+            group_by_field='group_identifier',
         )
         if customized_events_only is True:
             if filter_query.join_clause is not None:  # atm "should not happen"
@@ -829,7 +848,7 @@ class HistoryBaseEntryFilterQuery(DBFilterQuery, FilterWithTimestamp, FilterWith
             filters.append(
                 DBIgnoreValuesFilter(
                     and_op=True,
-                    column='identifier',
+                    column='history_events_identifier',
                     values=ignored_ids,
                 ),
             )
@@ -840,12 +859,12 @@ class HistoryBaseEntryFilterQuery(DBFilterQuery, FilterWithTimestamp, FilterWith
                     columns=null_columns,
                 ),
             )
-        if event_identifiers is not None:
+        if group_identifiers is not None:
             filters.append(
                 DBMultiStringFilter(
                     and_op=True,
-                    column='event_identifier',
-                    values=event_identifiers,
+                    column='group_identifier',
+                    values=group_identifiers,
                 ),
             )
         if exclude_ignored_assets is True:
@@ -918,10 +937,11 @@ class HistoryEventFilterQuery(HistoryBaseEntryFilterQuery):
         return HISTORY_BASE_ENTRY_FIELDS
 
 
-class EvmEventFilterQuery(HistoryBaseEntryFilterQuery):
+class HistoryEventWithTxRefFilterQuery(HistoryBaseEntryFilterQuery):
+    """Filter for events with a transaction reference."""
     @classmethod
     def make(
-            cls: type['EvmEventFilterQuery'],
+            cls,
             and_op: bool = True,
             order_by_rules: list[tuple[str, bool]] | None = None,
             limit: int | None = None,
@@ -939,19 +959,21 @@ class EvmEventFilterQuery(HistoryBaseEntryFilterQuery):
             ignored_ids: list[str] | None = None,
             null_columns: list[str] | None = None,
             identifiers: list[int] | None = None,
-            event_identifiers: list[str] | None = None,
+            group_identifiers: list[str] | None = None,
             entry_types: IncludeExcludeFilterData | None = None,
             exclude_ignored_assets: bool = False,
             customized_events_only: bool = False,
             notes_substring: str | None = None,
-            tx_hashes: list[EVMTxHash] | None = None,
-            counterparties: list[str] | None = None,
-            products: list[EvmProduct] | None = None,
-            addresses: list[ChecksumEvmAddress] | None = None,
-    ) -> 'EvmEventFilterQuery':
+            tx_refs: list[EVMTxHash | BTCTxId | Signature] | None = None,
+    ) -> Self:
         if entry_types is None:
-            entry_type_values = [HistoryBaseEntryType.EVM_EVENT, HistoryBaseEntryType.EVM_SWAP_EVENT]  # noqa: E501
-            entry_types = IncludeExcludeFilterData(values=entry_type_values)
+            entry_types = IncludeExcludeFilterData(values=[
+                HistoryBaseEntryType.SOLANA_EVENT,
+                HistoryBaseEntryType.EVM_EVENT,
+                HistoryBaseEntryType.EVM_SWAP_EVENT,
+                HistoryBaseEntryType.SOLANA_SWAP_EVENT,
+                HistoryBaseEntryType.HISTORY_EVENT,
+            ])
 
         filter_query = super().make(
             and_op=and_op,
@@ -971,13 +993,142 @@ class EvmEventFilterQuery(HistoryBaseEntryFilterQuery):
             ignored_ids=ignored_ids,
             null_columns=null_columns,
             identifiers=identifiers,
-            event_identifiers=event_identifiers,
+            group_identifiers=group_identifiers,
             entry_types=entry_types,
             exclude_ignored_assets=exclude_ignored_assets,
             customized_events_only=customized_events_only,
             notes_substring=notes_substring,
         )
-        if counterparties is not None:
+        if tx_refs is not None and len(tx_refs) > 0:
+            group_identifiers, tx_ref_values = [], []
+            for tx_ref in tx_refs:
+                if isinstance(tx_ref, str):  # BTCTxId is simply a NewType (can't be used with isinstance) wrapping str  # noqa: E501
+                    group_identifiers.extend([
+                        f'{BTC_GROUP_IDENTIFIER_PREFIX}{tx_ref}',
+                        f'{BCH_GROUP_IDENTIFIER_PREFIX}{tx_ref}',
+                    ])
+                elif isinstance(tx_ref, Signature):
+                    tx_ref_values.append(tx_ref.to_bytes())
+                else:  # EVMTxHash
+                    tx_ref_values.append(tx_ref)
+
+            tx_ref_filters: list[DBFilter] = []
+            if len(group_identifiers) > 0:
+                tx_ref_filters.append(DBMultiStringFilter(
+                    and_op=True,
+                    column='group_identifier',
+                    values=group_identifiers,
+                ))
+
+            if len(tx_ref_values) > 0:
+                tx_ref_filters.append(DBMultiBytesFilter(
+                    and_op=True,
+                    column='tx_ref',
+                    values=tx_ref_values,
+                ))
+
+            if len(tx_ref_filters) == 1:
+                filter_query.filters.extend(tx_ref_filters)
+            elif len(tx_ref_filters) > 1:
+                filter_query.filters.append(DBNestedFilter(
+                    and_op=False,
+                    filters=tx_ref_filters,
+                ))
+
+        return filter_query
+
+    @staticmethod
+    def get_join_query() -> str:
+        return EVENTS_WITH_COUNTERPARTY_JOIN
+
+    @staticmethod
+    def get_columns() -> str:
+        return f'{HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS}'
+
+    @staticmethod
+    def match_location_label(filters: list[DBFilter], labels: list[str]) -> None:
+        """Check if labels match either location_label or address fields."""
+        filters.append(DBNestedFilter(
+            and_op=False,
+            filters=[DBMultiStringFilter(
+                and_op=True,
+                column='location_label',
+                values=labels,
+                operator='IN',
+            ), DBMultiStringFilter(
+                and_op=True,
+                column='address',
+                values=labels,
+                operator='IN',
+            )],
+        ))
+
+
+class HistoryEventWithCounterpartyFilterQuery(HistoryEventWithTxRefFilterQuery):
+    """Filter for querying events by counterparties without selecting a chain-specific query."""
+    @classmethod
+    def make(
+            cls,
+            and_op: bool = True,
+            order_by_rules: list[tuple[str, bool]] | None = None,
+            limit: int | None = None,
+            offset: int | None = None,
+            from_ts: Timestamp | None = None,
+            to_ts: Timestamp | None = None,
+            assets: tuple[Asset, ...] | None = None,
+            event_types: list[HistoryEventType] | None = None,
+            event_subtypes: list[HistoryEventSubType] | None = None,
+            type_and_subtype_combinations: Iterable[tuple[HistoryEventType, HistoryEventSubType]] | None = None,  # noqa: E501
+            exclude_subtypes: list[HistoryEventSubType] | None = None,
+            location: Location | None = None,
+            location_labels: list[str] | None = None,
+            excluded_locations: list[Location] | None = None,
+            ignored_ids: list[str] | None = None,
+            null_columns: list[str] | None = None,
+            identifiers: list[int] | None = None,
+            group_identifiers: list[str] | None = None,
+            entry_types: IncludeExcludeFilterData | None = None,
+            exclude_ignored_assets: bool = False,
+            customized_events_only: bool = False,
+            notes_substring: str | None = None,
+            tx_refs: list[EVMTxHash | BTCTxId | Signature] | None = None,
+            counterparties: list[str] | None = None,
+            addresses: list[ChecksumEvmAddress | SolanaAddress] | None = None,
+    ) -> Self:
+        if entry_types is None:
+            entry_types = IncludeExcludeFilterData(values=[
+                HistoryBaseEntryType.SOLANA_EVENT,
+                HistoryBaseEntryType.EVM_EVENT,
+                HistoryBaseEntryType.EVM_SWAP_EVENT,
+                HistoryBaseEntryType.SOLANA_SWAP_EVENT,
+            ])
+
+        filter_query = super().make(
+            and_op=and_op,
+            order_by_rules=order_by_rules,
+            limit=limit,
+            offset=offset,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            assets=assets,
+            event_types=event_types,
+            event_subtypes=event_subtypes,
+            type_and_subtype_combinations=type_and_subtype_combinations,
+            exclude_subtypes=exclude_subtypes,
+            location=location,
+            location_labels=location_labels,
+            excluded_locations=excluded_locations,
+            ignored_ids=ignored_ids,
+            null_columns=null_columns,
+            identifiers=identifiers,
+            group_identifiers=group_identifiers,
+            entry_types=entry_types,
+            exclude_ignored_assets=exclude_ignored_assets,
+            customized_events_only=customized_events_only,
+            notes_substring=notes_substring,
+            tx_refs=tx_refs,
+        )
+        if counterparties is not None and len(counterparties) > 0:
             filter_query.filters.append(DBMultiStringFilter(
                 and_op=True,
                 column='counterparty',
@@ -985,19 +1136,84 @@ class EvmEventFilterQuery(HistoryBaseEntryFilterQuery):
                 operator='IN',
             ))
 
-        if products is not None:
+        if addresses is not None and len(addresses) > 0:
             filter_query.filters.append(DBMultiStringFilter(
                 and_op=True,
-                column='product',
-                values=[x.serialize() for x in products],
+                column='address',
+                values=addresses,
                 operator='IN',
             ))
 
-        if tx_hashes is not None:
+        return filter_query
+
+
+class SolanaEventFilterQuery(HistoryEventWithCounterpartyFilterQuery):
+    @classmethod
+    def make(  # type: ignore[override]
+            cls,
+            and_op: bool = True,
+            order_by_rules: list[tuple[str, bool]] | None = None,
+            limit: int | None = None,
+            offset: int | None = None,
+            from_ts: Timestamp | None = None,
+            to_ts: Timestamp | None = None,
+            assets: tuple[Asset, ...] | None = None,
+            event_types: list[HistoryEventType] | None = None,
+            event_subtypes: list[HistoryEventSubType] | None = None,
+            type_and_subtype_combinations: Iterable[tuple[HistoryEventType, HistoryEventSubType]] | None = None,  # noqa: E501
+            exclude_subtypes: list[HistoryEventSubType] | None = None,
+            location: Location | None = None,
+            location_labels: list[str] | None = None,
+            excluded_locations: list[Location] | None = None,
+            ignored_ids: list[str] | None = None,
+            null_columns: list[str] | None = None,
+            identifiers: list[int] | None = None,
+            group_identifiers: list[str] | None = None,
+            entry_types: IncludeExcludeFilterData | None = None,
+            exclude_ignored_assets: bool = False,
+            customized_events_only: bool = False,
+            notes_substring: str | None = None,
+            signatures: list[Signature] | None = None,
+            counterparties: list[str] | None = None,
+            addresses: list[SolanaAddress] | None = None,
+    ) -> Self:
+        if entry_types is None:
+            entry_types = IncludeExcludeFilterData(values=[
+                HistoryBaseEntryType.SOLANA_EVENT,
+                HistoryBaseEntryType.SOLANA_SWAP_EVENT,
+            ])
+
+        filter_query = super().make(
+            and_op=and_op,
+            order_by_rules=order_by_rules,
+            limit=limit,
+            offset=offset,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            assets=assets,
+            event_types=event_types,
+            event_subtypes=event_subtypes,
+            type_and_subtype_combinations=type_and_subtype_combinations,
+            exclude_subtypes=exclude_subtypes,
+            location=location,
+            location_labels=location_labels,
+            excluded_locations=excluded_locations,
+            ignored_ids=ignored_ids,
+            null_columns=null_columns,
+            identifiers=identifiers,
+            group_identifiers=group_identifiers,
+            entry_types=entry_types,
+            exclude_ignored_assets=exclude_ignored_assets,
+            customized_events_only=customized_events_only,
+            notes_substring=notes_substring,
+            counterparties=counterparties,
+        )
+
+        if signatures is not None:
             filter_query.filters.append(DBMultiBytesFilter(
                 and_op=True,
-                column='tx_hash',
-                values=tx_hashes,
+                column='tx_ref',
+                values=[sig.to_bytes() for sig in signatures],
                 operator='IN',
             ))
 
@@ -1013,11 +1229,126 @@ class EvmEventFilterQuery(HistoryBaseEntryFilterQuery):
 
     @staticmethod
     def get_join_query() -> str:
-        return EVM_EVENT_JOIN
+        return EVENTS_WITH_COUNTERPARTY_JOIN
 
     @staticmethod
     def get_columns() -> str:
-        return f'{HISTORY_BASE_ENTRY_FIELDS}, {EVM_EVENT_FIELDS}'
+        return f'{HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS}'
+
+    @staticmethod
+    def match_location_label(filters: list[DBFilter], labels: list[str]) -> None:
+        """Check if labels match either location_label or address fields.
+        In solana events, addresses can appear in both fields, so we need to check both.
+        """
+        filters.append(DBNestedFilter(
+            and_op=False,
+            filters=[DBMultiStringFilter(
+                and_op=True,
+                column='location_label',
+                values=labels,
+                operator='IN',
+            ), DBMultiStringFilter(
+                and_op=True,
+                column='address',
+                values=labels,
+                operator='IN',
+            )],
+        ))
+
+
+class EvmEventFilterQuery(HistoryEventWithCounterpartyFilterQuery):
+    @classmethod
+    def make(  # type: ignore[override]
+            cls,
+            and_op: bool = True,
+            order_by_rules: list[tuple[str, bool]] | None = None,
+            limit: int | None = None,
+            offset: int | None = None,
+            from_ts: Timestamp | None = None,
+            to_ts: Timestamp | None = None,
+            assets: tuple[Asset, ...] | None = None,
+            event_types: list[HistoryEventType] | None = None,
+            event_subtypes: list[HistoryEventSubType] | None = None,
+            type_and_subtype_combinations: Iterable[tuple[HistoryEventType, HistoryEventSubType]] | None = None,  # noqa: E501
+            exclude_subtypes: list[HistoryEventSubType] | None = None,
+            location: Location | None = None,
+            location_labels: list[str] | None = None,
+            excluded_locations: list[Location] | None = None,
+            ignored_ids: list[str] | None = None,
+            null_columns: list[str] | None = None,
+            identifiers: list[int] | None = None,
+            group_identifiers: list[str] | None = None,
+            entry_types: IncludeExcludeFilterData | None = None,
+            exclude_ignored_assets: bool = False,
+            customized_events_only: bool = False,
+            notes_substring: str | None = None,
+            tx_hashes: list[EVMTxHash] | None = None,
+            counterparties: list[str] | None = None,
+            addresses: list[ChecksumEvmAddress] | None = None,
+            excluded_addresses: list[ChecksumEvmAddress] | None = None,
+    ) -> Self:
+        if entry_types is None:
+            entry_types = IncludeExcludeFilterData(values=[HistoryBaseEntryType.EVM_EVENT, HistoryBaseEntryType.EVM_SWAP_EVENT])  # noqa: E501
+
+        filter_query = super().make(
+            and_op=and_op,
+            order_by_rules=order_by_rules,
+            limit=limit,
+            offset=offset,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            assets=assets,
+            event_types=event_types,
+            event_subtypes=event_subtypes,
+            type_and_subtype_combinations=type_and_subtype_combinations,
+            exclude_subtypes=exclude_subtypes,
+            location=location,
+            location_labels=location_labels,
+            excluded_locations=excluded_locations,
+            ignored_ids=ignored_ids,
+            null_columns=null_columns,
+            identifiers=identifiers,
+            group_identifiers=group_identifiers,
+            entry_types=entry_types,
+            exclude_ignored_assets=exclude_ignored_assets,
+            customized_events_only=customized_events_only,
+            notes_substring=notes_substring,
+            counterparties=counterparties,
+        )
+
+        if tx_hashes is not None:
+            filter_query.filters.append(DBMultiBytesFilter(
+                and_op=True,
+                column='tx_ref',
+                values=tx_hashes,
+                operator='IN',
+            ))
+
+        if addresses is not None:
+            filter_query.filters.append(DBMultiStringFilter(
+                and_op=True,
+                column='address',
+                values=addresses,
+                operator='IN',
+            ))
+
+        if excluded_addresses is not None:
+            filter_query.filters.append(DBMultiStringFilter(
+                and_op=True,
+                column='address',
+                values=excluded_addresses,
+                operator='NOT IN',
+            ))
+
+        return filter_query
+
+    @staticmethod
+    def get_join_query() -> str:
+        return EVENTS_WITH_COUNTERPARTY_JOIN
+
+    @staticmethod
+    def get_columns() -> str:
+        return f'{HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS}'
 
     @staticmethod
     def match_location_label(filters: list[DBFilter], labels: list[str]) -> None:
@@ -1063,7 +1394,7 @@ class EthStakingEventFilterQuery(HistoryBaseEntryFilterQuery, ABC):
             ignored_ids: list[str] | None = None,
             null_columns: list[str] | None = None,
             identifiers: list[int] | None = None,
-            event_identifiers: list[str] | None = None,
+            group_identifiers: list[str] | None = None,
             entry_types: IncludeExcludeFilterData | None = None,
             exclude_ignored_assets: bool = False,
             customized_events_only: bool = False,
@@ -1092,7 +1423,7 @@ class EthStakingEventFilterQuery(HistoryBaseEntryFilterQuery, ABC):
             ignored_ids=ignored_ids,
             null_columns=null_columns,
             identifiers=identifiers,
-            event_identifiers=event_identifiers,
+            group_identifiers=group_identifiers,
             entry_types=entry_types,
             exclude_ignored_assets=exclude_ignored_assets,
             customized_events_only=customized_events_only,
@@ -1145,7 +1476,7 @@ class EthWithdrawalFilterQuery(EthStakingEventFilterQuery):
             ignored_ids: list[str] | None = None,
             null_columns: list[str] | None = None,
             identifiers: list[int] | None = None,
-            event_identifiers: list[str] | None = None,
+            group_identifiers: list[str] | None = None,
             entry_types: IncludeExcludeFilterData | None = None,
             exclude_ignored_assets: bool = False,
             customized_events_only: bool = False,
@@ -1175,7 +1506,7 @@ class EthWithdrawalFilterQuery(EthStakingEventFilterQuery):
             ignored_ids=ignored_ids,
             null_columns=null_columns,
             identifiers=identifiers,
-            event_identifiers=event_identifiers,
+            group_identifiers=group_identifiers,
             entry_types=entry_types,
             exclude_ignored_assets=exclude_ignored_assets,
             customized_events_only=customized_events_only,
@@ -1225,7 +1556,7 @@ class EthDepositEventFilterQuery(EvmEventFilterQuery, EthStakingEventFilterQuery
             ignored_ids: list[str] | None = None,
             null_columns: list[str] | None = None,
             identifiers: list[int] | None = None,
-            event_identifiers: list[str] | None = None,
+            group_identifiers: list[str] | None = None,
             entry_types: IncludeExcludeFilterData | None = None,
             exclude_ignored_assets: bool = False,
             customized_events_only: bool = False,
@@ -1254,7 +1585,7 @@ class EthDepositEventFilterQuery(EvmEventFilterQuery, EthStakingEventFilterQuery
             ignored_ids=ignored_ids,
             null_columns=null_columns,
             identifiers=identifiers,
-            event_identifiers=event_identifiers,
+            group_identifiers=group_identifiers,
             entry_types=entry_types,
             exclude_ignored_assets=exclude_ignored_assets,
             tx_hashes=tx_hashes,
@@ -1276,7 +1607,7 @@ class EthDepositEventFilterQuery(EvmEventFilterQuery, EthStakingEventFilterQuery
 
     @staticmethod
     def get_columns() -> str:
-        return f'{HISTORY_BASE_ENTRY_FIELDS}, {EVM_EVENT_FIELDS}, {ETH_STAKING_EVENT_FIELDS}'
+        return f'{HISTORY_BASE_ENTRY_FIELDS}, {CHAIN_EVENT_FIELDS}, {ETH_STAKING_EVENT_FIELDS}'
 
 
 @dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
@@ -1350,9 +1681,15 @@ class UserNotesFilterQuery(DBFilterQuery, FilterWithTimestamp):
 
 
 class AddressbookFilterQuery(DBFilterQuery):
-    """
-    Filter used to find the paginated addressbook entries using the blockchain,
-    name and optional chain addresses as a filter.
+    """Filter used to find paginated addressbook entries.
+
+    - Filters by `blockchain`, `name` substring and optional chain-address pairs.
+    - `strict_blockchain` controls how the `blockchain` filter behaves:
+        - When True (default), matches entries whose `blockchain` exactly equals
+        the provided chain (e.g., `eth`).
+        - When False, matches all blockchains where the address format is valid
+        for the chain family of the provided chain. For example, providing an
+        EVM chain such as `eth` will match any EVM-based blockchain group.
     """
     @classmethod
     def make(
@@ -1361,6 +1698,7 @@ class AddressbookFilterQuery(DBFilterQuery):
             limit: int | None = None,
             offset: int | None = None,
             blockchain: SupportedBlockchain | None = None,
+            strict_blockchain: bool = True,
             optional_chain_addresses: list[OptionalChainAddress] | None = None,
             substring_search: str | None = None,
             order_by_rules: list[tuple[str, bool]] | None = None,
@@ -1379,11 +1717,19 @@ class AddressbookFilterQuery(DBFilterQuery):
                 search_string=substring_search,
             ))
         if blockchain is not None:
-            filters.append(DBEqualsFilter(
-                and_op=True,
-                column='blockchain',
-                value=blockchain.value,
-            ))
+            if strict_blockchain is True:
+                filters.append(DBEqualsFilter(
+                    and_op=True,
+                    column='blockchain',
+                    value=blockchain.value,
+                ))
+            else:
+                filters.append(DBMultiStringFilter(
+                    and_op=True,
+                    column='blockchain',
+                    values=[f'{ADDRESSBOOK_BLOCKCHAIN_GROUP_PREFIX}{blockchain.get_address_chain_group().name}', blockchain.value],  # noqa: E501
+                ))
+
         if optional_chain_addresses is not None:
             filters.append(DBOptionalChainAddressesFilter(
                 and_op=False,
@@ -1756,6 +2102,7 @@ class LevenshteinFilterQuery(MultiTableFilterQuery):
             substring_search: str | None = None,
             chain_id: ChainID | None = None,
             address: ChecksumEvmAddress | SolanaAddress | None = None,
+            asset_type: AssetType | None = None,
             ignored_assets_handling: IgnoredAssetsHandling = IgnoredAssetsHandling.NONE,
     ) -> 'LevenshteinFilterQuery':
         assert substring_search is not None or address is not None  # substring search and address can't be none at the same time  # noqa: E501
@@ -1797,20 +2144,41 @@ class LevenshteinFilterQuery(MultiTableFilterQuery):
             )
             filters.append((nfts_substring_filter, 'nfts'))
 
+        # Handle chain_id and asset_type filters with native token inclusion
+        chain_and_type_filters: list[DBFilter] = []
+        native_token_id: str | None = None
+
         if chain_id is not None:
-            nested_filter = DBNestedFilter(
-                and_op=False,
-                filters=[
-                    DBEqualsFilter(
+            chain_and_type_filters.append(DBEqualsFilter(
+                and_op=True,
+                column='chain',
+                value=chain_id.serialize_for_db(),
+            ))
+            native_token_id = chain_id.to_blockchain().get_native_token_id()
+
+        if asset_type is not None:
+            chain_and_type_filters.append(DBEqualsFilter(
+                and_op=True,
+                column='assets.type',
+                value=asset_type.serialize_for_db(),
+            ))
+            if asset_type == AssetType.SOLANA_TOKEN:
+                native_token_id = SupportedBlockchain.SOLANA.get_native_token_id()
+
+        # Combine chain and type filters with the native token identifier filter
+        if len(chain_and_type_filters) > 0:
+            chain_and_type_filter = DBNestedFilter(and_op=True, filters=chain_and_type_filters)
+            filters.append((
+                DBNestedFilter(
+                    and_op=False,
+                    filters=[chain_and_type_filter, DBEqualsFilter(
                         and_op=True,
-                        column='chain',
-                        value=chain_id.serialize_for_db(),
-                        include_null_values=True,
-                    ),
-                    DBNullFilter(and_op=True, columns=['chain'], verb='IS'),
-                ],
-            )
-            filters.append((nested_filter, 'assets'))
+                        column='assets.identifier',
+                        value=native_token_id,
+                    )],
+                ) if native_token_id is not None else chain_and_type_filter,
+                'assets',
+            ))
 
         if address is not None:
             filters.append((DBEqualsFilter(and_op=True, column='evm_tokens.address' if is_hex_address(address) else 'solana_tokens.address', value=address), 'assets'))  # noqa: E501
@@ -1819,7 +2187,7 @@ class LevenshteinFilterQuery(MultiTableFilterQuery):
         return filter_query
 
 
-class TransactionsNotDecodedFilterQuery(DBFilterQuery):
+class EvmTransactionsNotDecodedFilterQuery(DBFilterQuery):
     """
     Filter used to find the transactions that have not been decoded yet using chain and
     addresses as filter.
@@ -1828,29 +2196,51 @@ class TransactionsNotDecodedFilterQuery(DBFilterQuery):
     """
     @classmethod
     def make(
-            cls: type['TransactionsNotDecodedFilterQuery'],
+            cls: type['EvmTransactionsNotDecodedFilterQuery'],
             limit: int | None = None,
             chain_id: ChainID | None = None,
-    ) -> 'TransactionsNotDecodedFilterQuery':
+    ) -> 'EvmTransactionsNotDecodedFilterQuery':
         filter_query = cls.create(
             and_op=True,
             limit=limit,
             offset=None,
             order_by_rules=[('C.timestamp', True)],  # order by ascending timestamp
         )
-        filters: list[DBFilter] = []
-        if chain_id is not None:
-            filters.append(DBTransactionsPendingDecodingFilter(
-                and_op=True,
-                chain_id=chain_id,
-            ))
+        filter_query.filters = [DBTransactionsPendingDecodingFilter(
+            and_op=True,
+            mappings_table_name='evm_tx_mappings',
+            chain_id=chain_id,
+        )]
+        return filter_query
 
-        filter_query.filters = filters
+
+class SolanaTransactionsNotDecodedFilterQuery(DBFilterQuery):
+
+    @classmethod
+    def make(
+            cls: type['SolanaTransactionsNotDecodedFilterQuery'],
+            limit: int | None = None,
+    ) -> 'SolanaTransactionsNotDecodedFilterQuery':
+        filter_query = cls.create(
+            and_op=True,
+            limit=limit,
+            offset=None,
+            order_by_rules=[('A.block_time', True)],  # order by ascending timestamp
+        )
+        filter_query.filters = [DBTransactionsPendingDecodingFilter(
+            and_op=True,
+            mappings_table_name='solana_tx_mappings',
+        )]
         return filter_query
 
 
 class AccountingRulesFilterQuery(DBFilterQuery):
-    """Filter accounting rules using pagination by type, subtype and counterparty"""
+    """Filter accounting rules using pagination by type, subtype and counterparty.
+
+    If `custom_rule_handling` is 'only', filter only rules that apply to specific event IDs.
+    If `custom_rule_handling` is 'exclude', filter only rules that do not apply to specific event IDs.
+    If `event_ids` is provided, custom_rule_handling cannot be 'only' or 'exclude' (they are mutually exclusive).
+    """  # noqa: E501
 
     @classmethod
     def make(
@@ -1862,9 +2252,12 @@ class AccountingRulesFilterQuery(DBFilterQuery):
             event_types: list[HistoryEventType] | None = None,
             event_subtypes: list[HistoryEventSubType] | None = None,
             counterparties: list[str | None] | None = None,
+            identifiers: list[int] | None = None,
+            custom_rule_handling: Literal['all', 'only', 'exclude'] = 'all',
+            event_ids: list[int] | None = None,
     ) -> 'AccountingRulesFilterQuery':
         if order_by_rules is None:
-            order_by_rules = [('identifier', False)]
+            order_by_rules = [('accounting_rules.identifier', False)]
 
         filter_query = cls.create(
             and_op=and_op,
@@ -1905,6 +2298,23 @@ class AccountingRulesFilterQuery(DBFilterQuery):
                     values=non_null_counterparties,
                     operator='IN',
                 ))
+        if identifiers is not None:
+            filters.append(DBMultiIntegerFilter(
+                and_op=True,
+                column='accounting_rules.identifier',
+                values=identifiers,
+            ))
+        if custom_rule_handling != 'all':
+            filters.append(DBEqualsFilter(
+                and_op=True,
+                column='is_event_specific',
+                value=0 if custom_rule_handling == 'exclude' else 1,
+            ))
+        if event_ids is not None:
+            filters.append(DBAccountingRuleEventIdFilter(
+                and_op=True,
+                values=event_ids,
+            ))
 
         filter_query.filters = filters
         return filter_query
@@ -1931,4 +2341,53 @@ class PaginatedFilterQuery(DBFilterQuery):
             order_by_rules=order_by_rules,
         )
         filter_query.filters = []
+        return filter_query
+
+
+@dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
+class SolanaTransactionsFilterQuery(DBFilterQuery, FilterWithTimestamp):
+    """Filter query for Solana transactions.
+    If `signature` is provided, other filter parameters (timestamp, success) are ignored.
+    """
+
+    @classmethod
+    def make(
+            cls: type['SolanaTransactionsFilterQuery'],
+            and_op: bool = True,
+            order_by_rules: list[tuple[str, bool]] | None = None,
+            limit: int | None = None,
+            offset: int | None = None,
+            from_ts: Timestamp | None = None,
+            to_ts: Timestamp | None = None,
+            signature: Signature | None = None,
+            success: bool | None = None,
+    ) -> 'SolanaTransactionsFilterQuery':
+        """May raise:
+        - InvalidFilter for invalid combination of filters
+        """
+        if order_by_rules is None:
+            order_by_rules = [('block_time', True)]
+
+        filter_query = cls.create(
+            and_op=and_op,
+            limit=limit,
+            offset=offset,
+            order_by_rules=order_by_rules,
+        )
+        # Create the timestamp filter so that from/to ts works. But add it only if needed
+        filter_query.timestamp_filter = DBTimestampFilter(
+            and_op=True,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            timestamp_field='block_time',
+        )
+        filters: list[DBFilter] = []
+        if signature is not None:  # signature means single result so make it as single filter
+            filters.append(DBEqualsFilter(and_op=True, column='signature', value=signature.to_bytes()))  # noqa: E501
+        else:
+            filters.append(filter_query.timestamp_filter)
+            if success is not None:
+                filters.append(DBEqualsFilter(and_op=True, column='success', value=int(success)))
+
+        filter_query.filters = filters
         return filter_query

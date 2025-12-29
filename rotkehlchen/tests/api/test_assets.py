@@ -9,7 +9,7 @@ from polyleven import levenshtein
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceType
 from rotkehlchen.api.server import APIServer
-from rotkehlchen.assets.asset import CryptoAsset, CustomAsset, EvmToken
+from rotkehlchen.assets.asset import Asset, CryptoAsset, CustomAsset, EvmToken
 from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.assets.types import AssetType
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
@@ -114,7 +114,7 @@ def test_query_owned_assets(
         db.add_history_event(
             write_cursor=write_cursor,
             event=HistoryEvent(
-                event_identifier='1',
+                group_identifier='1',
                 sequence_index=1,
                 timestamp=TimestampMS(1),
                 location=Location.ETHEREUM,
@@ -871,13 +871,21 @@ def test_search_assets(rotkehlchen_api_server: 'APIServer') -> None:
 def test_search_assets_with_levenshtein(rotkehlchen_api_server: 'APIServer') -> None:
     """Test that searching for assets using a keyword works(levenshtein approach)."""
     globaldb = GlobalDBHandler()
-    # search by address
+    # search by EVM address
     response = requests.post(
         api_url_for(rotkehlchen_api_server, 'assetssearchlevenshteinresource'),
         json={'address': '0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83', 'limit': 10},
     )
     result = assert_proper_sync_response_with_result(response)
     assert len(result) == 1 and result[0]['identifier'] == 'eip155:100/erc20:0xDDAfbb505ad214D7b80b1f830fcCc89B60fb7A83'  # noqa: E501  # USDC on gnosis
+
+    # search by Solana address
+    response = requests.post(
+        api_url_for(rotkehlchen_api_server, 'assetssearchlevenshteinresource'),
+        json={'address': '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R', 'limit': 10},
+    )
+    result = assert_proper_sync_response_with_result(response)
+    assert len(result) == 1 and result[0]['identifier'] == 'solana/token:4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R'  # noqa: E501  # RAY token
 
     response = requests.post(
         api_url_for(rotkehlchen_api_server, 'assetssearchlevenshteinresource'),
@@ -1070,6 +1078,69 @@ def test_search_nfts_with_levenshtein(rotkehlchen_api_server: 'APIServer') -> No
                 levenshtein('bitcoin', entry['symbol']),
             )
         assert current_levenshtein_distance >= previous_levenshtein_distance
+
+
+def test_native_tokens_in_asset_search(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that native tokens are also included when searching for evm/solana tokens and
+    that the native token is prioritized (appears at the beginning of the results).
+    """
+    for chain in (ChainID.ETHEREUM, ChainID.OPTIMISM):
+        # Search for 'E' - should include ETH as native token along with other tokens
+        result = assert_proper_sync_response_with_result(requests.post(
+            api_url_for(rotkehlchen_api_server, 'assetssearchlevenshteinresource'),
+            json={'value': 'E', 'limit': 50, 'evm_chain': chain.to_name(), 'asset_type': 'evm token'},  # noqa: E501
+        ))
+        # ETH should be included and prioritized since it's the native token
+        assert_asset_at_top_position('ETH', max_position_index=1, result=result)
+        # but all other assets should be tokens with the correct chain
+        assert all(x['evm_chain'] == chain.to_name() for x in result if x['identifier'] != 'ETH')
+
+    # Search for S with asset_type of solana token, and native SOL should be included.
+    result = assert_proper_sync_response_with_result(requests.post(
+        api_url_for(rotkehlchen_api_server, 'assetssearchlevenshteinresource'),
+        json={'value': 'S', 'limit': 50, 'asset_type': 'solana token'},
+    ))
+    assert_asset_at_top_position('SOL', max_position_index=1, result=result)
+    assert all(x['asset_type'] == 'solana token' for x in result if x['identifier'] != 'SOL')
+
+    # Check that native BTC is also prioritized
+    result = assert_proper_sync_response_with_result(requests.post(
+        api_url_for(rotkehlchen_api_server, 'assetssearchlevenshteinresource'),
+        json={'value': 'BTC', 'limit': 50},
+    ))
+    assert_asset_at_top_position('BTC', max_position_index=1, result=result)
+
+
+def test_fiat_assets_prioritized_in_search(rotkehlchen_api_server: 'APIServer') -> None:
+    # When searching for USD, the USD fiat currency should appear first
+    result = assert_proper_sync_response_with_result(requests.post(
+        api_url_for(rotkehlchen_api_server, 'assetssearchlevenshteinresource'),
+        json={'value': 'USD', 'limit': 50},
+    ))
+    assert_asset_at_top_position('USD', max_position_index=0, result=result)
+    assert result[0]['asset_type'] == 'fiat'
+
+    # When searching for EUR, the EUR fiat currency should appear first
+    result = assert_proper_sync_response_with_result(requests.post(
+        api_url_for(rotkehlchen_api_server, 'assetssearchlevenshteinresource'),
+        json={'value': 'EUR', 'limit': 50},
+    ))
+    assert_asset_at_top_position('EUR', max_position_index=0, result=result)
+    assert result[0]['asset_type'] == 'fiat'
+
+    # For partial matches, fiat currencies should still have priority over native tokens
+    result = assert_proper_sync_response_with_result(requests.post(
+        api_url_for(rotkehlchen_api_server, 'assetssearchlevenshteinresource'),
+        json={'value': 'U', 'limit': 100},
+    ))
+    fiat_positions, native_positions = [], []
+    for i, entry in enumerate(result):
+        if entry.get('asset_type') == 'fiat':
+            fiat_positions.append(i)
+        elif entry['identifier'] in ('ETH', 'BTC', 'SOL', 'MATIC', 'AVAX'):
+            native_positions.append(i)
+
+    assert max(fiat_positions) < min(native_positions)
 
 
 def test_only_ignored_assets(rotkehlchen_api_server: 'APIServer') -> None:
@@ -1317,3 +1388,36 @@ def test_add_solana_token(rotkehlchen_api_server: 'APIServer') -> None:
             'token_kind': ' '.join(payload['token_kind'].split('_')),  # type: ignore[attr-defined]  # it is a string
         },
     ]
+
+
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+@pytest.mark.parametrize('coingecko_cache_coinlist', [{'some-token': {}}])
+@pytest.mark.parametrize('cryptocompare_cache_coinlist', [{'WIF': {}}])
+def test_edit_solana_token(
+        rotkehlchen_api_server: 'APIServer',
+        cache_coinlist: list[dict[str, dict]],
+) -> None:
+    """Test that editing a solana token via the api works correctly.
+    Regression test for a problem where editing a token changed its asset type to EVM token and
+    resulted in unknown asset errors.
+    """
+    token_dict = (a_dogwifhat := Asset(
+        identifier='solana/token:EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+    )).resolve_to_solana_token().to_dict()
+    del token_dict['identifier']
+    del token_dict['forked']
+    token_dict['name'] = 'Some Token'
+    token_dict['symbol'] = 'ST'
+    token_dict['coingecko'] = 'some-token'
+    assert_proper_response(requests.patch(
+        api_url_for(rotkehlchen_api_server, 'allassetsresource'),
+        json=token_dict,
+    ))
+    # Reload the token from the db and check that only the edited attributes have changed.
+    token_after_edit = Asset(a_dogwifhat.identifier).resolve_to_solana_token()
+    assert token_after_edit.asset_type == AssetType.SOLANA_TOKEN
+    assert token_after_edit.cryptocompare == 'WIF'
+    assert token_after_edit.decimals == 6
+    assert token_after_edit.name == 'Some Token'
+    assert token_after_edit.symbol == 'ST'
+    assert token_after_edit.coingecko == 'some-token'

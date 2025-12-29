@@ -5,16 +5,15 @@ from collections.abc import Callable, Iterator, Sequence
 from functools import reduce
 from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Literal, Optional, TypeVar, cast, overload
 
 import requests
 from gevent.lock import Semaphore
-from web3 import Web3
 from web3.exceptions import BadFunctionCallOutput, Web3Exception
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.api.websockets.typedefs import WSMessageType
-from rotkehlchen.assets.asset import CryptoAsset, EvmToken
+from rotkehlchen.assets.asset import CryptoAsset
 from rotkehlchen.chain.accounts import BlockchainAccountData, BlockchainAccounts
 from rotkehlchen.chain.arbitrum_one.modules.gearbox.balances import (
     GearboxBalances as GearboxBalancesArbitrumOne,
@@ -32,9 +31,9 @@ from rotkehlchen.chain.base.modules.aerodrome.balances import AerodromeBalances
 from rotkehlchen.chain.base.modules.extrafi.balances import (
     ExtrafiBalances as ExtrafiBalancesBase,
 )
+from rotkehlchen.chain.base.modules.runmoney.balances import RunmoneyBalances
 from rotkehlchen.chain.bitcoin.bch.utils import force_address_to_legacy_address
 from rotkehlchen.chain.bitcoin.xpub import XpubManager
-from rotkehlchen.chain.constants import SAFE_BASIC_ABI
 from rotkehlchen.chain.ethereum.modules import MODULE_NAME_TO_PATH
 from rotkehlchen.chain.ethereum.modules.aave.balances import AaveBalances
 from rotkehlchen.chain.ethereum.modules.blur.balances import BlurBalances
@@ -44,16 +43,17 @@ from rotkehlchen.chain.ethereum.modules.curve.crvusd.balances import CurveCrvusd
 from rotkehlchen.chain.ethereum.modules.eigenlayer.balances import EigenlayerBalances
 from rotkehlchen.chain.ethereum.modules.gearbox.balances import GearboxBalances
 from rotkehlchen.chain.ethereum.modules.hedgey.balances import HedgeyBalances
+from rotkehlchen.chain.ethereum.modules.lido_csm.balances import LidoCsmBalances
 from rotkehlchen.chain.ethereum.modules.liquity.constants import CPT_LIQUITY
-from rotkehlchen.chain.ethereum.modules.makerdao.constants import CPT_DSR, CPT_VAULT
+from rotkehlchen.chain.ethereum.modules.makerdao.constants import CPT_DSR
 from rotkehlchen.chain.ethereum.modules.octant.balances import OctantBalances
 from rotkehlchen.chain.ethereum.modules.pendle.balances import PendleBalances
 from rotkehlchen.chain.ethereum.modules.pickle_finance.constants import CPT_PICKLE
 from rotkehlchen.chain.ethereum.modules.safe.balances import SafeBalances
-from rotkehlchen.chain.ethereum.modules.thegraph.balances import ThegraphBalances
 from rotkehlchen.chain.evm.decoding.compound.v3.balances import Compoundv3Balances
 from rotkehlchen.chain.evm.decoding.curve.lend.balances import CurveLendBalances
 from rotkehlchen.chain.evm.decoding.hop.balances import HopBalances
+from rotkehlchen.chain.evm.types import EvmIndexer
 from rotkehlchen.chain.gnosis.modules.giveth.balances import GivethBalances as GivethGnosisBalances
 from rotkehlchen.chain.optimism.modules.extrafi.balances import (
     ExtrafiBalances as ExtrafiBalancesOp,
@@ -69,17 +69,7 @@ from rotkehlchen.chain.optimism.modules.walletconnect.balances import Walletconn
 from rotkehlchen.chain.substrate.manager import wait_until_a_node_is_available
 from rotkehlchen.chain.substrate.utils import SUBSTRATE_NODE_CONNECTION_TIMEOUT
 from rotkehlchen.constants import DEFAULT_BALANCE_LABEL, ZERO
-from rotkehlchen.constants.assets import (
-    A_AVAX,
-    A_BCH,
-    A_BTC,
-    A_DAI,
-    A_DOT,
-    A_ETH,
-    A_ETH2,
-    A_KSM,
-    A_SOL,
-)
+from rotkehlchen.constants.assets import A_DAI, A_ETH, A_ETH2
 from rotkehlchen.db.addressbook import DBAddressbook
 from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.eth2 import DBEth2
@@ -92,29 +82,31 @@ from rotkehlchen.errors.misc import (
     ModuleInitializationFailure,
     RemoteError,
 )
-from rotkehlchen.externalapis.etherscan import HasChainActivity
+from rotkehlchen.externalapis.etherscan_like import HasChainActivity
 from rotkehlchen.fval import FVal
 from rotkehlchen.greenlets.manager import GreenletManager
-from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
 from rotkehlchen.types import (
-    CHAIN_IDS_WITH_BALANCE_PROTOCOLS,
     CHAINS_WITH_CHAIN_MANAGER,
-    EVM_CHAIN_IDS_WITH_TRANSACTIONS,
+    CHAINS_WITH_NODES,
+    CHAINS_WITH_TRANSACTION_DECODERS,
+    CHAINS_WITH_TRANSACTIONS_TYPE,
+    EVM_CHAINS_WITH_TRANSACTIONS,
+    SUPPORTED_BITCOIN_CHAINS_TYPE,
     SUPPORTED_CHAIN_IDS,
     SUPPORTED_EVM_CHAINS,
     SUPPORTED_EVM_CHAINS_TYPE,
     SUPPORTED_EVM_EVMLIKE_CHAINS,
     SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE,
-    SUPPORTED_SUBSTRATE_CHAINS,
+    SUPPORTED_EVMLIKE_CHAINS_TYPE,
+    SUPPORTED_SUBSTRATE_CHAINS_TYPE,
     BlockchainAddress,
     ChainID,
     ChecksumEvmAddress,
     Eth2PubKey,
     ListOfBlockchainAddresses,
     ModuleName,
-    Price,
     SupportedBlockchain,
 )
 from rotkehlchen.user_messages import MessagesAggregator
@@ -130,7 +122,8 @@ if TYPE_CHECKING:
     from rotkehlchen.chain.binance_sc.manager import BinanceSCManager
     from rotkehlchen.chain.bitcoin.bch.manager import BitcoinCashManager
     from rotkehlchen.chain.bitcoin.btc.manager import BitcoinManager
-    from rotkehlchen.chain.ethereum.interfaces.balances import ProtocolWithBalance
+    from rotkehlchen.chain.bitcoin.manager import BitcoinCommonManager
+    from rotkehlchen.chain.decoding.types import CounterpartyDetails
     from rotkehlchen.chain.ethereum.manager import EthereumManager
     from rotkehlchen.chain.ethereum.modules.eth2.eth2 import Eth2
     from rotkehlchen.chain.ethereum.modules.eth2.structures import (
@@ -144,10 +137,14 @@ if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.modules.pickle_finance.main import PickleFinance
     from rotkehlchen.chain.ethereum.modules.sushiswap.sushiswap import Sushiswap
     from rotkehlchen.chain.ethereum.modules.uniswap.uniswap import Uniswap
-    from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
     from rotkehlchen.chain.evm.manager import EvmManager
-    from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
+    from rotkehlchen.chain.evm.proxies_inquirer import ProxyType
     from rotkehlchen.chain.gnosis.manager import GnosisManager
+    from rotkehlchen.chain.manager import (
+        ChainManager,
+        ChainManagerWithNodesMixin,
+        ChainManagerWithTransactions,
+    )
     from rotkehlchen.chain.optimism.manager import OptimismManager
     from rotkehlchen.chain.polygon_pos.manager import PolygonPOSManager
     from rotkehlchen.chain.scroll.manager import ScrollManager
@@ -180,50 +177,13 @@ def _module_name_to_class(module_name: ModuleName) -> type[EthereumModule]:
     return klass
 
 
-# Mapping to token symbols to ignore. True means all
-DEFI_PROTOCOLS_TO_SKIP_ASSETS = {
-    # aTokens are already detected at token balance queries
-    'Aave': True,  # True means all
-    'Aave V2': True,  # True means all
-    # stkAAVE and staking incentives are already detected
-    'Aave • Staking': True,
-    # cTokens are already detected at token balance queries
-    'Compound': True,  # True means all
-    # Curve balances are detected by our scan for ERC20 tokens
-    'Curve': True,  # True means all
-    # Curve gauges balances are now being detected separately by us
-    'Curve • Liquidity Gauges': True,  # True means all
-    # Chai is a normal token we query
-    'Chai': True,  # True means all
-    # Chitoken is a normal token we query
-    'Chi Gastoken by 1inch': True,  # True means all
-    # yearn vault balances are detected by the yTokens
-    'yearn.finance • Vaults': True,  # True means all
-    'Yearn Token Vaults': True,
-    # Synthetix SNX token is in our packaged DB
-    'Synthetix': ['SNX'],
-    # Ampleforth's AMPL token is in our packaged DB
-    'Ampleforth': ['AMPL'],
-    # MakerDao vault balances are already detected by our code.
-    # Note that DeFi SDK only detects them for the proxies.
-    'Multi-Collateral Dai': True,  # True means all
-    # We already got some pie dao tokens in the packaged DB
-    'PieDAO': ['BCP', 'BTC++', 'DEFI++', 'DEFI+S', 'DEFI+L', 'YPIE'],
-    'Dai Savings Rate': True,
-}
-DEFI_PROTOCOLS_TO_SKIP_LIABILITIES = {
-    'Multi-Collateral Dai': True,  # True means all
-    'Aave': True,
-    'Aave V2': True,
-    'Compound': True,
-}
 CHAIN_TO_BALANCE_PROTOCOLS = {
     ChainID.ETHEREUM: (
         Compoundv3Balances,
         CurveBalances,  # only needed in ethereum, because other chains have new gauge contracts
         ConvexBalances,
-        ThegraphBalances,
         OctantBalances,
+        LidoCsmBalances,
         EigenlayerBalances,
         HedgeyBalances,
         BlurBalances,
@@ -249,6 +209,7 @@ CHAIN_TO_BALANCE_PROTOCOLS = {
         AerodromeBalances,
         HopBalances,
         ExtrafiBalancesBase,
+        RunmoneyBalances,
     ),
     ChainID.ARBITRUM_ONE: (
         Compoundv3Balances,
@@ -338,6 +299,7 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         self.dot_lock = Semaphore()
         self.avax_lock = Semaphore()
         self.optimism_lock = Semaphore()
+        self.solana_lock = Semaphore()
         self.polygon_pos_lock = Semaphore()
         self.arbitrum_one_lock = Semaphore()
         self.base_lock = Semaphore()
@@ -378,6 +340,9 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
     def set_dot_rpc_endpoint(self, endpoint: str) -> tuple[bool, str]:
         return self.polkadot.set_rpc_endpoint(endpoint)
 
+    def set_btc_mempool_api(self, endpoint: str) -> tuple[bool, str]:
+        return self.bitcoin.set_custom_mempool_api(endpoint)
+
     def activate_premium_status(self, premium: Premium) -> None:
         self.premium = premium
         for _, module in self.iterate_modules():
@@ -407,8 +372,8 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         self.flush_cache('query_eth2_balances')
         self.flush_cache('query_balances')
         self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN)
-        self.flush_cache('query_balances', blockchain=None, ignore_cache=False)
-        self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN, ignore_cache=False)  # noqa: E501
+        self.flush_cache('query_balances', blockchain=None, ignore_cache=False, addresses=None)
+        self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN, ignore_cache=False, addresses=None)  # noqa: E501
 
     def process_new_modules_list(self, module_names: list[ModuleName]) -> None:
         """Processes a new list of active modules
@@ -579,6 +544,7 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
             self,
             blockchain: SupportedBlockchain | None = None,
             ignore_cache: bool = False,
+            addresses: ListOfBlockchainAddresses | None = None,
     ) -> BlockchainBalancesUpdate:
         """Queries either all, or specific blockchain balances
 
@@ -592,177 +558,41 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         client and the chain is not synced
         """
         xpub_manager = XpubManager(chains_aggregator=self)
-        if blockchain is not None:
-            query_method = f'query_{blockchain.get_key()}_balances'
-            getattr(self, query_method)(ignore_cache=ignore_cache)
-            if ignore_cache is True and blockchain.is_bitcoin():
-                xpub_manager.check_for_new_xpub_addresses(blockchain=blockchain)  # type: ignore # is checked in the if
-        else:  # all chains
-            for chain in SupportedBlockchain:
-                if chain.is_evm() and len(self.accounts.get(chain)) == 0:  # don't check eth2 and bitcoin since we might need to query new addresses  # noqa: E501
-                    continue
+        for chain in SupportedBlockchain if blockchain is None else [blockchain]:
+            if chain == SupportedBlockchain.ETHEREUM_BEACONCHAIN:
+                self.query_eth2_balances(ignore_cache=ignore_cache)
+                continue
 
-                query_method = f'query_{chain.get_key()}_balances'
-                getattr(self, query_method)(ignore_cache=ignore_cache)
-                if ignore_cache is True and chain.is_bitcoin():
-                    xpub_manager.check_for_new_xpub_addresses(blockchain=chain)  # type: ignore # is checked in the if
+            if ignore_cache is True and chain.is_bitcoin():
+                xpub_manager.check_for_new_xpub_addresses(blockchain=chain)  # type: ignore[arg-type] # mypy doesn't understand is_bitcoin()
+
+            self._query_chain_balances(blockchain=chain, ignore_cache=ignore_cache, addresses=addresses)  # noqa: E501
 
         self.totals = self.balances.recalculate_totals()
         return self.get_balances_update(blockchain)
 
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_btc_balances(
-            self,  # pylint: disable=unused-argument
+    @protect_with_lock(arguments_matter=True, skip_ignore_cache=True)
+    @cache_response_timewise(arguments_matter=True, forward_ignore_cache=True)
+    def _query_chain_balances(
+            self,
+            blockchain: CHAINS_WITH_CHAIN_MANAGER,
+            addresses: ListOfBlockchainAddresses | None = None,
             # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
             **kwargs: Any,
     ) -> None:
-        """Queries bitcoin block explorer APIs for the balance of all BTC accounts
+        if addresses is None or len(addresses) == 0:
+            if len(accounts := self.accounts.get(blockchain)) == 0:
+                return
+        else:
+            accounts = addresses  # type: ignore  # they are both sequences.
 
-        May raise:
-        - RemoteError if there is a problem querying any remote
-        """
-        if len(self.accounts.btc) == 0:
-            return
-
-        self.balances.btc = {}
-        btc_usd_price = Inquirer.find_usd_price(A_BTC)
-        balances = self.bitcoin.get_balances(self.accounts.btc)
-        for account, balance in balances.items():
-            self.balances.btc[account] = Balance(
-                amount=balance,
-                usd_value=balance * btc_usd_price,
-            )
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_bch_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """Queries bch block explorer APIs for the balance of all BCH accounts
-
-        May raise:
-        - RemoteError if there is a problem querying any remote
-        """
-        if len(self.accounts.bch) == 0:
-            return
-
-        self.balances.bch = {}
-        bch_usd_price = Inquirer.find_usd_price(A_BCH)
-        balances = self.bitcoin_cash.get_balances(self.accounts.bch)
-        for account, balance in balances.items():
-            self.balances.bch[account] = Balance(
-                amount=balance,
-                usd_value=balance * bch_usd_price,
-            )
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_ksm_balances(
-            self,  # pylint: disable=unused-argument
-            wait_available_node: bool = True,
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """Queries the KSM balances of the accounts via Kusama endpoints.
-
-        May raise:
-        - RemoteError: if no nodes are available or the balances request fails.
-        """
-        if len(self.accounts.ksm) == 0:
-            return
-
-        ksm_usd_price = Inquirer.find_usd_price(A_KSM)
-        if wait_available_node:
-            wait_until_a_node_is_available(
-                substrate_manager=self.kusama,
-                seconds=SUBSTRATE_NODE_CONNECTION_TIMEOUT,
-            )
-
-        account_amount = self.kusama.get_accounts_balance(self.accounts.ksm)
-        for account, amount in account_amount.items():
-            balance = Balance(
-                amount=amount,
-                usd_value=amount * ksm_usd_price,
-            )
-            self.balances.ksm[account] = BalanceSheet()
-            self.balances.ksm[account].assets[A_KSM][DEFAULT_BALANCE_LABEL] = balance
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_avax_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """Queries the AVAX balances of the accounts via Avalanche rpcs.
-        May raise:
-        - RemoteError: if no nodes are available or the balances request fails.
-        """
-        if len(self.accounts.avax) == 0:
-            return
-
-        # Query avax balance
-        avax_usd_price = Inquirer.find_usd_price(A_AVAX)
-        account_amount = self.avalanche.get_multiavax_balance(self.accounts.avax)
-        for account, amount in account_amount.items():
-            usd_value = amount * avax_usd_price
-            self.balances.avax[account] = BalanceSheet()
-            self.balances.avax[account].assets[A_AVAX][DEFAULT_BALANCE_LABEL] = Balance(amount, usd_value)  # noqa: E501
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_dot_balances(
-            self,  # pylint: disable=unused-argument
-            wait_available_node: bool = True,
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """Queries the DOT balances of the accounts via Polkadot endpoints.
-
-        May raise:
-        - RemoteError: if no nodes are available or the balances request fails.
-        """
-        if len(self.accounts.dot) == 0:
-            return
-
-        dot_usd_price = Inquirer.find_usd_price(A_DOT)
-        if wait_available_node:
-            wait_until_a_node_is_available(
-                substrate_manager=self.polkadot,
-                seconds=SUBSTRATE_NODE_CONNECTION_TIMEOUT,
-            )
-
-        account_amount = self.polkadot.get_accounts_balance(self.accounts.dot)
-        for account, amount in account_amount.items():
-            balance = Balance(
-                amount=amount,
-                usd_value=amount * dot_usd_price,
-            )
-            self.balances.dot[account] = BalanceSheet()
-            self.balances.dot[account].assets[A_DOT][DEFAULT_BALANCE_LABEL] = balance
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_zksync_lite_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """Queries the balance of the zksync lite chain.
-
-        May raise:
-        - RemoteError: if no nodes are available or the balances request fails.
-        """
-        if len(self.accounts.zksync_lite) == 0:
-            return
-
-        balances = self.zksync_lite.get_balances(self.accounts.zksync_lite)
-        for address, asset_balances in balances.items():
-            for asset, balance in asset_balances.items():
-                self.balances.zksync_lite[address].assets[asset][DEFAULT_BALANCE_LABEL] = balance
+        self.balances.set(
+            chain=blockchain,
+            balances=(  # Ethereum balances are handled differently to include eth module balances.
+                self.query_eth_balances(accounts) if blockchain == SupportedBlockchain.ETHEREUM  # type: ignore[arg-type]  # will be checksum addresses
+                else self.get_chain_manager(blockchain).query_balances(accounts)
+            ),
+        )
 
     def sync_bitcoin_accounts_with_db(
             self,
@@ -821,7 +651,7 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
 
     def _init_substrate_account_modification(
             self,
-            blockchain: SUPPORTED_SUBSTRATE_CHAINS,
+            blockchain: SUPPORTED_SUBSTRATE_CHAINS_TYPE,
             append_or_remove: Literal['append', 'remove'],
     ) -> None:
         """Extra code to run when substrate account modification start"""
@@ -903,8 +733,8 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         # we are adding/removing accounts, make sure query cache is flushed
         self.flush_cache('query_balances')
         self.flush_cache('query_balances', blockchain=blockchain)
-        self.flush_cache('query_balances', blockchain=None, ignore_cache=False)
-        self.flush_cache('query_balances', blockchain=blockchain, ignore_cache=False)
+        self.flush_cache('query_balances', blockchain=None, ignore_cache=False, addresses=None)
+        self.flush_cache('query_balances', blockchain=blockchain, ignore_cache=False, addresses=None)  # noqa: E501
         self.flush_cache(f'query_{chain_key}_balances')
 
         # recalculate totals
@@ -934,224 +764,11 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
             self.balances.eth2[pubkey] = BalanceSheet()
             self.balances.eth2[pubkey].assets[A_ETH2][DEFAULT_BALANCE_LABEL] = balance
 
-    def query_solana_balances(self, ignore_cache: bool) -> None:
-        """
-        May raise:
-
-        - RemoteError if an external service is queried and there is a problem with its query.
-        """
-        if len(accounts := self.accounts.get(SupportedBlockchain.SOLANA)) == 0:
-            return
-
-        # Clear existing balances for this chain to avoid accumulation
-        chain_balances = self.balances.get(SupportedBlockchain.SOLANA)
-        chain_balances.clear()
-
-        # Query native token balances
-        native_token_usd_price = Inquirer.find_usd_price(A_SOL)
-        for account, balance in self.solana.get_multi_balance(accounts).items():
-            if balance != ZERO:
-                chain_balances[account].assets[A_SOL][DEFAULT_BALANCE_LABEL] = Balance(
-                    amount=balance,
-                    usd_value=balance * native_token_usd_price,
-                )
-
-        # TODO: query token balances
-
-    @staticmethod
-    def _update_balances_after_token_query(
-            dsr_proxy_append: bool,
-            balance_result: dict[ChecksumEvmAddress, dict[EvmToken, FVal]],
-            token_usd_price: dict[EvmToken, Price],
-            balances: defaultdict[ChecksumEvmAddress, BalanceSheet],
-            balance_label: Literal['address', 'makerdao vault'] = DEFAULT_BALANCE_LABEL,
-    ) -> None:
-        # Update the per account token balance and usd value
-        for account, token_balances in balance_result.items():
-            for token, token_balance in token_balances.items():
-                balance = Balance(
-                    amount=token_balance,
-                    usd_value=token_balance * token_usd_price[token],
-                )
-                protocol = token.protocol or balance_label
-                assets_or_liabilities = balances[account].liabilities if token.is_liability() else balances[account].assets  # noqa: E501
-                if dsr_proxy_append:
-                    assets_or_liabilities[token][protocol] += balance
-                else:
-                    assets_or_liabilities[token][protocol] = balance
-
-    def query_evm_tokens(
-            self,
-            manager: 'EvmManager',
-            balances: defaultdict[ChecksumEvmAddress, BalanceSheet],
-    ) -> None:
-        """Queries evm token balance via either etherscan or evm node
-
-        Should come here during addition of a new account or querying of all token
-        balances.
-
-        May raise:
-        - RemoteError if an external service such as Etherscan or cryptocompare
-        is queried and there is a problem with its query.
-        - EthSyncError if querying the token balances through a provided ethereum
-        client and the chain is not synced
-        """
-        try:
-            balance_result, token_usd_price = manager.tokens.query_tokens_for_addresses(
-                addresses=self.accounts.get(manager.node_inquirer.blockchain),
-            )
-        except BadFunctionCallOutput as e:
-            log.error(
-                f'Assuming unsynced chain. Got web3 BadFunctionCallOutput '
-                f'exception: {e!s}',
-            )
-            raise EthSyncError(
-                f'Tried to use the {manager.node_inquirer.blockchain!s} chain of the provided '
-                'client to query token balances but the chain is not synced.',
-            ) from e
-
-        self._update_balances_after_token_query(
-            dsr_proxy_append=False,
-            balance_result=balance_result,
-            token_usd_price=token_usd_price,
-            balances=balances,
-        )
-
-    def query_evm_chain_balances(self, chain: SUPPORTED_EVM_CHAINS_TYPE) -> None:
-        """Queries all the balances for an evm chain and populates the state
-
-        May raise:
-        - RemoteError if an external service such as Etherscan or cryptocompare
-        is queried and there is a problem with its query.
-        - EthSyncError if querying the token balances through a provided ethereum
-        client and the chain is not synced
-        """
-        accounts = self.accounts.get(chain)
-        if len(accounts) == 0:
-            return
-
-        # Clear existing balances for this chain to avoid accumulation
-        chain_balances = self.balances.get(chain)
-        for account in accounts:
-            chain_balances[account] = BalanceSheet()
-
-        # Query native token balances
-        manager = cast('EvmManager', self.get_chain_manager(chain))
-        native_token_usd_price = Inquirer.find_usd_price(manager.node_inquirer.native_token)
-        for account, balance in manager.node_inquirer.get_multi_balance(accounts).items():
-            if balance != ZERO:  # accounts (e.g. multisigs) can have zero balances
-                chain_balances[account].assets[manager.node_inquirer.native_token][DEFAULT_BALANCE_LABEL] = Balance(  # noqa: E501
-                    amount=balance,
-                    usd_value=balance * native_token_usd_price,
-                )
-        self.query_evm_tokens(manager=manager, balances=chain_balances)
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_optimism_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """
-        Queries all the optimism balances and populates the state.
-        Same potential exceptions as ethereum
-        """
-        self.query_evm_chain_balances(chain=SupportedBlockchain.OPTIMISM)
-        self._query_protocols_with_balance(chain_id=ChainID.OPTIMISM)
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_polygon_pos_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """
-        Queries all the polygon pos balances and populates the state.
-        Same potential exceptions as ethereum
-        """
-        self.query_evm_chain_balances(chain=SupportedBlockchain.POLYGON_POS)
-        self._query_protocols_with_balance(chain_id=ChainID.POLYGON_POS)
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_arbitrum_one_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """
-        Queries all the arbitrum one balances and populates the state.
-        Same potential exceptions as ethereum
-        """
-        self.query_evm_chain_balances(chain=SupportedBlockchain.ARBITRUM_ONE)
-        self._query_protocols_with_balance(chain_id=ChainID.ARBITRUM_ONE)
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_base_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """
-        Queries all the base balances and populates the state.
-        Same potential exceptions as ethereum
-        """
-        self.query_evm_chain_balances(chain=SupportedBlockchain.BASE)
-        self._query_protocols_with_balance(chain_id=ChainID.BASE)
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_gnosis_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """
-        Queries all the gnosis balances and populates the state.
-        Same potential exceptions as ethereum
-        """
-        self.query_evm_chain_balances(chain=SupportedBlockchain.GNOSIS)
-        self._query_protocols_with_balance(chain_id=ChainID.GNOSIS)
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_scroll_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """
-        Queries all the scroll balances and populates the state.
-        Same potential exceptions as ethereum
-        """
-        self.query_evm_chain_balances(chain=SupportedBlockchain.SCROLL)
-        self._query_protocols_with_balance(chain_id=ChainID.SCROLL)
-
-    @protect_with_lock()
-    @cache_response_timewise()
-    def query_binance_sc_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """
-        Queries all the binance smart chain balances and populates the state.
-        Same potential exceptions as ethereum
-        """
-        self.query_evm_chain_balances(chain=SupportedBlockchain.BINANCE_SC)
-        self._query_protocols_with_balance(chain_id=ChainID.BINANCE_SC)
-
-    @protect_with_lock()
-    @cache_response_timewise()
     def query_eth_balances(
-            self,  # pylint: disable=unused-argument
-            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
-            **kwargs: Any,
-    ) -> None:
-        """Queries all the ethereum balances and populates the state
+            self,
+            accounts: Sequence[ChecksumEvmAddress],
+    ) -> defaultdict[ChecksumEvmAddress, BalanceSheet]:
+        """Queries all the ethereum balances including the balances from eth modules.
 
         May raise:
         - RemoteError if an external service such as Etherscan or cryptocompare
@@ -1159,33 +776,10 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         - EthSyncError if querying the token balances through a provided ethereum
         client and the chain is not synced
         """
-        self.query_evm_chain_balances(chain=SupportedBlockchain.ETHEREUM)
-        self._add_eth_protocol_balances(eth_balances=self.balances.eth)
-        self._query_protocols_with_balance(chain_id=ChainID.ETHEREUM)
-
-    def _query_protocols_with_balance(self, chain_id: CHAIN_IDS_WITH_BALANCE_PROTOCOLS) -> None:
-        """
-        Query for balances of protocols in which tokens can be locked without returning a liquid
-        version of the locked token. For example staking tokens in an old curve gauge. This balance
-        needs to be added to the total balance of the account. Examples of such protocols are
-        Legacy Curve gauges in ethereum, Convex and Velodrome.
-        """
-        chain: SUPPORTED_EVM_CHAINS_TYPE = ChainID.to_blockchain(chain_id)  # type: ignore  # CHAIN_IDS_WITH_BALANCE_PROTOCOLS only contains SUPPORTED_EVM_CHAINS_TYPE
-        chain_manager = self.get_evm_manager(chain_id)
-        existing_balances: defaultdict[ChecksumEvmAddress, BalanceSheet] = self.balances.get(chain)
-        for protocol in CHAIN_TO_BALANCE_PROTOCOLS[chain_id]:
-            protocol_with_balance: ProtocolWithBalance = protocol(
-                evm_inquirer=chain_manager.node_inquirer,  # type: ignore  # mypy can't match all possibilities here
-                tx_decoder=chain_manager.transactions_decoder,  # type: ignore  # mypy can't match all possibilities here
-            )
-            try:
-                protocol_balances = protocol_with_balance.query_balances()
-            except RemoteError as e:
-                log.error(f'Failed to query balances for {protocol} due to {e}. Skipping')
-                continue
-
-            for address, asset_balances in protocol_balances.items():
-                existing_balances[address] += asset_balances
+        eth_manager = self.get_chain_manager(blockchain=SupportedBlockchain.ETHEREUM)
+        balances = eth_manager.query_evm_chain_balances(accounts=accounts)
+        self._add_eth_protocol_balances(eth_balances=balances)
+        return eth_manager.query_protocols_with_balance(balances=balances)
 
     def _add_eth_protocol_balances(self, eth_balances: defaultdict[ChecksumEvmAddress, BalanceSheet]) -> None:  # noqa: E501
         """Also count token balances that may come from various eth protocols"""
@@ -1214,16 +808,17 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         # If any of the related modules is on (TODO: switch to counting events activity)
         if (liquity_module := self.get_module('liquity')) is not None or vaults_module is not None or dsr_module is not None:  # noqa: E501
             proxy_mappings = self.ethereum.node_inquirer.proxies_inquirer.get_accounts_having_proxy()  # noqa: E501
-            for single_proxy_mappings in proxy_mappings.values():
-                proxy_to_address = {}
-                proxy_addresses = []
-                for user_address, proxy_address in single_proxy_mappings.items():
-                    proxy_to_address[proxy_address] = user_address
-                    proxy_addresses.append(proxy_address)
+            for proxy_type, single_proxy_mappings in proxy_mappings.items():
+                proxy_to_type_and_owner: dict[ChecksumEvmAddress, tuple[ProxyType, ChecksumEvmAddress]] = {}  # noqa: E501
+                proxy_addresses: list[ChecksumEvmAddress] = []
+                for user_address, single_proxy_addresses in single_proxy_mappings.items():
+                    proxy_addresses.extend(single_proxy_addresses)
+                    for proxy_address in single_proxy_addresses:
+                        proxy_to_type_and_owner[proxy_address] = (proxy_type, user_address)
 
-                evmtokens = self.get_chain_manager(SupportedBlockchain.ETHEREUM).tokens
+                eth_manager = self.get_chain_manager(SupportedBlockchain.ETHEREUM)
                 try:
-                    balance_result, token_usd_price = evmtokens.query_tokens_for_addresses(
+                    balance_result, token_price = eth_manager.tokens.query_tokens_for_addresses(
                         addresses=proxy_addresses,
                     )
                 except BadFunctionCallOutput as e:
@@ -1236,13 +831,11 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
                         'token balances but the chain is not synced.',
                     ) from e
 
-                new_result = {proxy_to_address[x]: v for x, v in balance_result.items()}
-                self._update_balances_after_token_query(
-                    dsr_proxy_append=True,
-                    balance_result=new_result,
-                    token_usd_price=token_usd_price,
-                    balance_label=CPT_VAULT,
+                eth_manager.update_balances_after_token_query(
+                    balance_result=balance_result,
+                    token_price=token_price,
                     balances=eth_balances,
+                    proxies_information=proxy_to_type_and_owner,
                 )
 
         if (pickle_module := self.get_module('pickle_finance')) is not None:
@@ -1309,8 +902,8 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         self.flush_cache('query_eth2_balances')
         self.flush_cache('query_balances')
         self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN)
-        self.flush_cache('query_balances', blockchain=None, ignore_cache=False)
-        self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN, ignore_cache=False)  # noqa: E501
+        self.flush_cache('query_balances', blockchain=None, ignore_cache=False, addresses=None)
+        self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN, ignore_cache=False, addresses=None)  # noqa: E501
 
     def add_eth2_validator(
             self,
@@ -1369,53 +962,51 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
 
         return dict(aggregated_balances)
 
-    def get_chain_manager(
-            self,
-            blockchain: CHAINS_WITH_CHAIN_MANAGER,
-    ) -> Any:
+    @overload
+    def get_chain_manager(self, blockchain: SUPPORTED_EVM_CHAINS_TYPE) -> 'EvmManager':
+        ...
+
+    @overload
+    def get_chain_manager(self, blockchain: SUPPORTED_EVMLIKE_CHAINS_TYPE) -> 'ZksyncLiteManager':
+        ...
+
+    @overload
+    def get_chain_manager(self, blockchain: SUPPORTED_BITCOIN_CHAINS_TYPE) -> 'BitcoinCommonManager':  # noqa: E501
+        ...
+
+    @overload
+    def get_chain_manager(self, blockchain: SUPPORTED_SUBSTRATE_CHAINS_TYPE) -> 'SubstrateManager':
+        ...
+
+    @overload
+    def get_chain_manager(self, blockchain: Literal[SupportedBlockchain.SOLANA]) -> 'SolanaManager':  # noqa: E501
+        ...
+
+    @overload
+    def get_chain_manager(self, blockchain: CHAINS_WITH_TRANSACTIONS_TYPE) -> 'ChainManagerWithTransactions':  # noqa: E501
+        ...
+
+    @overload
+    def get_chain_manager(self, blockchain: CHAINS_WITH_CHAIN_MANAGER) -> 'ChainManager':
+        ...
+
+    def get_chain_manager(self, blockchain: CHAINS_WITH_CHAIN_MANAGER) -> 'ChainManager':
         """Returns blockchain manager"""
         attr = blockchain.name.lower()
         return getattr(self, attr)
 
-    def get_evm_manager(
-            self,
-            chain_id: SUPPORTED_CHAIN_IDS,
-    ) -> 'EvmManager':  # type ignore below due to inability to understand limitation
-        return self.get_chain_manager(chain_id.to_blockchain())  # type: ignore[arg-type]
+    def get_evm_manager(self, chain_id: SUPPORTED_CHAIN_IDS) -> 'EvmManager':
+        return self.get_chain_manager(chain_id.to_blockchain())  # type: ignore[call-overload]  # SUPPORTED_CHAIN_IDS only includes chains with chain managers.
 
-    def is_safe_proxy_or_eoa(
-            self,
-            address: ChecksumEvmAddress,
-            chain: SUPPORTED_EVM_CHAINS_TYPE,
-    ) -> bool:
+    def renable_etherscan_indixer(self) -> None:
+        """Make sure that etherscan is among the indexers for a chain.
+        It is used when a new api key is added and we need to ensure that it will
+        be queried again.
         """
-        Check if an address is a SAFE contract or an EoA. We do this by checking the getThreshold,
-        VERSION and getChainId methods. We assume that if a contract has the same methods as a
-        safe then it is a safe. Also EoAs return (true, b'') for any method so this function
-        will also return True.
-        """
-        if chain in (SupportedBlockchain.ZKSYNC_LITE, SupportedBlockchain.AVALANCHE):
-            # We don't support those chains as the others so consider them addresses.
-            return True
-
-        manager: EvmNodeInquirer = self.get_chain_manager(chain).node_inquirer
-        contract = Web3().eth.contract(address=address, abi=SAFE_BASIC_ABI)
-        calls = [
-            (address, contract.encode_abi(method_name))
-            for method_name in ('getThreshold', 'VERSION', 'getChainId')
-        ]
-        try:
-            outputs = manager.multicall_2(
-                calls=calls,
-                require_success=False,
-            )
-        except RemoteError as e:
-            log.error(
-                f'Failed to check SAFE properties for {address} in {chain} due to {e}. Skipping',
-            )
-            return False
-
-        return all(result_tuple[0] for result_tuple in outputs)
+        for chain in EVM_CHAINS_WITH_TRANSACTIONS:
+            chain_manager = self.get_chain_manager(chain)
+            if EvmIndexer.ETHERSCAN not in chain_manager.node_inquirer.available_indexers:
+                chain_manager.node_inquirer.available_indexers[EvmIndexer.ETHERSCAN] = chain_manager.node_inquirer.etherscan  # noqa: E501
 
     def check_single_address_activity(
             self,
@@ -1428,7 +1019,7 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         active_chains = []
         failed_to_query_chains: list[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE] = []
         for chain in chains:
-            chain_manager: EvmManager = self.get_chain_manager(chain)
+            chain_manager = self.get_chain_manager(chain)
             try:
                 if chain == SupportedBlockchain.AVALANCHE:
                     avax_manager = cast('AvalancheManager', chain_manager)
@@ -1462,27 +1053,14 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
                             continue  # do not add the address for the chain
 
                 else:
-                    if (blockscout := chain_manager.node_inquirer.blockscout) is not None:
-                        try:
-                            chain_activity = blockscout.has_activity(address)
-                        except RemoteError as e:
-                            log.debug(
-                                'Failed to check activity using blockscout '
-                                f'for {chain} due to {e}',
-                            )
-                            chain_activity = chain_manager.node_inquirer.etherscan.has_activity(
-                                chain_id=chain.to_chain_id(),
-                                account=address,
-                            )
-                    else:
-                        chain_activity = chain_manager.node_inquirer.etherscan.has_activity(
-                            chain_id=chain.to_chain_id(),
-                            account=address,
-                        )
-
+                    evm_manager = cast('EvmManager', chain_manager)
+                    chain_activity = evm_manager.node_inquirer.has_activity(
+                        chain_id=chain.to_chain_id(),
+                        account=address,
+                    )
                     only_token_spam = (
                         chain_activity == HasChainActivity.TOKENS and
-                        chain_manager.transactions.address_has_been_spammed(address=address)
+                        evm_manager.transactions.address_has_been_spammed(address=address)
                     )
                     if only_token_spam or chain_activity == HasChainActivity.NONE:
                         continue  # do not add the address for the chain
@@ -1532,9 +1110,9 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
             account: ChecksumEvmAddress,
             chains: list[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE],
     ) -> tuple[
-        list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
-        list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
-        bool,
+            list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
+            list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
+            bool,
     ]:
         """
         Accepts an account and a list of chains to check activity in. For each chain checks whether
@@ -1553,6 +1131,7 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         new_tracked_chains, new_failed_chains = self.track_evm_address(account, active_chains)
         failed_to_query_chains += new_failed_chains
         if len(new_tracked_chains) > 0:
+            # AddressNotSupported doesn't raise because we have only EVM addresses
             DBAddressbook(self.database).maybe_make_entry_name_multichain(address=account)
 
         return (
@@ -1565,11 +1144,11 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
             self,
             accounts: list[ChecksumEvmAddress],
     ) -> tuple[
-        list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
-        list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
-        list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
-        list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
-        list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
+            list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
+            list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
+            list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
+            list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
+            list[tuple[SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE, ChecksumEvmAddress]],
     ]:
         """Adds each account for all evm chain if it is not a contract in ethereum mainnet.
 
@@ -1597,7 +1176,7 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
             chains_to_check = [x for x in SUPPORTED_EVM_EVMLIKE_CHAINS if account not in self.accounts.get(x)]  # noqa: E501
             chains_with_valid_addresses = []
             for chain in chains_to_check:
-                if self.is_safe_proxy_or_eoa(address=account, chain=chain):  # type: ignore  # the chain is a supportedblockchain here
+                if self.get_chain_manager(chain).is_safe_proxy_or_eoa(address=account):  # type: ignore  # mypy doesn't detect this as SUPPORTED_EVM_EVMLIKE_CHAINS
                     chains_with_valid_addresses.append(chain)
                 else:
                     evm_contract_addresses.append((chain, account))
@@ -1653,7 +1232,7 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
 
             chains_to_check = list(all_evm_chains - set(account_chains))
             for chain in list(chains_to_check):
-                if not self.is_safe_proxy_or_eoa(address=account, chain=chain):  # type: ignore  # the chain is a supportedblockchain here
+                if not self.get_chain_manager(chain).is_safe_proxy_or_eoa(address=account):  # type: ignore  # mypy doesn't detect this as SUPPORTED_EVM_EVMLIKE_CHAINS
                     chains_to_check.remove(chain)
 
             if len(chains_to_check) == 0:
@@ -1690,10 +1269,10 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
 
         return added_accounts
 
-    def iterate_evm_chain_managers(self) -> Iterator['EvmManager']:
+    def iterate_chain_managers_with_nodes(self) -> Iterator['ChainManagerWithNodesMixin']:
         """Iterate the supported evm chain managers"""
-        for chain_id in get_args(SUPPORTED_CHAIN_IDS):
-            yield self.get_evm_manager(chain_id)
+        for blockchain in CHAINS_WITH_NODES:
+            yield self.get_chain_manager(blockchain)  # type: ignore[misc]  # will be a chain manager with nodes
 
     def flush_eth2_cache(self) -> None:
         """Flush cache for logic related to validators. We do this after modifying the list of
@@ -1701,20 +1280,20 @@ class ChainsAggregator(CacheableMixIn, LockableQueryMixIn):
         self.flush_cache('get_eth2_staking_details')
         self.flush_cache('query_eth2_balances')
         self.flush_cache('query_balances')
-        self.flush_cache('query_balances', blockchain=None, ignore_cache=False)
-        self.flush_cache('query_balances', blockchain=None, ignore_cache=True)
-        self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN, ignore_cache=False)  # noqa: E501
-        self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN, ignore_cache=True)  # noqa: E501
+        self.flush_cache('query_balances', blockchain=None, ignore_cache=False, addresses=None)
+        self.flush_cache('query_balances', blockchain=None, ignore_cache=True, addresses=None)
+        self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN, ignore_cache=False, addresses=None)  # noqa: E501
+        self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN, ignore_cache=True, addresses=None)  # noqa: E501
 
     def get_all_counterparties(self) -> set['CounterpartyDetails']:
         """
-        obtain the set of unique counterparties from the decoders across
-        all the chains that have them.
+        Obtain the set of unique counterparties from the decoders across
+        all EVM chains and Solana, including misc entries defined per decoder.
         """
         return reduce(
             operator.or_,
             [
-                self.get_evm_manager(chain_id).transactions_decoder.rules.all_counterparties
-                for chain_id in EVM_CHAIN_IDS_WITH_TRANSACTIONS
+                self.get_chain_manager(chain).transactions_decoder.get_all_counterparties()  # type: ignore[attr-defined]
+                for chain in CHAINS_WITH_TRANSACTION_DECODERS
             ],
         )

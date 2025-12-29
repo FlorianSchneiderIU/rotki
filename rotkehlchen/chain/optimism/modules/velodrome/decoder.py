@@ -1,20 +1,19 @@
 import logging
 from typing import TYPE_CHECKING
 
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
 from rotkehlchen.chain.evm.decoding.velodrome.constants import CPT_VELODROME
 from rotkehlchen.chain.evm.decoding.velodrome.decoder import VelodromeLikeDecoder
 from rotkehlchen.chain.evm.decoding.velodrome.velodrome_cache import (
     read_velodrome_pools_and_gauges_from_cache,
 )
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import CacheType
 
 from .constants import ROUTER_V1, ROUTER_V2, VOTER_CONTRACT_ADDRESS, VOTING_ESCROW_CONTRACT_ADDRESS
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.optimism.manager import OptimismInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -27,7 +26,7 @@ class VelodromeDecoder(VelodromeLikeDecoder):
     def __init__(
             self,
             optimism_inquirer: 'OptimismInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -44,12 +43,6 @@ class VelodromeDecoder(VelodromeLikeDecoder):
             pool_cache_type=CacheType.VELODROME_POOL_ADDRESS,
             read_fn=read_velodrome_pools_and_gauges_from_cache,
         )
-
-    @staticmethod
-    def possible_products() -> dict[str, list[EvmProduct]]:
-        return {
-            CPT_VELODROME: [EvmProduct.POOL, EvmProduct.GAUGE],
-        }
 
     @staticmethod
     def counterparties() -> tuple[CounterpartyDetails, ...]:

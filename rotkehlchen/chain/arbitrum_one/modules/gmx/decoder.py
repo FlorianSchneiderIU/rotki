@@ -2,6 +2,7 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from rotkehlchen.assets.asset import Asset, CryptoAsset
+from rotkehlchen.assets.utils import asset_normalized_value
 from rotkehlchen.chain.arbitrum_one.decoding.interfaces import ArbitrumDecoderInterface
 from rotkehlchen.chain.arbitrum_one.modules.gmx.constants import (
     CPT_GMX,
@@ -15,15 +16,14 @@ from rotkehlchen.chain.arbitrum_one.modules.gmx.constants import (
     STAKE_GMX,
     SWAP_TOPIC,
 )
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.ethereum.abi import decode_event_data_abi_str
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.constants.assets import A_ETH, A_WETH_ARB
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -33,7 +33,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.arbitrum_one.node_inquirer import ArbitrumOneInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.user_messages import MessagesAggregator
 
 
@@ -52,7 +52,7 @@ class GmxDecoder(ArbitrumDecoderInterface):
     def __init__(
             self,
             evm_inquirer: 'ArbitrumOneInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -62,14 +62,14 @@ class GmxDecoder(ArbitrumDecoderInterface):
         )
         self.eth = A_ETH.resolve_to_crypto_asset()
 
-    def _decode_swap_event(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_swap_event(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes swaps using the GMX vault"""
         if context.tx_log.topics[0] != SWAP_TOPIC:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         account = bytes_to_address(context.tx_log.data[0:32])
         if self.base.is_tracked(account) is False:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         token_out = self.base.get_or_create_evm_asset(bytes_to_address(context.tx_log.data[32:64]))
         token_in = self.base.get_or_create_evm_asset(bytes_to_address(context.tx_log.data[64:96]))
@@ -105,15 +105,15 @@ class GmxDecoder(ArbitrumDecoderInterface):
                 in_event = event
 
         if not (out_event and in_event):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         maybe_reshuffle_events(
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events,
         )
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)
 
-    def decode_position_change(self, context: DecoderContext) -> DecodingOutput:
+    def decode_position_change(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode an increase or decrease in short/long positions in GMX V1"""
         verb_text: Literal['increase', 'decrease']
         if context.tx_log.topics[0] == CREATE_INCREASE_TOPIC:
@@ -134,20 +134,20 @@ class GmxDecoder(ArbitrumDecoderInterface):
             abi_code = EXECUTE_DECREASE_ABI
             fee_index = 8
         else:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         account = bytes_to_address(context.tx_log.topics[1])
         if self.base.is_tracked(account) is False:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         try:
             _, decoded_data = decode_event_data_abi_str(context.tx_log, abi_code)
         except DeserializationError as e:
             log.error(
                 f'Failed to deserialize GMX event {verb_text=} at '
-                f'{context.transaction.tx_hash.hex()} due to {e}',
+                f'{context.transaction.tx_hash!s} due to {e}',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         path_token = self.base.get_or_create_evm_asset(decoded_data[0][0])
         amount_change = asset_normalized_value(amount=decoded_data[2], asset=path_token)
@@ -200,12 +200,12 @@ class GmxDecoder(ArbitrumDecoderInterface):
                 }
                 break  # stop iterating
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_stake(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_stake(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode staking events in the GMX protocol for the GMX asset"""
         if context.tx_log.topics[0] != STAKE_GMX:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         account = bytes_to_address(context.tx_log.data[0:32])
         token_addrs = bytes_to_address(context.tx_log.data[32:64])
@@ -236,7 +236,7 @@ class GmxDecoder(ArbitrumDecoderInterface):
                 asset = event.asset.resolve_to_crypto_asset()
                 event.notes = f'Receive {event.amount} {asset.symbol} after staking in GMX'
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

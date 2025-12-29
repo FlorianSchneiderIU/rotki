@@ -48,6 +48,7 @@ from rotkehlchen.chain.polygon_pos.node_inquirer import PolygonPOSInquirer
 from rotkehlchen.chain.scroll.manager import ScrollManager
 from rotkehlchen.chain.scroll.node_inquirer import ScrollInquirer
 from rotkehlchen.chain.solana.manager import SolanaManager
+from rotkehlchen.chain.solana.node_inquirer import SolanaInquirer
 from rotkehlchen.chain.substrate.manager import SubstrateManager
 from rotkehlchen.chain.substrate.utils import (
     KUSAMA_NODES_TO_CONNECT_AT_START,
@@ -56,6 +57,7 @@ from rotkehlchen.chain.substrate.utils import (
 from rotkehlchen.chain.zksync_lite.manager import ZksyncLiteManager
 from rotkehlchen.config import default_data_directory
 from rotkehlchen.constants import ONE, ZERO
+from rotkehlchen.constants.assets import A_USD
 from rotkehlchen.data_handler import DataHandler
 from rotkehlchen.data_import.manager import CSVDataImporter
 from rotkehlchen.data_migrations.manager import DataMigrationManager
@@ -65,7 +67,7 @@ from rotkehlchen.db.filtering import NFTFilterQuery
 from rotkehlchen.db.settings import CachedSettings, DBSettings, ModifiableDBSettings
 from rotkehlchen.db.updates import RotkiDataUpdater
 from rotkehlchen.db.utils import replace_tag_mappings, table_exists
-from rotkehlchen.errors.api import PremiumAuthenticationError
+from rotkehlchen.errors.api import PremiumAuthenticationError, PremiumPermissionError
 from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.errors.misc import (
     EthSyncError,
@@ -77,18 +79,21 @@ from rotkehlchen.errors.misc import (
 from rotkehlchen.exchanges.manager import ExchangeManager
 from rotkehlchen.externalapis.alchemy import Alchemy
 from rotkehlchen.externalapis.beaconchain.service import BeaconChain
+from rotkehlchen.externalapis.blockscout import Blockscout
 from rotkehlchen.externalapis.coingecko import Coingecko
 from rotkehlchen.externalapis.cryptocompare import Cryptocompare
 from rotkehlchen.externalapis.defillama import Defillama
 from rotkehlchen.externalapis.etherscan import Etherscan
+from rotkehlchen.externalapis.helius import Helius
+from rotkehlchen.externalapis.routescan import Routescan
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.asset_updates.manager import AssetsUpdater
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.globaldb.manual_price_oracles import ManualCurrentOracle
 from rotkehlchen.greenlets.manager import GreenletManager
 from rotkehlchen.history.manager import HistoryQueryingManager
-from rotkehlchen.history.price import PriceHistorian
-from rotkehlchen.history.types import HistoricalPriceOracle
+from rotkehlchen.history.price import Price, PriceHistorian
+from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
 from rotkehlchen.icons import IconManager
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -107,7 +112,7 @@ from rotkehlchen.types import (
     SUPPORTED_BITCOIN_CHAINS_TYPE,
     SUPPORTED_EVM_CHAINS_TYPE,
     SUPPORTED_EVM_EVMLIKE_CHAINS_TYPE,
-    SUPPORTED_SUBSTRATE_CHAINS,
+    SUPPORTED_SUBSTRATE_CHAINS_TYPE,
     AddressbookEntry,
     AddressbookType,
     ApiKey,
@@ -131,6 +136,7 @@ if TYPE_CHECKING:
     from rotkehlchen.chain.bitcoin.xpub import XpubData
     from rotkehlchen.db.drivers.gevent import DBConnection, DBCursor
     from rotkehlchen.exchanges.kraken import KrakenAccountType
+    from rotkehlchen.exchanges.okx import OkxLocation
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -199,6 +205,10 @@ class Rotkehlchen:
             data_dir=self.data_dir,
             coingecko=self.coingecko,
             greenlet_manager=self.greenlet_manager,
+        )
+        self.assets_updater = AssetsUpdater(
+            msg_aggregator=self.msg_aggregator,
+            globaldb=GlobalDBHandler(),
         )
 
         # Initialize the Inquirer singleton
@@ -372,11 +382,6 @@ class Rotkehlchen:
             )
             blockchain_accounts = self.data.db.get_blockchain_accounts(cursor)
 
-        etherscan = Etherscan(
-            database=self.data.db,
-            msg_aggregator=self.data.db.msg_aggregator,
-        )
-
         # Initialize blockchain querying modules
         self.chains_aggregator = ChainsAggregator(
             blockchain_accounts=blockchain_accounts,
@@ -384,7 +389,18 @@ class Rotkehlchen:
                 node_inquirer=(ethereum_inquirer := EthereumInquirer(
                     greenlet_manager=self.greenlet_manager,
                     database=self.data.db,
-                    etherscan=etherscan,
+                    etherscan=(etherscan := Etherscan(
+                        database=self.data.db,
+                        msg_aggregator=self.data.db.msg_aggregator,
+                    )),
+                    blockscout=(blockscout := Blockscout(
+                        database=self.data.db,
+                        msg_aggregator=self.msg_aggregator,
+                    )),
+                    routescan=(routescan := Routescan(
+                        database=self.data.db,
+                        msg_aggregator=self.msg_aggregator,
+                    )),
                 )),
                 premium=self.premium,
                 beacon_chain=self.beaconchain,
@@ -394,6 +410,8 @@ class Rotkehlchen:
                     greenlet_manager=self.greenlet_manager,
                     database=self.data.db,
                     etherscan=etherscan,
+                    blockscout=blockscout,
+                    routescan=routescan,
                 ),
                 premium=self.premium,
             ),
@@ -402,6 +420,8 @@ class Rotkehlchen:
                     greenlet_manager=self.greenlet_manager,
                     database=self.data.db,
                     etherscan=etherscan,
+                    blockscout=blockscout,
+                    routescan=routescan,
                 ),
                 premium=self.premium,
             ),
@@ -410,6 +430,8 @@ class Rotkehlchen:
                     greenlet_manager=self.greenlet_manager,
                     database=self.data.db,
                     etherscan=etherscan,
+                    blockscout=blockscout,
+                    routescan=routescan,
                 ),
                 premium=self.premium,
             ),
@@ -418,6 +440,8 @@ class Rotkehlchen:
                     greenlet_manager=self.greenlet_manager,
                     database=self.data.db,
                     etherscan=etherscan,
+                    blockscout=blockscout,
+                    routescan=routescan,
                 ),
                 premium=self.premium,
             ),
@@ -426,6 +450,8 @@ class Rotkehlchen:
                     greenlet_manager=self.greenlet_manager,
                     database=self.data.db,
                     etherscan=etherscan,
+                    blockscout=blockscout,
+                    routescan=routescan,
                 ),
                 premium=self.premium,
             ),
@@ -434,6 +460,8 @@ class Rotkehlchen:
                     greenlet_manager=self.greenlet_manager,
                     database=self.data.db,
                     etherscan=etherscan,
+                    blockscout=blockscout,
+                    routescan=routescan,
                 ),
                 premium=self.premium,
             ),
@@ -442,6 +470,8 @@ class Rotkehlchen:
                     greenlet_manager=self.greenlet_manager,
                     database=self.data.db,
                     etherscan=etherscan,
+                    blockscout=blockscout,
+                    routescan=routescan,
                 ),
                 premium=self.premium,
             ),
@@ -472,8 +502,12 @@ class Rotkehlchen:
             bitcoin_manager=BitcoinManager(database=self.data.db),
             bitcoin_cash_manager=BitcoinCashManager(database=self.data.db),
             solana_manager=SolanaManager(
-                greenlet_manager=self.greenlet_manager,
-                database=self.data.db,
+                node_inquirer=SolanaInquirer(
+                    greenlet_manager=self.greenlet_manager,
+                    database=self.data.db,
+                    helius=Helius(database=self.data.db),
+                ),
+                premium=self.premium,
             ),
             msg_aggregator=self.msg_aggregator,
             database=self.data.db,
@@ -541,10 +575,6 @@ class Rotkehlchen:
         )
 
         self.migration_manager.maybe_migrate_data()
-        self.assets_updater = AssetsUpdater(
-            msg_aggregator=self.msg_aggregator,
-            globaldb=GlobalDBHandler(),
-        )
         self.greenlet_manager.spawn_and_track(
             after_seconds=None,
             task_name='Check data updates',
@@ -646,8 +676,11 @@ class Rotkehlchen:
                     msg_aggregator=self.msg_aggregator,
                     db=self.data.db,
                 )
-            except RemoteError as e:
-                raise PremiumAuthenticationError(str(e)) from e
+            except (PremiumPermissionError, RemoteError) as e:
+                raise PremiumAuthenticationError(self.premium_sync_manager.maybe_add_device_limit_link(  # noqa: E501
+                    exception=e,
+                    msg=str(e),
+                )) from e
 
         self.premium_sync_manager.premium = self.premium
         self.accountant.activate_premium_status(self.premium)
@@ -801,7 +834,7 @@ class Rotkehlchen:
     @overload
     def add_single_blockchain_accounts(
             self,
-            chain: SUPPORTED_SUBSTRATE_CHAINS,
+            chain: SUPPORTED_SUBSTRATE_CHAINS_TYPE,
             account_data: list[SingleBlockchainAccountData[SubstrateAddress]],
     ) -> None:
         ...
@@ -1152,7 +1185,7 @@ class Rotkehlchen:
                         balances[str(Location.BLOCKCHAIN)] = {}
 
                     for balance_entry in nft_balances:
-                        if balance_entry['usd_price'] == ZERO:
+                        if balance_entry['price'] == ZERO:
                             continue
 
                         # It can happen that the asset was manually added
@@ -1161,43 +1194,41 @@ class Rotkehlchen:
                         # in the chain balances we update the price and continue
                         blockchain_balances = balances[blockchain_location]
                         nft = Nft(balance_entry['id'])
-                        nft_as_token = GlobalDBHandler.get_evm_token(
+                        if (nft_as_token := GlobalDBHandler.get_evm_token(
                             address=nft.evm_address,
                             chain_id=nft.chain_id,
-                        )  # we need the eip155 identifier instead of the _nft_ one.
-
-                        if nft_as_token in blockchain_balances:
-                            blockchain_balances[nft_as_token].usd_value = balance_entry['usd_price']  # noqa: E501
+                        )) in blockchain_balances:  # we need the eip155 identifier instead of the _nft_ one.  # noqa: E501
+                            blockchain_balances[nft_as_token].value = balance_entry['price']
                         else:
                             blockchain_balances[nft] = Balance(
                                 amount=ONE,
-                                usd_value=balance_entry['usd_price'],
+                                value=balance_entry['price'],
                             )
 
         balances = account_for_manually_tracked_asset_balances(db=self.data.db, balances=balances)
 
-        # Calculate usd totals
+        # Calculate value totals (in main currency)
         assets_total_balance: defaultdict[Asset, Balance] = defaultdict(Balance)
-        total_usd_per_location: dict[str, FVal] = {}
+        total_value_per_location: dict[str, FVal] = {}
         for location, asset_balance in balances.items():
-            total_usd_per_location[location] = ZERO
+            total_value_per_location[location] = ZERO
             for asset, balance in asset_balance.items():
                 assets_total_balance[asset] += balance
-                total_usd_per_location[location] += balance.usd_value
+                total_value_per_location[location] += balance.value
 
-        net_usd = sum((balance.usd_value for _, balance in assets_total_balance.items()), ZERO)
-        liabilities_total_usd = sum((liability.usd_value for _, liability in liabilities.items()), ZERO)  # noqa: E501
-        net_usd -= liabilities_total_usd
+        net_value = sum((balance.value for _, balance in assets_total_balance.items()), ZERO)
+        liabilities_total_value = sum((liability.value for _, liability in liabilities.items()), ZERO)  # noqa: E501
+        net_value -= liabilities_total_value
 
         # Calculate location stats
         location_stats: dict[str, Any] = {}
-        for location, total_usd in total_usd_per_location.items():
+        for location, total_value in total_value_per_location.items():
             if location == str(Location.BLOCKCHAIN):
-                total_usd -= liabilities_total_usd  # noqa: PLW2901
+                total_value -= liabilities_total_value  # noqa: PLW2901
 
-            percentage = (total_usd / net_usd).to_percentage() if net_usd != ZERO else '0%'
+            percentage = (total_value / net_value).to_percentage() if net_value != ZERO else '0%'
             location_stats[location] = {
-                'usd_value': total_usd,
+                'value': total_value,
                 'percentage_of_net_value': percentage,
             }
 
@@ -1209,11 +1240,11 @@ class Rotkehlchen:
             asset: balance.to_dict() for asset, balance in liabilities.items()
         }
         for asset, balance_dict in assets_total_balance_as_dict.items():
-            percentage = (balance_dict['usd_value'] / net_usd).to_percentage() if net_usd != ZERO else '0%'  # noqa: E501
+            percentage = (balance_dict['value'] / net_value).to_percentage() if net_value != ZERO else '0%'  # noqa: E501
             assets_total_balance_as_dict[asset]['percentage_of_net_value'] = percentage
 
         for asset, balance_dict in liabilities_as_dict.items():
-            percentage = (balance_dict['usd_value'] / net_usd).to_percentage() if net_usd != ZERO else '0%'  # noqa: E501
+            percentage = (balance_dict['value'] / net_value).to_percentage() if net_value != ZERO else '0%'  # noqa: E501
             liabilities_as_dict[asset]['percentage_of_net_value'] = percentage
 
         # Compose balances response
@@ -1221,19 +1252,26 @@ class Rotkehlchen:
             'assets': assets_total_balance_as_dict,
             'liabilities': liabilities_as_dict,
             'location': location_stats,
-            'net_usd': net_usd,
+            'net_value': net_value,
         }
         with self.data.db.conn.read_ctx() as cursor:
             allowed_to_save = requested_save_data or self.data.db.should_save_balances(cursor)
             if (problem_free or save_despite_errors) and allowed_to_save:
                 if not timestamp:
                     timestamp = Timestamp(int(time.time()))
+                main_to_usd_rate = PriceHistorian.query_historical_price(
+                    from_asset=main_currency,
+                    to_asset=A_USD,
+                    timestamp=timestamp,
+                ) if (main_currency := CachedSettings().main_currency) != A_USD else Price(ONE)
                 with self.data.db.user_write() as write_cursor:
                     self.data.db.save_balances_data(
                         write_cursor=write_cursor,
                         data=result_dict,
                         timestamp=timestamp,
+                        main_to_usd_rate=main_to_usd_rate,
                     )
+                self._save_manual_prices_as_historical(result_dict)
                 log.debug('query_balances data saved')
             else:
                 log.debug(
@@ -1250,6 +1288,36 @@ class Rotkehlchen:
         self.task_manager.should_schedule = True  # type: ignore[union-attr]  # should exist here
         return result_dict
 
+    @staticmethod
+    def _save_manual_prices_as_historical(result_dict: dict[str, Any]) -> None:
+        """Save manual prices as historical prices
+
+        Takes manual prices for assets in the balance snapshot and saves them
+        as historical prices for use in charts and historical data.
+        """
+        all_assets: set[Asset] = set()
+        for assets_dict in (result_dict['assets'], result_dict['liabilities']):
+            all_assets.update(assets_dict)
+
+        if len(all_assets) == 0:
+            return
+
+        historical_prices, current_ts = [], ts_now()
+        for asset in all_assets:
+            # Only save assets that have manual prices
+            if (manual_price_info := GlobalDBHandler.get_manual_current_price(asset)) is not None:
+                manual_to_asset, manual_price = manual_price_info
+                historical_prices.append(HistoricalPrice(
+                    from_asset=asset,
+                    to_asset=manual_to_asset,
+                    source=HistoricalPriceOracle.MANUAL,
+                    timestamp=current_ts,
+                    price=manual_price,
+                ))
+
+        if len(historical_prices) > 0:
+            GlobalDBHandler.add_historical_prices(historical_prices)
+
     def set_settings(self, settings: ModifiableDBSettings) -> tuple[bool, str]:
         """Tries to set new settings. Returns True in success or False with message if error"""
         # TODO: https://github.com/orgs/rotki/projects/11?pane=issue&itemId=52425560
@@ -1261,6 +1329,11 @@ class Rotkehlchen:
 
         if settings.dot_rpc_endpoint is not None:
             result, msg = self.chains_aggregator.set_dot_rpc_endpoint(settings.dot_rpc_endpoint)
+            if not result:
+                return False, msg
+
+        if settings.btc_mempool_api is not None:
+            result, msg = self.chains_aggregator.set_btc_mempool_api(settings.btc_mempool_api)
             if not result:
                 return False, msg
 
@@ -1333,6 +1406,7 @@ class Rotkehlchen:
             passphrase: str | None = None,
             kraken_account_type: Optional['KrakenAccountType'] = None,
             binance_selected_trade_pairs: list[str] | None = None,
+            okx_location: Optional['OkxLocation'] = None,
     ) -> tuple[bool, str]:
         """
         Setup a new exchange with an api key and an api secret and optionally a passphrase
@@ -1345,6 +1419,7 @@ class Rotkehlchen:
             database=self.data.db,
             passphrase=passphrase,
             binance_selected_trade_pairs=binance_selected_trade_pairs,
+            okx_location=okx_location,
         )
         if is_success:
             # Success, save the result in the DB
@@ -1356,6 +1431,7 @@ class Rotkehlchen:
                 passphrase=passphrase,
                 kraken_account_type=kraken_account_type,
                 binance_selected_trade_pairs=binance_selected_trade_pairs,
+                okx_location=okx_location,
             )
         return is_success, msg
 
@@ -1367,10 +1443,12 @@ class Rotkehlchen:
             with self.data.db.conn.read_ctx() as cursor:
                 result[DBCacheStatic.LAST_BALANCE_SAVE.value] = self.data.db.get_last_balance_save_time(cursor)  # noqa: E501
                 connected_nodes, failed_to_connect = {}, {}
-                for evm_manager in self.chains_aggregator.iterate_evm_chain_managers():
-                    connected_nodes[evm_manager.node_inquirer.chain_name] = [node.name for node in evm_manager.node_inquirer.get_connected_nodes()]  # noqa: E501
-                    if len(evm_manager.node_inquirer.failed_to_connect_nodes) != 0:
-                        failed_to_connect[evm_manager.node_inquirer.chain_name] = list(evm_manager.node_inquirer.failed_to_connect_nodes)  # noqa: E501
+                for chain_manager in self.chains_aggregator.iterate_chain_managers_with_nodes():
+                    connected_nodes[serialized_chain := chain_manager.node_inquirer.blockchain.serialize()] = [  # noqa: E501
+                        node.name for node in chain_manager.node_inquirer.get_connected_nodes()
+                    ]
+                    if len(chain_manager.node_inquirer.failed_to_connect_nodes) != 0:
+                        failed_to_connect[serialized_chain] = list(chain_manager.node_inquirer.failed_to_connect_nodes)  # noqa: E501
 
                 result['connected_nodes'] = connected_nodes
                 if len(failed_to_connect) != 0:

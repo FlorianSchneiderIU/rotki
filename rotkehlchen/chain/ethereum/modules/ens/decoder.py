@@ -3,23 +3,23 @@ from typing import TYPE_CHECKING, Any
 
 import ens
 
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.ethereum.abi import decode_event_data_abi_str
-from rotkehlchen.chain.ethereum.graph import Graph
 from rotkehlchen.chain.evm.decoding.ens.decoder import EnsCommonDecoder
 from rotkehlchen.chain.evm.decoding.interfaces import GovernableDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.resolver import tokenid_belongs_to_collection
 from rotkehlchen.errors.api import APIKeyNotConfigured
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.externalapis.graph import Graph
 from rotkehlchen.globaldb.cache import (
     globaldb_get_unique_cache_value,
     globaldb_set_unique_cache_value,
@@ -51,7 +51,7 @@ from .constants import (
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.node_inquirer import EthereumInquirer
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.user_messages import MessagesAggregator
 
 
@@ -82,7 +82,7 @@ def _save_hash_mappings_get_fullname(name: str, tx_hash: EVMTxHash) -> str:
             )
         except ens.exceptions.InvalidName as e:
             log.error(
-                f'Got an invalid ENS name {name} during decoding {tx_hash.hex()}.'
+                f'Got an invalid ENS name {name} during decoding {tx_hash!s}.'
                 f'namehash and labelhash not stored in the globaldb cache. {e=}',
             )
     return full_name
@@ -92,7 +92,7 @@ class EnsDecoder(GovernableDecoderInterface, EnsCommonDecoder):
     def __init__(  # pylint: disable=super-init-not-called
             self,
             ethereum_inquirer: 'EthereumInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',  # pylint: disable=unused-argument
     ) -> None:
         EnsCommonDecoder.__init__(
@@ -146,12 +146,12 @@ class EnsDecoder(GovernableDecoderInterface, EnsCommonDecoder):
                 msg = f'Missing key {msg}'
             log.error(
                 f'Failed to query graph for token ID to ENS name '
-                f'in {context.transaction.tx_hash.hex()} due to {msg} '
+                f'in {context.transaction.tx_hash!s} due to {msg} '
                 f'during decoding events. Not adding name to event',
             )
         except APIKeyNotConfigured as e:
             log.warning(
-                f'Not adding name to ENS event in {context.transaction.tx_hash.hex()} since '
+                f'Not adding name to ENS event in {context.transaction.tx_hash!s} since '
                 f'The Graph cannot be queried. {e}',
             )
         else:  # successfully queried the graph. Save in the cache
@@ -176,7 +176,7 @@ class EnsDecoder(GovernableDecoderInterface, EnsCommonDecoder):
 
         return found_name
 
-    def _decode_ens_registrar_event(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_ens_registrar_event(self, context: DecoderContext) -> EvmDecodingOutput:
         if context.tx_log.topics[0] in (
             NAME_REGISTERED_SINGLE_COST,
             NAME_REGISTERED_BASE_COST_AND_PREMIUM,
@@ -186,9 +186,9 @@ class EnsDecoder(GovernableDecoderInterface, EnsCommonDecoder):
         if context.tx_log.topics[0] == NAME_RENEWED:
             return self._decode_name_renewed(context=context)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
-    def _decode_name_registered(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_name_registered(self, context: DecoderContext) -> EvmDecodingOutput:
         try:
             _, decoded_data = decode_event_data_abi_str(
                 context.tx_log,
@@ -196,7 +196,7 @@ class EnsDecoder(GovernableDecoderInterface, EnsCommonDecoder):
             )
         except DeserializationError as e:
             log.debug(f'Failed to decode ENS name registered event due to {e!s}')
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         fullname = _save_hash_mappings_get_fullname(name=decoded_data[0], tx_hash=context.transaction.tx_hash)  # noqa: E501
         if context.tx_log.topics[0] == NAME_REGISTERED_SINGLE_COST:
@@ -221,7 +221,7 @@ class EnsDecoder(GovernableDecoderInterface, EnsCommonDecoder):
                 if refund_from_registrar:
                     expected_amount = amount + refund_from_registrar
                 if event.amount != expected_amount:
-                    return DEFAULT_DECODING_OUTPUT  # registration amount did not match
+                    return DEFAULT_EVM_DECODING_OUTPUT  # registration amount did not match
 
                 event.amount = amount  # adjust the spent amount too, after refund
                 event.event_type = HistoryEventType.TRADE
@@ -249,14 +249,14 @@ class EnsDecoder(GovernableDecoderInterface, EnsCommonDecoder):
                 events_list=context.decoded_events,
             )
 
-        return DecodingOutput(process_swaps=True)
+        return EvmDecodingOutput(process_swaps=True)
 
-    def _decode_name_renewed(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_name_renewed(self, context: DecoderContext) -> EvmDecodingOutput:
         try:
             _, decoded_data = decode_event_data_abi_str(context.tx_log, NAME_RENEWED_ABI)
         except DeserializationError as e:
-            log.error(f'Failed to decode ENS name renewed event in {context.transaction.tx_hash.hex()} due to {e!s}')  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            log.error(f'Failed to decode ENS name renewed event in {context.transaction.tx_hash!s} due to {e!s}')  # noqa: E501
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         fullname = _save_hash_mappings_get_fullname(name=decoded_data[0], tx_hash=context.transaction.tx_hash)  # noqa: E501
         logged_cost = from_wei(decoded_data[1])  # logs msg.value for new controller and actual cost for old  # noqa: E501
@@ -284,7 +284,7 @@ class EnsDecoder(GovernableDecoderInterface, EnsCommonDecoder):
 
         if refund_event_idx is not None:
             del context.decoded_events[refund_event_idx]
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _get_name_to_show(self, node: bytes, context: DecoderContext) -> str | None:
         """Try to find the name associated with the ENS namehash/node that is being modified

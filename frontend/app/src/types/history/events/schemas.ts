@@ -3,13 +3,13 @@ import { z } from 'zod/v4';
 import { CollectionCommonFields } from '@/types/collection';
 import { EntryMeta } from '@/types/history/meta';
 
-export const CommonHistoryEvent = z.object({
+const CommonHistoryEvent = z.object({
   amount: NumericString,
   asset: z.string(),
   autoNotes: z.string().optional(),
-  eventIdentifier: z.string(),
   eventSubtype: z.string(),
   eventType: z.string(),
+  groupIdentifier: z.string(),
   identifier: z.number(),
   location: z.string(),
   locationLabel: z.string().nullable(),
@@ -23,15 +23,14 @@ export const EvmHistoryEvent = CommonHistoryEvent.extend({
   counterparty: z.string().nullable(),
   entryType: z.literal(HistoryEventEntryType.EVM_EVENT),
   extraData: z.unknown().nullish(),
-  product: z.string().nullable(),
-  txHash: z.string(),
+  txRef: z.string(),
 });
 
 export type EvmHistoryEvent = z.infer<typeof EvmHistoryEvent>;
 
 export const OnlineHistoryEvent = CommonHistoryEvent.extend({
   entryType: z.literal(HistoryEventEntryType.HISTORY_EVENT),
-  txHash: z.string().optional(),
+  txRef: z.string().optional(),
 });
 
 export type OnlineHistoryEvent = z.infer<typeof OnlineHistoryEvent>;
@@ -57,8 +56,7 @@ export const EthDepositEvent = CommonHistoryEvent.extend({
   counterparty: z.string().nullable(),
   entryType: z.literal(HistoryEventEntryType.ETH_DEPOSIT_EVENT),
   extraData: z.unknown().nullable().nullish(),
-  product: z.string().nullable(),
-  txHash: z.string(),
+  txRef: z.string(),
   validatorIndex: z.number(),
 });
 
@@ -68,6 +66,7 @@ export const AssetMovementEvent = CommonHistoryEvent.extend({
   entryType: z.literal(HistoryEventEntryType.ASSET_MOVEMENT_EVENT),
   extraData: z.object({
     address: z.string().nullish(),
+    blockchain: z.string().nullish(),
     reference: z.string().nullish(),
     transactionId: z.string().nullish(),
   }).nullable(),
@@ -75,34 +74,66 @@ export const AssetMovementEvent = CommonHistoryEvent.extend({
 
 export type AssetMovementEvent = z.infer<typeof AssetMovementEvent>;
 
-export const SwapEventSchema = CommonHistoryEvent.extend({
+const SwapEventSchema = CommonHistoryEvent.extend({
   entryType: z.literal(HistoryEventEntryType.SWAP_EVENT),
   extraData: z.unknown().nullable(),
 });
 
 export type SwapEvent = z.infer<typeof SwapEventSchema>;
 
-export const EvmSwapEventSchema = CommonHistoryEvent.extend({
+const EvmSwapEventSchema = CommonHistoryEvent.extend({
   address: z.string().nullable(),
   counterparty: z.string().nullable(),
   entryType: z.literal(HistoryEventEntryType.EVM_SWAP_EVENT),
   extraData: z.unknown().nullable(),
-  txHash: z.string(),
+  txRef: z.string(),
 });
 
 export type EvmSwapEvent = z.infer<typeof EvmSwapEventSchema>;
 
-export const HistoryEvent = EvmHistoryEvent.or(AssetMovementEvent)
-  .or(OnlineHistoryEvent)
-  .or(EthWithdrawalEvent)
-  .or(EthBlockEvent)
-  .or(EthDepositEvent)
-  .or(SwapEventSchema)
-  .or(EvmSwapEventSchema);
+const SolanaEventSchema = CommonHistoryEvent.extend({
+  address: z.string().nullable(),
+  counterparty: z.string().nullable(),
+  entryType: z.literal(HistoryEventEntryType.SOLANA_EVENT),
+  extraData: z.unknown().nullish(),
+  txRef: z.string(),
+});
 
-export type GroupEditableHistoryEvents = AssetMovementEvent | SwapEvent | EvmSwapEvent;
+export type SolanaEvent = z.infer<typeof SolanaEventSchema>;
 
-export type StandaloneEditableEvents = EvmHistoryEvent | OnlineHistoryEvent | EthWithdrawalEvent | EthBlockEvent | EthDepositEvent;
+const SolanaSwapEventSchema = CommonHistoryEvent.extend({
+  address: z.string().nullable(),
+  counterparty: z.string().nullable(),
+  entryType: z.literal(HistoryEventEntryType.SOLANA_SWAP_EVENT),
+  extraData: z.unknown().nullish(),
+  txRef: z.string(),
+});
+
+export type SolanaSwapEvent = z.infer<typeof SolanaSwapEventSchema>;
+
+export const HistoryEvent = z.union([
+  EvmHistoryEvent,
+  AssetMovementEvent,
+  OnlineHistoryEvent,
+  EthWithdrawalEvent,
+  EthBlockEvent,
+  EthDepositEvent,
+  SwapEventSchema,
+  EvmSwapEventSchema,
+  SolanaEventSchema,
+  SolanaSwapEventSchema,
+]);
+
+export type GroupEditableHistoryEvents = AssetMovementEvent | SwapEvent | EvmSwapEvent | SolanaSwapEvent;
+
+export interface FeeEntry {
+  amount: string;
+  asset: string;
+}
+
+export type SwapEventUserNotes = [string, string, ...string[]];
+
+export type StandaloneEditableEvents = EvmHistoryEvent | OnlineHistoryEvent | EthWithdrawalEvent | EthBlockEvent | EthDepositEvent | SolanaEvent;
 
 export type HistoryEvent = StandaloneEditableEvents | GroupEditableHistoryEvents;
 
@@ -116,10 +147,9 @@ export interface SwapSubEventModel {
 
 export interface AddSwapEventPayload {
   entryType: typeof HistoryEventEntryType.SWAP_EVENT;
-  feeAmount?: string;
-  feeAsset?: string;
+  fees?: FeeEntry[];
   location: string;
-  userNotes: [string, string, string] | [string, string];
+  userNotes: SwapEventUserNotes;
   receiveAmount: string;
   receiveAsset: string;
   spendAmount: string;
@@ -129,8 +159,7 @@ export interface AddSwapEventPayload {
 }
 
 export interface EditSwapEventPayload extends Omit<AddSwapEventPayload, 'uniqueId'> {
-  eventIdentifier: string;
-  identifier: number;
+  identifiers: number[];
 }
 
 export interface AddEvmSwapEventPayload {
@@ -143,7 +172,7 @@ export interface AddEvmSwapEventPayload {
   receive: SwapSubEventModel[];
   counterparty: string;
   sequenceIndex: string;
-  txHash: string;
+  txRef: string;
 }
 
 export interface EditEvmSwapEventPayload extends AddEvmSwapEventPayload {
@@ -152,18 +181,27 @@ export interface EditEvmSwapEventPayload extends AddEvmSwapEventPayload {
 
 export type EditEvmHistoryEventPayload = Omit<
   EvmHistoryEvent,
-  'ignoredInAccounting' | 'customized' | 'eventIdentifier'
+  'ignoredInAccounting' | 'customized' | 'groupIdentifier'
 > & {
-  eventIdentifier: string | null;
+  groupIdentifier: string | null;
 };
 
 export type NewEvmHistoryEventPayload = Omit<EditEvmHistoryEventPayload, 'identifier'>;
 
-export type EditOnlineHistoryEventPayload = Omit<OnlineHistoryEvent, 'ignoredInAccounting' | 'customized'>;
+type EditSolanaEventPayload = Omit<
+  SolanaEvent,
+  'ignoredInAccounting' | 'customized' | 'groupIdentifier' | 'location'
+> & {
+  groupIdentifier: string | null;
+};
+
+export type NewSolanaEventPayload = Omit<EditSolanaEventPayload, 'identifier'>;
+
+type EditOnlineHistoryEventPayload = Omit<OnlineHistoryEvent, 'ignoredInAccounting' | 'customized'>;
 
 export type NewOnlineHistoryEventPayload = Omit<EditOnlineHistoryEventPayload, 'identifier'>;
 
-export interface EditEthBlockEventPayload {
+interface EditEthBlockEventPayload {
   entryType: typeof HistoryEventEntryType.ETH_BLOCK_EVENT;
   identifier: number;
   timestamp: number;
@@ -172,19 +210,19 @@ export interface EditEthBlockEventPayload {
   blockNumber: number;
   feeRecipient: string;
   isMevReward: boolean;
-  eventIdentifier: string | null;
+  groupIdentifier: string | null;
 }
 
 export type NewEthBlockEventPayload = Omit<EditEthBlockEventPayload, 'identifier'>;
 
-export interface EditEthDepositEventPayload {
+interface EditEthDepositEventPayload {
   entryType: typeof HistoryEventEntryType.ETH_DEPOSIT_EVENT;
   identifier: number;
   timestamp: number;
   amount: BigNumber;
   validatorIndex: number;
-  txHash: string;
-  eventIdentifier: string | null;
+  txRef: string;
+  groupIdentifier: string | null;
   sequenceIndex: number | string;
   depositor: string;
   extraData: object | null;
@@ -192,7 +230,7 @@ export interface EditEthDepositEventPayload {
 
 export type NewEthDepositEventPayload = Omit<EditEthDepositEventPayload, 'identifier'>;
 
-export interface EditEthWithdrawalEventPayload {
+interface EditEthWithdrawalEventPayload {
   entryType: typeof HistoryEventEntryType.ETH_WITHDRAWAL_EVENT;
   identifier: number;
   timestamp: number;
@@ -200,12 +238,12 @@ export interface EditEthWithdrawalEventPayload {
   validatorIndex: number;
   withdrawalAddress: string;
   isExit: boolean;
-  eventIdentifier: string | null;
+  groupIdentifier: string | null;
 }
 
 export type NewEthWithdrawalEventPayload = Omit<EditEthWithdrawalEventPayload, 'identifier'>;
 
-export interface EditAssetMovementEventPayload {
+interface EditAssetMovementEventPayload {
   entryType: typeof HistoryEventEntryType.ASSET_MOVEMENT_EVENT;
   identifier: number;
   timestamp: number;
@@ -213,15 +251,33 @@ export interface EditAssetMovementEventPayload {
   eventType: string;
   location: string;
   locationLabel: string | null;
-  eventIdentifier: string | null;
+  groupIdentifier: string | null;
   asset: string;
   fee: string | null;
   feeAsset: string | null;
   userNotes: [string, string] | [string];
   uniqueId: string;
+  transactionId: string;
+  blockchain: string;
 }
 
 export type NewAssetMovementEventPayload = Omit<EditAssetMovementEventPayload, 'identifier'>;
+
+export interface AddSolanaSwapEventPayload {
+  entryType: typeof HistoryEventEntryType.SOLANA_SWAP_EVENT;
+  address?: string;
+  timestamp: number;
+  fee?: SwapSubEventModel[];
+  spend: SwapSubEventModel[];
+  receive: SwapSubEventModel[];
+  counterparty: string;
+  sequenceIndex: string;
+  txRef: string;
+}
+
+export interface EditSolanaSwapEventPayload extends AddSolanaSwapEventPayload {
+  identifiers: number[];
+}
 
 export type EditHistoryEventPayload =
   | EditEvmHistoryEventPayload
@@ -229,7 +285,8 @@ export type EditHistoryEventPayload =
   | EditEthBlockEventPayload
   | EditEthDepositEventPayload
   | EditEthWithdrawalEventPayload
-  | EditAssetMovementEventPayload;
+  | EditAssetMovementEventPayload
+  | EditSolanaEventPayload;
 
 export type NewHistoryEventPayload =
   | NewEvmHistoryEventPayload
@@ -237,11 +294,12 @@ export type NewHistoryEventPayload =
   | NewEthBlockEventPayload
   | NewEthDepositEventPayload
   | NewEthWithdrawalEventPayload
-  | NewAssetMovementEventPayload;
+  | NewAssetMovementEventPayload
+  | NewSolanaEventPayload;
 
-export type AddHistoryEventPayload = NewHistoryEventPayload | AddSwapEventPayload | AddEvmSwapEventPayload;
+export type AddHistoryEventPayload = NewHistoryEventPayload | AddSwapEventPayload | AddEvmSwapEventPayload | AddSolanaSwapEventPayload;
 
-export type ModifyHistoryEventPayload = EditHistoryEventPayload | EditSwapEventPayload | EditEvmSwapEventPayload;
+export type ModifyHistoryEventPayload = EditHistoryEventPayload | EditSwapEventPayload | EditEvmSwapEventPayload | EditSolanaSwapEventPayload;
 
 export enum HistoryEventAccountingRuleStatus {
   HAS_RULE = 'has rule',
@@ -249,9 +307,9 @@ export enum HistoryEventAccountingRuleStatus {
   PROCESSED = 'processed',
 }
 
-export const HistoryEventAccountingRuleStatusEnum = z.enum(HistoryEventAccountingRuleStatus);
+const HistoryEventAccountingRuleStatusEnum = z.enum(HistoryEventAccountingRuleStatus);
 
-export const HistoryEventMeta = z.object({
+const HistoryEventMeta = z.object({
   ...EntryMeta.shape,
   customized: z.boolean().optional(),
   eventAccountingRuleStatus: HistoryEventAccountingRuleStatusEnum,
@@ -260,7 +318,7 @@ export const HistoryEventMeta = z.object({
   hidden: z.boolean().optional(),
 });
 
-export type HistoryEventMeta = z.infer<typeof HistoryEventMeta>;
+type HistoryEventMeta = z.infer<typeof HistoryEventMeta>;
 
 const HistoryEventEntryWithMeta = z.object({
   entry: HistoryEvent,

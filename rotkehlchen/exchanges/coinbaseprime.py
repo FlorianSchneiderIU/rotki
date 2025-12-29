@@ -28,7 +28,7 @@ from rotkehlchen.history.events.structures.base import (
     HistoryEventType,
 )
 from rotkehlchen.history.events.structures.swap import SwapEvent, create_swap_events
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -114,7 +114,7 @@ def _process_trade(exchange_name: str, trade_data: dict[str, Any]) -> list[SwapE
                 asset=quote_asset,
                 amount=deserialize_fval(trade_data['commission']),
             ) if len(trade_data['commission']) != 0 else None,
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=Location.COINBASEPRIME,
                 unique_id=str(trade_data['id']),
             ),
@@ -198,7 +198,7 @@ def _process_conversions(exchange_name: str, raw_data: dict[str, Any]) -> list[H
 
     conversion_events = [
         HistoryEvent(
-            event_identifier=raw_data['id'],
+            group_identifier=raw_data['id'],
             sequence_index=0,
             timestamp=timestamp_ms,
             location=Location.COINBASEPRIME,
@@ -209,7 +209,7 @@ def _process_conversions(exchange_name: str, raw_data: dict[str, Any]) -> list[H
             location_label=exchange_name,
             notes=f'Swap {converted_amount} {from_asset.symbol} in Coinbase Prime',
         ), HistoryEvent(
-            event_identifier=raw_data['id'],
+            group_identifier=raw_data['id'],
             sequence_index=1,
             timestamp=timestamp_ms,
             location=Location.COINBASEPRIME,
@@ -228,7 +228,7 @@ def _process_conversions(exchange_name: str, raw_data: dict[str, Any]) -> list[H
         location='coinbase prime',
     )) != ZERO:
         conversion_events.append(HistoryEvent(
-            event_identifier=raw_data['id'],
+            group_identifier=raw_data['id'],
             sequence_index=2,
             timestamp=timestamp_ms,
             location=Location.COINBASEPRIME,
@@ -253,7 +253,7 @@ def _process_reward(exchange_name: str, raw_data: dict[str, Any]) -> list[Histor
     - KeyError
     """
     return [HistoryEvent(
-        event_identifier=raw_data['id'],
+        group_identifier=raw_data['id'],
         sequence_index=0,
         timestamp=ts_sec_to_ms(iso8601ts_to_timestamp(raw_data['completed_at'] or raw_data['created_at'])),  # noqa: E501
         location=Location.COINBASEPRIME,
@@ -482,7 +482,7 @@ class Coinbaseprime(ExchangeInterface):
                     for balance_key in (
                         'amount',  # The `amount` field includes the amount in the `holds` field
                         'bonded_amount',
-                        'reserved_amount'  # Amount that must remain in the wallet due to the protocol, in whole units  # noqa: E501
+                        'reserved_amount',  # Amount that must remain in the wallet due to the protocol, in whole units  # noqa: E501
                         'unbonding_amount',
                         'unvested_amount',
                         'pending_rewards_amount',
@@ -496,17 +496,17 @@ class Coinbaseprime(ExchangeInterface):
 
                     asset = asset_from_coinbase(balance_entry['symbol'])
                     try:
-                        usd_price = Inquirer.find_usd_price(asset=asset)
+                        price = Inquirer.find_main_currency_price(asset)
                     except RemoteError as e:
                         log.error(
                             f'Error processing coinbase balance entry due to inability to '
-                            f'query USD price: {e!s}. Skipping balance entry',
+                            f'query price: {e!s}. Skipping balance entry',
                         )
                         continue
 
                     returned_balances[asset] += Balance(
                         amount=total_balance,
-                        usd_value=total_balance * usd_price,
+                        value=total_balance * price,
                     )
                 except UnknownAsset as e:
                     self.send_unknown_asset_message(
@@ -534,6 +534,7 @@ class Coinbaseprime(ExchangeInterface):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
+            force_refresh: bool = False,
     ) -> tuple[Sequence['HistoryBaseEntry'], Timestamp]:
         events: list[HistoryEvent | AssetMovement | SwapEvent] = []
         for portfolio_id in self._get_portfolio_ids():

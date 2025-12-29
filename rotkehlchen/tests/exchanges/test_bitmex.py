@@ -77,7 +77,7 @@ def test_bitmex_api_withdrawals_deposit_and_query_after_subquery(
 
     expected_result = [AssetMovement(
         identifier=5,
-        event_identifier='ccc9482b81ec668e8846054933f14426bb99fae1d31a1d753187962454544a1c',
+        group_identifier='ccc9482b81ec668e8846054933f14426bb99fae1d31a1d753187962454544a1c',
         location=Location.BITMEX,
         location_label=sandbox_bitmex.name,
         event_type=HistoryEventType.DEPOSIT,
@@ -86,7 +86,7 @@ def test_bitmex_api_withdrawals_deposit_and_query_after_subquery(
         amount=FVal('0.46966992'),
     ), AssetMovement(
         identifier=3,
-        event_identifier='e0f2ca47943d1769d568c8a7a5348ffdbd0ed11a98e3444eebc3370f1fc1f52d',
+        group_identifier='e0f2ca47943d1769d568c8a7a5348ffdbd0ed11a98e3444eebc3370f1fc1f52d',
         location=Location.BITMEX,
         location_label=sandbox_bitmex.name,
         event_type=HistoryEventType.WITHDRAWAL,
@@ -96,7 +96,7 @@ def test_bitmex_api_withdrawals_deposit_and_query_after_subquery(
         extra_data={'address': 'mv4rnyY3Su5gjcDNzbMLKBQkBicCtHUtFB'},
     ), AssetMovement(
         identifier=4,
-        event_identifier='e0f2ca47943d1769d568c8a7a5348ffdbd0ed11a98e3444eebc3370f1fc1f52d',
+        group_identifier='e0f2ca47943d1769d568c8a7a5348ffdbd0ed11a98e3444eebc3370f1fc1f52d',
         location=Location.BITMEX,
         location_label=sandbox_bitmex.name,
         event_type=HistoryEventType.WITHDRAWAL,
@@ -106,7 +106,7 @@ def test_bitmex_api_withdrawals_deposit_and_query_after_subquery(
         is_fee=True,
     ), AssetMovement(
         identifier=2,
-        event_identifier='290836ed7b44d7921bc7ab2f8d189f456e266769fa6517e6361e407f4ef4fbc9',
+        group_identifier='290836ed7b44d7921bc7ab2f8d189f456e266769fa6517e6361e407f4ef4fbc9',
         location=Location.BITMEX,
         location_label=sandbox_bitmex.name,
         event_type=HistoryEventType.DEPOSIT,
@@ -115,7 +115,7 @@ def test_bitmex_api_withdrawals_deposit_and_query_after_subquery(
         amount=FVal('0.38474377'),
     ), AssetMovement(
         identifier=1,
-        event_identifier='d4307315ea24915446578e8f8015a5ea95e30194769a62ce8f92f43c2b876bac',
+        group_identifier='d4307315ea24915446578e8f8015a5ea95e30194769a62ce8f92f43c2b876bac',
         location=Location.BITMEX,
         location_label=sandbox_bitmex.name,
         event_type=HistoryEventType.DEPOSIT,
@@ -290,7 +290,7 @@ def test_bitmex_query_balances(sandbox_bitmex):
     assert msg == ''
     assert len(balances) == 2
     assert balances[A_BTC].amount == FVal('1.23456789')
-    assert balances[A_BTC].usd_value == FVal('1.851851835')
+    assert balances[A_BTC].value == FVal('1.851851835')
     assert balances[A_USDT].amount == FVal('31.164180')
 
     warnings = sandbox_bitmex.msg_aggregator.consume_warnings()

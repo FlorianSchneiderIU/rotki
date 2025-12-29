@@ -8,8 +8,7 @@ import CsvExportDelimiterSetting from '@/components/settings/general/CsvExportDe
 import DateDisplayFormatSetting from '@/components/settings/general/DateDisplayFormatSetting.vue';
 import DateInputFormatSetting from '@/components/settings/general/DateInputFormatSetting.vue';
 import DisplayDateInLocaltimeSetting from '@/components/settings/general/DisplayDateInLocaltimeSetting.vue';
-import EvmChainsToIgnoreSettings from '@/components/settings/general/EvmChainsToIgnoreSettings.vue';
-import TreatEthAsEth2Setting from '@/components/settings/general/TreatEthAsEth2Setting.vue';
+import EventsProcessingFrequencySetting from '@/components/settings/general/EventsProcessingFrequencySetting.vue';
 import UsageAnalyticsSetting from '@/components/settings/general/UsageAnalyticsSetting.vue';
 import VersionUpdateFrequencySetting from '@/components/settings/general/VersionUpdateFrequencySetting.vue';
 import SettingCategory from '@/components/settings/SettingCategory.vue';
@@ -39,13 +38,7 @@ const { t } = useI18n({ useScope: 'global' });
     <AskUserUponSizeDiscrepancySetting />
     <VersionUpdateFrequencySetting />
     <BalanceSaveFrequencySetting />
-    <SettingsItem>
-      <template #title>
-        {{ t('general_settings.evm_chains.title') }}
-      </template>
-      <TreatEthAsEth2Setting />
-      <EvmChainsToIgnoreSettings />
-    </SettingsItem>
+    <EventsProcessingFrequencySetting />
     <BtcDerivationGapLimitSetting />
     <SettingsItem>
       <template #title>

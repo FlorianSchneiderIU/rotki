@@ -15,7 +15,9 @@ from rotkehlchen.db.cache import DBCacheDynamic
 from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.misc import RemoteError
-from rotkehlchen.externalapis.interface import ExternalServiceWithApiKey
+from rotkehlchen.externalapis.interface import (
+    ExternalServiceWithRecommendedApiKey,
+)
 from rotkehlchen.history.events.structures.eth2 import EthBlockEvent
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -49,14 +51,13 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class BeaconChain(ExternalServiceWithApiKey):
+class BeaconChain(ExternalServiceWithRecommendedApiKey):
     """BeaconChain handler https://beaconcha.in/api/v1/docs/"""
 
     def __init__(self, database: 'DBHandler', msg_aggregator: MessagesAggregator) -> None:
         super().__init__(database=database, service_name=ExternalService.BEACONCHAIN)
         self.msg_aggregator = msg_aggregator
         self.session = create_session()
-        self.warning_given = False
         set_user_agent(self.session)
         self.url = f'{BEACONCHAIN_ROOT_URL}/api/v1/'
         self.produced_blocks_lock = Semaphore()
@@ -95,14 +96,15 @@ class BeaconChain(ExternalServiceWithApiKey):
         else:
             query_str = f'{self.url}{module}/{encoded_args}/{endpoint}'
 
-        api_key = self._get_api_key()
-        if api_key is not None:
-            if extra_args is None:
-                extra_args = {}
-            extra_args['apikey'] = api_key
+        if (api_key := self._get_api_key()) is None:
+            log.warning('Missing beaconcha.in api key.')
+            raise RemoteError(f'Querying {query_str} failed due to missing API key')
 
-        if extra_args is not None:
-            query_str += f'?{urlencode(extra_args)}'
+        if extra_args is None:
+            extra_args = {}
+
+        extra_args['apikey'] = api_key
+        query_str += f'?{urlencode(extra_args)}'
 
         times = CachedSettings().get_query_retry_limit()
         retries_num = times
@@ -145,9 +147,10 @@ class BeaconChain(ExternalServiceWithApiKey):
                     retry_after_secs = int(retry_after)
                     if retry_after_secs > MAX_WAIT_SECS:
                         msg = (
-                            f'Beaconchain API request {response.url} got rate limited. Would '
-                            f'need to wait for {retry_after} seconds which is more than the '
-                            f'wait limit of {MAX_WAIT_SECS} seconds. Bailing out.'
+                            f'Beaconcha.in is rate limited when processing API request '
+                            f'{response.url}. Would need to wait for {retry_after} seconds '
+                            f'which is more than the wait limit of {MAX_WAIT_SECS} seconds. '
+                            f'Bailing out.'
                         )
                         log.debug(
                             f'{msg} minute limit: {user_minute_rate_limit}/{minute_rate_limit}, '
@@ -163,7 +166,7 @@ class BeaconChain(ExternalServiceWithApiKey):
                     sleep_seconds = backoff_in_seconds * (retries_num - times + 1)
                 times -= 1
                 log.debug(
-                    f'Beaconchain API request {response.url} got rate limited. Sleeping '
+                    f'Beaconcha.in is rate limited for API request {response.url}. Sleeping '
                     f'for {sleep_seconds}. We have {times} tries left.'
                     f'minute limit: {user_minute_rate_limit}/{minute_rate_limit}, '
                     f'daily limit: {user_daily_rate_limit}/{daily_rate_limit}, '

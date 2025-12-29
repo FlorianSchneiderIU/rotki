@@ -12,7 +12,7 @@ from rotkehlchen.accounting.cost_basis.base import (
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.accounting.pnl import PNL
 from rotkehlchen.accounting.structures.processed_event import ProcessedAccountingEvent
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_DAI, A_ETH
 from rotkehlchen.db.settings import ModifiableDBSettings
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from rotkehlchen.accounting.pot import AccountingPot
 
 EXAMPLE_EVM_HASH = make_evm_tx_hash()
-EXAMPLE_TX_HASH_HEX = EXAMPLE_EVM_HASH.hex()  # pylint: disable=no-member  # EvmTxHash does have hex() member
+EXAMPLE_TX_HASH_HEX = str(EXAMPLE_EVM_HASH)
 EXAMPLE_ADDRESS = make_evm_address()
 
 # Some utility timestamps. They are used for mocked prices.
@@ -103,10 +103,10 @@ def _gain_one_ether(
     kwargs: dict[str, Any]
     if entry_type == 'history_event':
         event_class = HistoryEvent
-        kwargs = {'event_identifier': f'rotki_events_{EXAMPLE_EVM_HASH.hex()}'}  # pylint: disable=no-member
+        kwargs = {'group_identifier': f'rotki_events_{EXAMPLE_TX_HASH_HEX}'}
     else:  # can only be evm event
         event_class = EvmEvent
-        kwargs = {'tx_hash': EXAMPLE_EVM_HASH}
+        kwargs = {'tx_ref': EXAMPLE_EVM_HASH}
 
     eth_gain_event = event_class(
         **kwargs,
@@ -130,7 +130,7 @@ def _gain_one_ether(
 def test_accounting_no_settings(accounting_pot: 'AccountingPot'):
     """Test that if there are no settings provided, the event is not taken into account"""
     event = EvmEvent(
-        tx_hash=EXAMPLE_EVM_HASH,
+        tx_ref=EXAMPLE_EVM_HASH,
         sequence_index=0,
         timestamp=TimestampMS(0),
         location=Location.ETHEREUM,
@@ -172,7 +172,7 @@ def test_accounting_receive_settings(
     )
     expected_extra_data = {}
     if entry_type == 'evm_event':
-        expected_extra_data = {'tx_hash': EXAMPLE_TX_HASH_HEX}
+        expected_extra_data = {'tx_ref': EXAMPLE_TX_HASH_HEX}
 
     expected_event = ProcessedAccountingEvent(
         event_type=AccountingEventType.TRANSACTION_EVENT,
@@ -199,33 +199,35 @@ def test_accounting_receive_settings(
     assert accounting_pot.pnls.free == ZERO
 
 
-@pytest.mark.parametrize(('event_type', 'event_subtype', 'is_taxable', 'counterparty', 'gas_taxable', 'include_crypto2crypto'), [  # noqa: E501
-    (HistoryEventType.SPEND, HistoryEventSubType.NONE, True, None, False, False),
-    (HistoryEventType.SPEND, HistoryEventSubType.FEE, True, None, False, False),
-    (HistoryEventType.SPEND, HistoryEventSubType.FEE, True, CPT_GAS, True, False),
-    (HistoryEventType.SPEND, HistoryEventSubType.FEE, True, CPT_GAS, True, True),
-    (HistoryEventType.SPEND, HistoryEventSubType.FEE, False, CPT_GAS, False, False),
-    (HistoryEventType.SPEND, HistoryEventSubType.FEE, False, CPT_GAS, False, True),
+@pytest.mark.parametrize(('event_type', 'event_subtype', 'notes', 'is_taxable', 'counterparty', 'gas_taxable', 'include_crypto2crypto'), [  # noqa: E501
+    (HistoryEventType.SPEND, HistoryEventSubType.NONE, 'Send 0.5 ETH to 0xABC', True, None, False, False),  # noqa: E501
+    (HistoryEventType.SPEND, HistoryEventSubType.FEE, 'Pay fee of 0.5 ETH', True, None, False, False),  # noqa: E501
+    (HistoryEventType.SPEND, HistoryEventSubType.FEE, 'Burn 0.5 ETH for gas', True, CPT_GAS, True, False),  # noqa: E501
+    (HistoryEventType.SPEND, HistoryEventSubType.FEE, 'Burn 0.5 ETH for gas', True, CPT_GAS, True, True),  # noqa: E501
+    (HistoryEventType.SPEND, HistoryEventSubType.FEE, 'Burn 0.5 ETH for gas', False, CPT_GAS, False, False),  # noqa: E501
+    (HistoryEventType.SPEND, HistoryEventSubType.FEE, 'Burn 0.5 ETH for gas', False, CPT_GAS, False, True),  # noqa: E501
 ])
 @pytest.mark.parametrize('mocked_price_queries', [MOCKED_PRICES])
 def test_accounting_spend_settings(
         accounting_pot: 'AccountingPot',
         event_type: 'HistoryEventType',
         event_subtype: 'HistoryEventSubType',
+        notes: str,
         is_taxable: bool,
         counterparty: str | None,
+        gas_taxable: bool,
         include_crypto2crypto,
 ):
     _gain_one_ether(events_accountant=accounting_pot.events_accountant)
     spend_event = EvmEvent(
-        tx_hash=EXAMPLE_EVM_HASH,
+        tx_ref=EXAMPLE_EVM_HASH,
         sequence_index=0,
         timestamp=TIMESTAMP_2_MS,
         location=Location.ETHEREUM,
         location_label=EXAMPLE_ADDRESS,
         asset=A_ETH,
         amount=FVal(0.5),
-        notes='Send 0.5 ETH to 0xABC',
+        notes=notes,
         event_type=event_type,
         event_subtype=event_subtype,
         counterparty=counterparty,
@@ -263,19 +265,21 @@ def test_accounting_spend_settings(
         taxable_pnl = -FVal(1000)
     elif is_taxable and counterparty == CPT_GAS and include_crypto2crypto is False:
         taxable_pnl = -FVal(1500)
+
+    free_amount, taxable_amount = (FVal(0.5), ZERO) if counterparty == CPT_GAS and not gas_taxable else (ZERO, FVal(0.5))  # noqa: E501
     expected_event = ProcessedAccountingEvent(
         event_type=AccountingEventType.TRANSACTION_EVENT,
-        notes='Send 0.5 ETH to 0xABC',
+        notes=notes,
         location=Location.ETHEREUM,
         timestamp=TIMESTAMP_2_SECS,
         asset=A_ETH,
-        free_amount=ZERO,
-        taxable_amount=FVal(0.5),
+        free_amount=free_amount,
+        taxable_amount=taxable_amount,
         price=Price(ETH_PRICE_TS_2),
         pnl=PNL(taxable=taxable_pnl, free=ZERO),
         cost_basis=cost_basis,
         index=1,
-        extra_data={'tx_hash': EXAMPLE_TX_HASH_HEX},
+        extra_data={'tx_ref': EXAMPLE_TX_HASH_HEX},
     )
     expected_event.count_entire_amount_spend = is_taxable
     expected_event.count_cost_basis_pnl = is_taxable and (counterparty != CPT_GAS or include_crypto2crypto)  # noqa: E501
@@ -293,7 +297,7 @@ def test_accounting_swap_settings(accounting_pot: 'AccountingPot', counterparty:
     """
     _gain_one_ether(events_accountant=accounting_pot.events_accountant)
     swap_spend_event = EvmEvent(
-        tx_hash=EXAMPLE_EVM_HASH,
+        tx_ref=EXAMPLE_EVM_HASH,
         sequence_index=1,
         timestamp=TIMESTAMP_2_MS,
         location=Location.ETHEREUM,
@@ -306,7 +310,7 @@ def test_accounting_swap_settings(accounting_pot: 'AccountingPot', counterparty:
         counterparty=counterparty,
     )
     swap_receive_event = EvmEvent(
-        tx_hash=EXAMPLE_EVM_HASH,
+        tx_ref=EXAMPLE_EVM_HASH,
         sequence_index=2,
         timestamp=TIMESTAMP_2_MS,
         location=Location.ETHEREUM,
@@ -354,8 +358,8 @@ def test_accounting_swap_settings(accounting_pot: 'AccountingPot', counterparty:
         ),
         index=1,
         extra_data={
-            'tx_hash': EXAMPLE_TX_HASH_HEX,
-            'group_id': f'{swap_spend_event.event_identifier}12',
+            'tx_ref': EXAMPLE_TX_HASH_HEX,
+            'group_id': f'{swap_spend_event.group_identifier}12',
         },
     )
     expected_spend_event.count_entire_amount_spend = False
@@ -374,8 +378,8 @@ def test_accounting_swap_settings(accounting_pot: 'AccountingPot', counterparty:
         cost_basis=None,
         index=2,
         extra_data={
-            'tx_hash': EXAMPLE_TX_HASH_HEX,
-            'group_id': f'{swap_receive_event.event_identifier}12',
+            'tx_ref': EXAMPLE_TX_HASH_HEX,
+            'group_id': f'{swap_receive_event.group_identifier}12',
         },
     )
     expected_receive_event.count_entire_amount_spend = False

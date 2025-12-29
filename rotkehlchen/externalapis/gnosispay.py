@@ -2,13 +2,15 @@ import logging
 from dataclasses import dataclass
 from http import HTTPStatus
 from json import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 import requests
 
 from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import AssetWithSymbol
+from rotkehlchen.chain.evm.constants import EVM_ADDRESS_REGEX
 from rotkehlchen.chain.gnosis.modules.gnosis_pay.constants import CPT_GNOSIS_PAY
+from rotkehlchen.constants.timing import DAY_IN_SECONDS, HOUR_IN_SECONDS
 from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.filtering import EvmEventFilterQuery
 from rotkehlchen.db.history_events import DBHistoryEvents
@@ -19,15 +21,17 @@ from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_fval
-from rotkehlchen.types import EVMTxHash, Location, Timestamp, deserialize_evm_tx_hash
+from rotkehlchen.types import EVMTxHash, Location, Timestamp, TimestampMS, deserialize_evm_tx_hash
 from rotkehlchen.utils.misc import (
+    get_system_spec,
     iso8601ts_to_timestamp,
     set_user_agent,
     timestamp_to_iso8601,
+    ts_ms_to_sec,
     ts_now,
 )
 from rotkehlchen.utils.network import create_session
-from rotkehlchen.utils.serialization import jsonloads_list
+from rotkehlchen.utils.serialization import jsonloads_dict
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
@@ -36,8 +40,14 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-# the seconds around a transaction to search for when querying the API
-GNOSIS_PAY_TX_TIMESTAMP_RANGE = 30
+# the seconds around a transaction to search for when querying the API.
+# We use 8 hours because it seems that they don't respect timezones and in order to be
+# safe we use a wide query range
+GNOSIS_PAY_TX_TIMESTAMP_RANGE: Final = HOUR_IN_SECONDS * 8
+GNOSIS_PAY_PAGE_SIZE: Final = 100
+GNOSIS_PAY_API_BASE_URL: Final = 'https://api.gnosispay.com/api/v1'
+GNOSIS_PAY_AUTH_NONCE_ENDPOINT: Final = 'auth/nonce'
+GNOSIS_PAY_AUTH_CHALLENGE_ENDPOINT: Final = 'auth/challenge'
 
 
 @dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
@@ -55,7 +65,6 @@ class GnosisPayTransaction:
     billing_amount: FVal | None  # only if different to the transaction one
     reversal_symbol: str | None  # only if there is a refund
     reversal_amount: FVal | None  # only if there is a refund
-    reversal_tx_hash: EVMTxHash | None  # only if there is a refund
 
 
 class GnosisPay:
@@ -89,18 +98,19 @@ class GnosisPay:
         self.session = create_session()
         self.session_token = session_token
         set_user_agent(self.session)
+        self.session.headers = {'Authorization': f'Bearer {self.session_token}'}
 
     def _query(
             self,
-            endpoint: Literal['transactions'],
+            endpoint: Literal['cards/transactions'],
             params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Query a gnosis pay API endpoint with the hacky session token authentication
+        """Query a gnosis pay API endpoint.
 
         May raise:
         - RemoteError if there is a problem querying the API
         """
-        querystr = 'https://api.gnosispay.com/api/v1/' + endpoint
+        querystr = f'{GNOSIS_PAY_API_BASE_URL}/{endpoint}'
         log.debug(f'Querying Gnosis Pay API {querystr} with {params=}')
         timeout = CachedSettings().get_timeout_tuple()
         try:
@@ -108,7 +118,6 @@ class GnosisPay:
                 url=querystr,
                 params=params,
                 timeout=timeout,
-                cookies={'__Secure-authjs.session-token': self.session_token},
             )
         except requests.exceptions.RequestException as e:
             raise RemoteError(f'Querying {querystr} failed due to {e!s}') from e
@@ -120,9 +129,10 @@ class GnosisPay:
                 except JSONDecodeError:
                     error_message = response.text
 
+                log.error(f'Failed to connect to the GnosisPay API due to {error_message}')
                 self.database.msg_aggregator.add_message(
                     message_type=WSMessageType.GNOSISPAY_SESSIONKEY_EXPIRED,
-                    data={'error': error_message},
+                    data={'error': 'Please sign in with GnosisPay again to refresh your data'},
                 )
 
             raise RemoteError(
@@ -131,14 +141,58 @@ class GnosisPay:
                 f'{response.text}',
             )
 
+        # paginated response has this format
+        # {"count":565,"next":"/api/v1/cards/transactions?after=1970-01-01T00%3A00%3A00%2B00%3A00&offset=100&limit=100","previous":null,"results":[]}  # noqa: E501,ERA001
+
         try:
-            json_ret = jsonloads_list(response.text)
+            data = jsonloads_dict(response.text)
         except JSONDecodeError as e:
             raise RemoteError(
                 f'Gnosis Pay API returned invalid JSON response: {response.text}',
             ) from e
 
-        return json_ret
+        if 'results' not in data:
+            log.error(f'Missing key results in gnosis pay response: {response.text}')
+            raise RemoteError('results key missing from paginated endpoint')
+
+        return cast('list[dict[str, Any]]', data['results'])
+
+    def _query_paginated(
+            self,
+            before: Timestamp | None = None,
+            after: Timestamp | None = None,
+            page_size: int = GNOSIS_PAY_PAGE_SIZE,
+    ) -> list[dict[str, Any]]:
+        """Fetch all pages from the paginated cards/transactions endpoint.
+
+        The endpoint supports integer limit/offset and ISO 8601 before/after filters.
+        https://docs.gnosispay.com/api-reference/card-management/get-paginated-transactions-for-activated-cards
+        """
+        collected: list[dict[str, Any]] = []
+        offset, limit = 0, page_size
+        page_params: dict[str, str | int] = {}
+
+        if before is not None:
+            page_params['before'] = timestamp_to_iso8601(before)
+        if after is not None:
+            page_params['after'] = timestamp_to_iso8601(after)
+
+        while True:
+            page_params['limit'] = limit
+            page_params['offset'] = offset
+            if len(page := self._query(endpoint='cards/transactions', params=page_params)) == 0:
+                # from the docs: The final number might differ a little bit, as one thread might contain multiple transactions.  # noqa: E501
+                # GnosisPay has the concept of threads that are unique payments made with card
+                # and each thread contains one or two transactions, the payment and the reversal.
+                # The endpoint returns a list of threads and each one of those contains the
+                # on chain transactions. The pagination is done with transactions and this
+                # is why the len of the page might not match the limit.
+                break
+
+            collected.extend(page)
+            offset += limit
+
+        return collected
 
     def maybe_deserialize_transaction(self, data: dict[str, Any]) -> GnosisPayTransaction | None:
         try:
@@ -181,7 +235,6 @@ class GnosisPay:
                 billing_amount=billing_currency_amount,
                 reversal_symbol=reversal_currency_symbol,
                 reversal_amount=reversal_amount,
-                reversal_tx_hash=None,  # atm does not appear in the API
             )
 
         except (DeserializationError, KeyError, IndexError) as e:
@@ -240,31 +293,25 @@ class GnosisPay:
             billing_amount=billing_amount,
             reversal_symbol=reversal_symbol,
             reversal_amount=reversal_amount,
-            reversal_tx_hash=deserialize_evm_tx_hash(data[12]) if data[12] is not None else None,
         )
 
     def find_db_data(
             self,
             wherestatement: str,
             bindings: tuple,
-            with_identifier: bool = False,
-    ) -> tuple[GnosisPayTransaction | None, int | None]:
+    ) -> GnosisPayTransaction | None:
         """Return the gnosis pay data matching the given DB data"""
         with self.database.conn.read_ctx() as cursor:
             cursor.execute(
                 f'SELECT tx_hash, timestamp, merchant_name, merchant_city, country, mcc, '
                 f'transaction_symbol, transaction_amount, billing_symbol, billing_amount, '
-                f'reversal_symbol, reversal_amount, reversal_tx_hash '
-                f'{", identifier " if with_identifier else ""}'
+                f'reversal_symbol, reversal_amount '
                 f'FROM gnosispay_data WHERE {wherestatement}', bindings,
             )
             if (result := cursor.fetchone()) is None:
-                return None, None
+                return None
 
-        return (
-            self._deserialize_transaction_from_db(result),
-            result[13] if with_identifier else None,
-        )
+        return self._deserialize_transaction_from_db(result)
 
     def maybe_find_update_refund(
             self,
@@ -273,73 +320,18 @@ class GnosisPay:
             amount: FVal,
             asset: AssetWithSymbol,
     ) -> str | None:
-        transaction, identifier = self.find_db_data(
+        transaction = self.find_db_data(
             wherestatement='reversal_amount=? AND reversal_symbol=? AND timestamp<?',
             bindings=(
                 str(amount),
                 asset.resolve_to_asset_with_symbol().symbol[:-1],  # API shows normal EUR, GBP
                 tx_timestamp,
             ),
-            with_identifier=True,
         )
         if transaction is None:
             return None
 
-        with self.database.user_write() as write_cursor:
-            write_cursor.execute(
-                'UPDATE gnosispay_data SET reversal_tx_hash=? WHERE identifier=?',
-                (tx_hash, identifier),
-            )
-
         return self.create_notes_for_transaction(transaction, is_refund=True)
-
-    def get_data_for_transaction(
-            self,
-            tx_hash: EVMTxHash,
-            tx_timestamp: Timestamp,
-    ) -> str | None:
-        """Gets the Gnosis pay data for the given transaction and returns its notes if found.
-
-        Either from the DB or by querying the API
-        """
-        transaction, _ = self.find_db_data(
-            wherestatement='tx_hash=? OR reversal_tx_hash=?',
-            bindings=(tx_hash, tx_hash),
-        )
-        if transaction:
-            return self.create_notes_for_transaction(
-                transaction=transaction,
-                is_refund=False,
-            )
-
-        # else we need to query the API
-        try:
-            data = self._query(
-                endpoint='transactions',
-                params={
-                    'after': timestamp_to_iso8601(Timestamp(tx_timestamp - 1)),
-                    'before': timestamp_to_iso8601(Timestamp(tx_timestamp + 1)),
-                },
-            )
-        except RemoteError as e:
-            log.error(f'Could not query Gnosis Pay API due to {e!s}')
-            return None
-
-        # since this probably contains more transactions than the one we need dont
-        # let the query go to waste and update data for all and return only the one we need
-        result_tx = None
-        for entry in data:
-            if (transaction := self.maybe_deserialize_transaction(entry)) is None:
-                continue
-
-            if tx_hash == transaction.tx_hash:
-                result_tx = transaction
-            else:
-                self.maybe_update_event_with_api_data(transaction)
-
-            self.write_txdata_to_db(transaction)
-
-        return self.create_notes_for_transaction(result_tx, is_refund=False) if result_tx else None
 
     def query_remote_for_tx_and_update_events(
             self,
@@ -355,12 +347,9 @@ class GnosisPay:
         and the history event entry for that transaction is updated.
         """
         try:
-            data = self._query(
-                endpoint='transactions',
-                params={
-                    'after': timestamp_to_iso8601(Timestamp(start_ts - GNOSIS_PAY_TX_TIMESTAMP_RANGE)),  # noqa: E501
-                    'before': timestamp_to_iso8601(Timestamp(end_ts + GNOSIS_PAY_TX_TIMESTAMP_RANGE)),  # noqa: E501
-                },
+            data = self._query_paginated(
+                before=Timestamp(end_ts + GNOSIS_PAY_TX_TIMESTAMP_RANGE),
+                after=Timestamp(start_ts - GNOSIS_PAY_TX_TIMESTAMP_RANGE),
             )
         except RemoteError as e:
             log.error(f'Could not query Gnosis Pay API due to {e!s}')
@@ -386,7 +375,7 @@ class GnosisPay:
                 for row in cursor.execute(
                     f'SELECT tx_hash, timestamp, merchant_name, merchant_city, country, mcc, '
                     f'transaction_symbol, transaction_amount, billing_symbol, billing_amount, '
-                    f'reversal_symbol, reversal_amount, reversal_tx_hash FROM gnosispay_data '
+                    f'reversal_symbol, reversal_amount FROM gnosispay_data '
                     f'WHERE tx_hash IN ({placeholders})',
                     bindings,
                 ):
@@ -411,6 +400,35 @@ class GnosisPay:
             end_ts=tx_timestamps[missing_tx_hashes[-1]],
         )
 
+    def backfill_missing_events(self) -> None:
+        """Fetch merchant data for events missing Gnosis Pay metadata."""
+        tx_timestamps: dict[EVMTxHash, Timestamp] = {}
+        with self.database.conn.read_ctx() as cursor:
+            cursor.execute(
+                'SELECT EI.tx_ref, H.timestamp '
+                'FROM history_events H '
+                'INNER JOIN chain_events_info EI ON EI.identifier = H.identifier '
+                'WHERE H.location = ? AND EI.counterparty = ? AND H.notes LIKE ?',
+                (Location.GNOSIS.serialize_for_db(), CPT_GNOSIS_PAY, 'Spend% via Gnosis Pay'),
+            )
+            for raw_tx_hash, timestamp_ms in cursor:
+                if raw_tx_hash is None or timestamp_ms is None:
+                    continue
+
+                try:
+                    tx_hash = deserialize_evm_tx_hash(raw_tx_hash)
+                except DeserializationError as exc:
+                    log.error(f'Failed to deserialize Gnosis Pay tx hash {raw_tx_hash}. {exc!s}')
+                    continue
+
+                tx_timestamps[tx_hash] = ts_ms_to_sec(TimestampMS(timestamp_ms))
+
+        if len(tx_timestamps) == 0:
+            log.debug('No Gnosis Pay events require fetching merchant metadata.')
+            return
+
+        self.update_events(tx_timestamps=tx_timestamps)
+
     def create_notes_for_transaction(
             self,
             transaction: GnosisPayTransaction,
@@ -429,7 +447,7 @@ class GnosisPay:
             if transaction.billing_symbol:
                 notes += f' ({transaction.billing_amount} {transaction.billing_symbol})'
 
-        notes += f' {preposition} {transaction.merchant_name}'
+        notes += f' {preposition} :merchant_code:{transaction.mcc}: {transaction.merchant_name}'
         if transaction.merchant_city:
             notes += f' in {transaction.merchant_city}'
 
@@ -450,11 +468,11 @@ class GnosisPay:
             )
 
         if len(events) != 1:
-            log.error(f'Could not find gnosis pay event corresponding to {transaction.tx_hash.hex()} in the DB. Skipping.')  # pylint: disable=no-member # noqa: E501
+            log.error(f'Could not find gnosis pay event corresponding to {transaction.tx_hash!s} in the DB. Skipping.')  # noqa: E501
             return
 
         notes = self.create_notes_for_transaction(transaction, is_refund=False)
-        log.debug(f'Updating notes for gnosis pay event with tx_hash={transaction.tx_hash.hex()}')  # pylint: disable=no-member
+        log.debug(f'Updating notes for gnosis pay event with tx_hash={transaction.tx_hash!s}')
         with self.database.user_write() as write_cursor:
             write_cursor.execute(
                 'UPDATE history_events SET notes=? WHERE identifier=?',
@@ -476,11 +494,9 @@ class GnosisPay:
                 'INSERT OR REPLACE INTO key_value_cache (name, value) VALUES (?, ?)',
                 (DBCacheStatic.LAST_GNOSISPAY_QUERY_TS.value, str(ts_now())),
             )
-        data = self._query(
-            endpoint='transactions',
-            params={'after': timestamp_to_iso8601(after_ts)},  # after is exclusive
-        )
-        for entry in data:
+
+        # after is exclusive. Use paginated fetching to cover all pages
+        for entry in self._query_paginated(after=after_ts):
             if (transaction := self.maybe_deserialize_transaction(entry)) is None:
                 continue
 
@@ -499,3 +515,89 @@ def init_gnosis_pay(database: 'DBHandler') -> GnosisPay | None:
             return None
 
     return GnosisPay(database=database, session_token=result[0])
+
+
+def fetch_gnosis_pay_siwe_nonce() -> str:
+    """Fetch a SIWE nonce from the public Gnosis Pay API.
+
+    May raise:
+    - RemoteError if the request fails or returns an unexpected payload.
+    """
+    timeout = CachedSettings().get_timeout_tuple()
+    url = f'{GNOSIS_PAY_API_BASE_URL}/{GNOSIS_PAY_AUTH_NONCE_ENDPOINT}'
+    user_agent = f'rotki/{get_system_spec()["rotkehlchen"]}'
+    try:
+        response = requests.get(
+            url=url,
+            timeout=timeout,
+            headers={'User-Agent': user_agent},
+        )
+    except requests.RequestException as e:
+        raise RemoteError(f'Failed to fetch Gnosis Pay nonce: {e!s}') from e
+
+    if response.status_code != HTTPStatus.OK:
+        raise RemoteError(
+            f'Gnosis Pay nonce request failed with HTTP status code '
+            f'{response.status_code} and text {response.text}',
+        )
+
+    nonce = response.text.strip()
+    if nonce == '':
+        raise RemoteError('Gnosis Pay nonce response was empty')
+
+    return nonce
+
+
+def verify_gnosis_pay_siwe_signature(message: str, signature: str) -> str:
+    """Verify a SIWE signature and retrieve the auth token from Gnosis Pay.
+
+    May raise:
+    - RemoteError if the request fails or the response is invalid.
+    """
+    timeout = CachedSettings().get_timeout_tuple()
+    try:
+        response = requests.post(
+            url=f'{GNOSIS_PAY_API_BASE_URL}/{GNOSIS_PAY_AUTH_CHALLENGE_ENDPOINT}',
+            json={'message': message, 'signature': signature, 'ttlInSeconds': DAY_IN_SECONDS},
+            timeout=timeout,
+            headers={'User-Agent': (user_agent := f'rotki/{get_system_spec()["rotkehlchen"]}')},
+        )
+    except requests.RequestException as e:
+        raise RemoteError(f'Failed to verify Gnosis Pay SIWE signature: {e!s}') from e
+
+    if response.status_code != HTTPStatus.OK:
+        raise RemoteError(
+            f'Gnosis Pay challenge request failed with HTTP status code '
+            f'{response.status_code} and text {response.text}',
+        )
+
+    try:
+        data = jsonloads_dict(response.text)
+    except JSONDecodeError as e:
+        raise RemoteError(
+            f'Gnosis Pay challenge returned invalid JSON response: {response.text}',
+        ) from e
+
+    if not isinstance(token := data.get('token'), str) or token == '':
+        raise RemoteError(
+            f'Unexpected payload while verifying Gnosis Pay SIWE signature: {response.text}',
+        )
+
+    try:
+        balances_response = requests.get(
+            url=f'{GNOSIS_PAY_API_BASE_URL}/account-balances',
+            timeout=timeout,
+            headers={'User-Agent': user_agent, 'Authorization': f'Bearer {token}'},
+        )
+    except requests.RequestException as e:
+        raise RemoteError(f'Failed to verify Gnosis Pay token against account balances: {e!s}') from e  # noqa: E501
+
+    if balances_response.status_code != HTTPStatus.OK:
+        signer_address_match = EVM_ADDRESS_REGEX.search(message)
+        signer_address = signer_address_match.group(0) if signer_address_match else 'unknown address'  # unknown address should never appear  # noqa: E501
+        raise RemoteError(
+            f'Failed to authenticate with "{signer_address}". '
+            'Make sure it is is an owner/signer of the Gnosis Pay safe',
+        )
+
+    return token

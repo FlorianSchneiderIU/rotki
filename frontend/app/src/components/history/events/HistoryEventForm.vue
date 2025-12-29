@@ -9,12 +9,15 @@ import EthDepositEventForm from '@/modules/history/management/forms/EthDepositEv
 import EthWithdrawalEventForm from '@/modules/history/management/forms/EthWithdrawalEventForm.vue';
 import EvmEventForm from '@/modules/history/management/forms/EvmEventForm.vue';
 import EvmSwapEventForm from '@/modules/history/management/forms/EvmSwapEventForm.vue';
-import { EVM_EVENTS, isEvmTypeEvent } from '@/modules/history/management/forms/form-guards';
+import { EVM_EVENTS, isEvmTypeEvent, isSolanaTypeEvent, SOLANA_EVENTS } from '@/modules/history/management/forms/form-guards';
 import OnlineHistoryEventForm from '@/modules/history/management/forms/OnlineHistoryEventForm.vue';
+import SolanaEventForm from '@/modules/history/management/forms/SolanaEventForm.vue';
+import SolanaSwapEventForm from '@/modules/history/management/forms/SolanaSwapEventForm.vue';
 import SwapEventForm from '@/modules/history/management/forms/SwapEventForm.vue';
 
 interface FormComponent {
   save: () => Promise<boolean>;
+  v$: { $errors: unknown[] };
 }
 
 interface HistoryEventFormProps {
@@ -39,11 +42,24 @@ const isEvmGroupAdd = computed<boolean>(() => {
   return isEvmTypeEvent(data.group.entryType);
 });
 
+const isSolanaGroupAdd = computed<boolean>(() => {
+  const data = props.data;
+  if (data.type !== 'group-add') {
+    return false;
+  }
+  return isSolanaTypeEvent(data.group.entryType);
+});
+
+const isGroupAdd = logicOr(isEvmGroupAdd, isSolanaGroupAdd);
+
 const historyEventEntryTypes = computed<HistoryEventEntryType[]>(() => {
   if (get(isEvmGroupAdd)) {
     return [...EVM_EVENTS];
   }
-  return Object.values(HistoryEventEntryType).filter(value => !isEvmTypeEvent(value));
+  else if (get(isSolanaGroupAdd)) {
+    return [...SOLANA_EVENTS];
+  }
+  return Object.values(HistoryEventEntryType);
 });
 
 const formComponents: Record<HistoryEventEntryType, Component> = {
@@ -54,8 +70,17 @@ const formComponents: Record<HistoryEventEntryType, Component> = {
   [HistoryEventEntryType.EVM_EVENT]: EvmEventForm,
   [HistoryEventEntryType.EVM_SWAP_EVENT]: EvmSwapEventForm,
   [HistoryEventEntryType.HISTORY_EVENT]: OnlineHistoryEventForm,
+  [HistoryEventEntryType.SOLANA_EVENT]: SolanaEventForm,
+  [HistoryEventEntryType.SOLANA_SWAP_EVENT]: SolanaSwapEventForm,
   [HistoryEventEntryType.SWAP_EVENT]: SwapEventForm,
 };
+
+const errorCount = computed<number>(() => {
+  const formRef = get(form);
+  if (!formRef?.v$)
+    return 0;
+  return formRef.v$.$errors.length;
+});
 
 async function save() {
   if (!isDefined(form))
@@ -77,41 +102,40 @@ watchImmediate(data, (data) => {
 });
 
 defineExpose({
+  errorCount,
   save,
 });
 </script>
 
 <template>
-  <form class="history-event-form">
-    <RuiMenuSelect
-      v-model="entryType"
-      data-cy="entry-type"
-      :options="historyEventEntryTypes"
-      :disabled="data.type !== 'add' && !isEvmGroupAdd"
-      :label="t('common.entry_type')"
-      hide-details
-      variant="outlined"
-    >
-      <template #selection="{ item }">
-        <span class="capitalize">
-          {{ item }}
-        </span>
-      </template>
-      <template #item="{ item }">
-        <span class="capitalize">
-          {{ item }}
-        </span>
-      </template>
-    </RuiMenuSelect>
+  <RuiMenuSelect
+    v-model="entryType"
+    data-cy="entry-type"
+    :options="historyEventEntryTypes"
+    :disabled="data.type !== 'add' && !isGroupAdd"
+    :label="t('common.entry_type')"
+    hide-details
+    variant="outlined"
+  >
+    <template #selection="{ item }">
+      <span class="capitalize">
+        {{ item }}
+      </span>
+    </template>
+    <template #item="{ item }">
+      <span class="capitalize">
+        {{ item }}
+      </span>
+    </template>
+  </RuiMenuSelect>
 
-    <RuiDivider class="my-8" />
+  <RuiDivider class="my-8" />
 
-    <Component
-      :is="formComponents[entryType]"
-      ref="form"
-      v-model:state-updated="stateUpdated"
-      :data-cy="`${kebabCase(entryType)}-form`"
-      :data="data"
-    />
-  </form>
+  <Component
+    :is="formComponents[entryType]"
+    ref="form"
+    v-model:state-updated="stateUpdated"
+    :data-cy="`${kebabCase(entryType)}-form`"
+    :data="data"
+  />
 </template>

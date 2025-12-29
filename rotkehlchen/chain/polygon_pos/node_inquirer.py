@@ -6,8 +6,7 @@ from rotkehlchen.chain.evm.constants import BALANCE_SCANNER_ADDRESS
 from rotkehlchen.chain.evm.contracts import EvmContracts
 from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
 from rotkehlchen.chain.evm.types import string_to_evm_address
-from rotkehlchen.constants.assets import A_POLYGON_POS_MATIC
-from rotkehlchen.externalapis.blockscout import Blockscout
+from rotkehlchen.constants.assets import A_POL
 from rotkehlchen.fval import FVal
 from rotkehlchen.greenlets.manager import GreenletManager
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -22,7 +21,9 @@ from .constants import (
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.externalapis.blockscout import Blockscout
     from rotkehlchen.externalapis.etherscan import Etherscan
+    from rotkehlchen.externalapis.routescan import Routescan
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -35,6 +36,8 @@ class PolygonPOSInquirer(EvmNodeInquirer):
             greenlet_manager: GreenletManager,
             database: 'DBHandler',
             etherscan: 'Etherscan',
+            blockscout: 'Blockscout',
+            routescan: 'Routescan',
             rpc_timeout: int = DEFAULT_RPC_TIMEOUT,
     ) -> None:
         contracts = EvmContracts[Literal[ChainID.POLYGON_POS]](chain_id=ChainID.POLYGON_POS)
@@ -42,17 +45,14 @@ class PolygonPOSInquirer(EvmNodeInquirer):
             greenlet_manager=greenlet_manager,
             database=database,
             etherscan=etherscan,
+            blockscout=blockscout,
+            routescan=routescan,
             blockchain=SupportedBlockchain.POLYGON_POS,
             contracts=contracts,
             rpc_timeout=rpc_timeout,
             contract_multicall=contracts.contract(string_to_evm_address('0x275617327c958bD06b5D6b871E7f491D76113dd8')),
             contract_scan=contracts.contract(BALANCE_SCANNER_ADDRESS),
-            native_token=A_POLYGON_POS_MATIC.resolve_to_crypto_asset(),
-            blockscout=Blockscout(
-                blockchain=SupportedBlockchain.POLYGON_POS,
-                database=database,
-                msg_aggregator=database.msg_aggregator,
-            ),
+            native_token=A_POL.resolve_to_crypto_asset(),
         )
 
     # -- Implementation of EvmNodeInquirer base methods --

@@ -1,4 +1,6 @@
+from collections import defaultdict
 from collections.abc import Sequence
+from http import HTTPStatus
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -6,24 +8,29 @@ import pytest
 import requests
 from eth_utils import to_checksum_address
 
-from rotkehlchen.accounting.structures.balance import Balance
+from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.evm.types import string_to_evm_address
+from rotkehlchen.chain.zksync_lite.structures import ZKSyncLiteTransaction, ZKSyncLiteTXType
 from rotkehlchen.constants.assets import A_DAI, A_ETH, A_GNO
 from rotkehlchen.constants.misc import DEFAULT_BALANCE_LABEL, ONE, ZERO
+from rotkehlchen.db.filtering import EvmEventFilterQuery
+from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.api import (
     api_url_for,
+    assert_error_response,
     assert_proper_response,
     assert_proper_sync_response_with_result,
     assert_simple_ok_response,
 )
-from rotkehlchen.tests.utils.factories import make_evm_address
+from rotkehlchen.tests.utils.factories import make_evm_address, make_evm_tx_hash
 from rotkehlchen.types import (
     ChecksumEvmAddress,
     Location,
+    Timestamp,
     TimestampMS,
     deserialize_evm_tx_hash,
 )
@@ -89,12 +96,12 @@ def test_evmlike_blockchain_balances(
     rotki = rotkehlchen_api_server.rest_api.rotkehlchen
 
     addy_0_balances = {
-        A_ETH: Balance(amount=FVal(10), usd_value=FVal(1000)),
-        A_DAI: Balance(amount=FVal(100), usd_value=FVal(100)),
+        A_ETH: Balance(amount=FVal(10), value=FVal(1000)),
+        A_DAI: Balance(amount=FVal(100), value=FVal(100)),
     }
     addy_1_balances = {
-        A_ETH: Balance(amount=FVal(5), usd_value=FVal(500)),
-        A_GNO: Balance(amount=FVal(50), usd_value=FVal(25)),
+        A_ETH: Balance(amount=FVal(5), value=FVal(500)),
+        A_GNO: Balance(amount=FVal(50), value=FVal(25)),
     }
 
     def serialize_balances(value: dict[Asset, Balance]) -> dict[str, dict]:
@@ -102,15 +109,21 @@ def test_evmlike_blockchain_balances(
 
     def mocked_get_balances(
             addresses: Sequence[ChecksumEvmAddress],
-    ) -> dict[ChecksumEvmAddress, dict[Asset, Balance]]:
+    ) -> dict[ChecksumEvmAddress, BalanceSheet]:
         return {
-            addresses[0]: addy_0_balances,
-            addresses[1]: addy_1_balances,
+            addresses[0]: BalanceSheet(assets=defaultdict(lambda: defaultdict(Balance), (
+                (k, defaultdict(Balance, {DEFAULT_BALANCE_LABEL: v}))
+                for k, v in addy_0_balances.items()
+            ))),
+            addresses[1]: BalanceSheet(assets=defaultdict(lambda: defaultdict(Balance), (
+                (k, defaultdict(Balance, {DEFAULT_BALANCE_LABEL: v}))
+                for k, v in addy_1_balances.items()
+            ))),
         }
 
     with patch.object(
             rotki.chains_aggregator.zksync_lite,
-            'get_balances',
+            'query_balances',
             wraps=mocked_get_balances,
     ) as balance_query:
         response = requests.get(
@@ -264,7 +277,7 @@ def test_decode_pending_evmlike(
     response = requests.get(  # get the number of decoded & undecoded transactions
         api_url_for(
             rotkehlchen_api_server,
-            'evmlikependingtransactionsdecodingresource',
+            'transactionsdecodingresource',
         ),
     )
     result = assert_proper_sync_response_with_result(response)
@@ -273,15 +286,15 @@ def test_decode_pending_evmlike(
     response = requests.post(
         api_url_for(
             rotkehlchen_api_server,
-            'evmlikependingtransactionsdecodingresource',
-        ), json={'async_query': False},
+            'transactionsdecodingresource',
+        ), json={'async_query': False, 'chain': 'zksync_lite'},
     )
     assert_proper_response(response)
 
     response = requests.get(  # get the number of decoded & undecoded transactions
         api_url_for(
             rotkehlchen_api_server,
-            'evmlikependingtransactionsdecodingresource',
+            'transactionsdecodingresource',
         ),
     )
     result = assert_proper_sync_response_with_result(response)
@@ -299,8 +312,8 @@ def test_decode_pending_evmlike(
     assert assert_proper_sync_response_with_result(response) == result, 'filtering by location should be same'  # noqa: E501
     assert len(result['entries']) == 17
     compare_events_without_id(result['entries'][0]['entry'], EvmEvent(
-        event_identifier='zkl0xbd723b5a5f87e485a478bc7d1f365db79440b6e9305bff3b16a0e0ab83e51970',
-        tx_hash=tx_hash1,
+        group_identifier='zkl0xbd723b5a5f87e485a478bc7d1f365db79440b6e9305bff3b16a0e0ab83e51970',
+        tx_ref=tx_hash1,
         sequence_index=0,
         timestamp=TimestampMS(1708431030000),
         location=Location.ZKSYNC_LITE,
@@ -313,8 +326,8 @@ def test_decode_pending_evmlike(
         notes='Bridge 6.626770825 ETH from ZKSync Lite to Ethereum',
     ).serialize())
     compare_events_without_id(result['entries'][1]['entry'], EvmEvent(
-        event_identifier='zkl0xbd723b5a5f87e485a478bc7d1f365db79440b6e9305bff3b16a0e0ab83e51970',
-        tx_hash=tx_hash1,
+        group_identifier='zkl0xbd723b5a5f87e485a478bc7d1f365db79440b6e9305bff3b16a0e0ab83e51970',
+        tx_ref=tx_hash1,
         sequence_index=1,
         timestamp=TimestampMS(1708431030000),
         location=Location.ZKSYNC_LITE,
@@ -327,8 +340,8 @@ def test_decode_pending_evmlike(
         notes='Bridging fee of 0.00367 ETH',
     ).serialize())
     compare_events_without_id(result['entries'][2]['entry'], EvmEvent(
-        event_identifier='zkl0x331fcc49dc3c0a772e0b5e4518350f3d9a5c5576b4e8dbc7c56b2c59caa239bb',
-        tx_hash=tx_hash2,
+        group_identifier='zkl0x331fcc49dc3c0a772e0b5e4518350f3d9a5c5576b4e8dbc7c56b2c59caa239bb',
+        tx_ref=tx_hash2,
         sequence_index=0,
         timestamp=TimestampMS(1659010582000),
         location=Location.ZKSYNC_LITE,
@@ -345,10 +358,10 @@ def test_decode_pending_evmlike(
     # It's multiple "batched" transfers, a ChangePubkey event and the fee at the end
     # with a 0 transfer to self
     for x in result['entries'][4:10]:  # normal transfer part of the batch
-        if x['entry']['tx_hash'] == '0x43e7f5d480b8b7af4c154065fe7112b908940be39dd02f4fb42f6594d12465b7':  # noqa: E501
+        if x['entry']['tx_ref'] == '0x43e7f5d480b8b7af4c154065fe7112b908940be39dd02f4fb42f6594d12465b7':  # noqa: E501
             compare_events_without_id(x['entry'], EvmEvent(
-                event_identifier='zkl0x43e7f5d480b8b7af4c154065fe7112b908940be39dd02f4fb42f6594d12465b7',
-                tx_hash=deserialize_evm_tx_hash('0x43e7f5d480b8b7af4c154065fe7112b908940be39dd02f4fb42f6594d12465b7'),
+                group_identifier='zkl0x43e7f5d480b8b7af4c154065fe7112b908940be39dd02f4fb42f6594d12465b7',
+                tx_ref=deserialize_evm_tx_hash('0x43e7f5d480b8b7af4c154065fe7112b908940be39dd02f4fb42f6594d12465b7'),
                 sequence_index=0,
                 timestamp=TimestampMS(1656022105000),
                 location=Location.ZKSYNC_LITE,
@@ -365,10 +378,10 @@ def test_decode_pending_evmlike(
         raise AssertionError('Did not find the event')
 
     for x in result['entries'][4:10]:  # changepubkey
-        if x['entry']['tx_hash'] == '0x83001f1c5580d90d345779cd10762fc71c4c9020202551bc480331d70d547cc7':  # noqa: E501
+        if x['entry']['tx_ref'] == '0x83001f1c5580d90d345779cd10762fc71c4c9020202551bc480331d70d547cc7':  # noqa: E501
             compare_events_without_id(x['entry'], EvmEvent(
-                event_identifier='zkl0x83001f1c5580d90d345779cd10762fc71c4c9020202551bc480331d70d547cc7',
-                tx_hash=deserialize_evm_tx_hash('0x83001f1c5580d90d345779cd10762fc71c4c9020202551bc480331d70d547cc7'),
+                group_identifier='zkl0x83001f1c5580d90d345779cd10762fc71c4c9020202551bc480331d70d547cc7',
+                tx_ref=deserialize_evm_tx_hash('0x83001f1c5580d90d345779cd10762fc71c4c9020202551bc480331d70d547cc7'),
                 sequence_index=0,
                 timestamp=TimestampMS(1656022105000),
                 location=Location.ZKSYNC_LITE,
@@ -385,10 +398,10 @@ def test_decode_pending_evmlike(
 
     for x in result['entries'][4:10]:  # fee by 0 transaction to self - transaction
         entry = x['entry']
-        if entry['tx_hash'] == '0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162' and entry['event_subtype'] == 'none':  # noqa: E501
+        if entry['tx_ref'] == '0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162' and entry['event_subtype'] == 'none':  # noqa: E501
             compare_events_without_id(entry, EvmEvent(
-                event_identifier='zkl0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162',
-                tx_hash=deserialize_evm_tx_hash('0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162'),
+                group_identifier='zkl0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162',
+                tx_ref=deserialize_evm_tx_hash('0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162'),
                 sequence_index=0,
                 timestamp=TimestampMS(1656022105000),
                 location=Location.ZKSYNC_LITE,
@@ -406,10 +419,10 @@ def test_decode_pending_evmlike(
 
     for x in result['entries'][4:10]:  # fee by 0 transaction to self - fee
         entry = x['entry']
-        if entry['tx_hash'] == '0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162' and entry['event_subtype'] == 'fee':  # noqa: E501
+        if entry['tx_ref'] == '0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162' and entry['event_subtype'] == 'fee':  # noqa: E501
             compare_events_without_id(entry, EvmEvent(
-                event_identifier='zkl0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162',
-                tx_hash=deserialize_evm_tx_hash('0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162'),
+                group_identifier='zkl0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162',
+                tx_ref=deserialize_evm_tx_hash('0x89d943919cfa09636802e626c48cff7734da1ac8c98288c65fe5ea0dd60a0162'),
                 sequence_index=1,
                 timestamp=TimestampMS(1656022105000),
                 location=Location.ZKSYNC_LITE,
@@ -426,15 +439,10 @@ def test_decode_pending_evmlike(
         raise AssertionError('Did not find the event')
 
     # now let's try to redecode one transactions
-    response = requests.put(api_url_for(
-        rotkehlchen_api_server,
-        'evmliketransactionsresource',
-    ), json={
-        'transactions': [{
-            'chain': 'zksync_lite',
-            'tx_hash': tx_hash1.hex(),  # pylint: disable=no-member
-        }],
-    })
+    response = requests.put(
+        api_url_for(rotkehlchen_api_server, 'transactionsdecodingresource'),
+        json={'chain': 'zksync_lite', 'tx_refs': [str(tx_hash1)]},
+    )
     assert_simple_ok_response(response)  # see all is fine
 
     # now let's check the DB contains the entries we will check against when deleting
@@ -458,3 +466,91 @@ def test_decode_pending_evmlike(
         assert cursor.execute('SELECT COUNT(*) FROM zksynclite_transactions').fetchone()[0] == 0
         assert cursor.execute('SELECT COUNT(*) FROM zksynclite_swaps').fetchone()[0] == 0
         assert cursor.execute('SELECT COUNT(*) FROM history_events').fetchone()[0] == 0
+
+
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('zksync_lite_accounts', [['0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12']])
+def test_add_edit_evmlike_event(
+        rotkehlchen_api_server: 'APIServer',
+        zksync_lite_accounts: list['ChecksumEvmAddress'],
+) -> None:
+    """Test that adding and editing evmlike events works correctly and properly validates
+    transaction hashes depending on if there is a corresponding transaction in the DB.
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    with rotki.data.db.conn.write_ctx() as write_cursor:
+        rotki.chains_aggregator.zksync_lite._add_zksynctxs_db(
+            write_cursor=write_cursor,
+            transactions=[ZKSyncLiteTransaction(
+                tx_hash=(tx_hash := make_evm_tx_hash()),
+                tx_type=ZKSyncLiteTXType.TRANSFER,
+                timestamp=Timestamp(1600000000),
+                block_number=1,
+                from_address=(user_address := zksync_lite_accounts[0]),
+                to_address=make_evm_address(),
+                asset=A_ETH,
+                amount=ONE,
+                fee=ONE,
+                swap_data=None,
+            )],
+        )
+
+    # Add an event with the existing tx hash
+    entry = (event := EvmEvent(
+        group_identifier='xyz',
+        tx_ref=tx_hash,
+        sequence_index=0,
+        timestamp=TimestampMS(1600000000000),
+        location=Location.ZKSYNC_LITE,
+        event_type=HistoryEventType.SPEND,
+        event_subtype=HistoryEventSubType.NONE,
+        asset=A_ETH,
+        amount=ONE,
+        location_label=user_address,
+        address=make_evm_address(),
+    )).serialize()
+    entry.pop('identifier')
+    response = requests.put(
+        api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+        json=entry,
+    )
+    result = assert_proper_sync_response_with_result(response)
+    entry['identifier'] = event.identifier = result['identifier']
+
+    # Edit the event keeping the correct tx hash
+    entry['user_notes'] = event.notes = 'test notes'
+    response = requests.patch(
+        api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+        json=entry,
+    )
+    assert_proper_sync_response_with_result(response)
+    with rotki.data.db.conn.read_ctx() as cursor:
+        assert DBHistoryEvents(rotki.data.db).get_history_events(
+            cursor=cursor,
+            filter_query=EvmEventFilterQuery.make(),
+            entries_limit=None,
+        ) == [event]
+
+    # Try to edit with a tx hash that is not in the db or onchain
+    entry['tx_ref'] = f'0x{"0" * 64}'  # don't use make_evm_tx_hash so this is always the same for the vcr.  # noqa: E501
+    response = requests.patch(
+        api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+        json=entry,
+    )
+    assert_error_response(
+        response=response,
+        contained_in_msg='The provided transaction hash does not exist for zksync_lite.',
+        status_code=HTTPStatus.BAD_REQUEST,
+    )
+
+    # Check that setting a real tx hash that's only missing from the DB pulls the tx from onchain.
+    entry['tx_ref'] = '0x331fcc49dc3c0a772e0b5e4518350f3d9a5c5576b4e8dbc7c56b2c59caa239bb'
+    assert_simple_ok_response(requests.patch(
+        api_url_for(rotkehlchen_api_server, 'historyeventresource'),
+        json=entry,
+    ))
+    with rotki.data.db.conn.read_ctx() as cursor:
+        assert cursor.execute(
+            'SELECT COUNT(*) FROM zksynclite_transactions WHERE tx_hash=?',
+            (deserialize_evm_tx_hash(entry['tx_ref']),),
+        ).fetchone()[0] == 1

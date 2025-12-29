@@ -36,9 +36,6 @@
       }
     },
     "edit_tooltip": "编辑账户",
-    "headers": {
-      "usd_value": "{symbol} 值"
-    },
     "refresh_tooltip": "刷新 {blockchain} 余额忽略任何缓存条目"
   },
   "account_form": {
@@ -50,7 +47,7 @@
     "labels": {
       "addresses": "地址",
       "addresses_entries": "无条目 | {count} 个唯一条目 | {count} 个唯一条目",
-      "addresses_hint": "插入多个逗号分隔的地址",
+      "addresses_hint": "插入多个地址，用逗号或换行符分隔",
       "blockchain": "选择区块链 | 选择区块链",
       "btc": {
         "derivation_path": "推导路径",
@@ -674,8 +671,7 @@
     },
     "form": {
       "labels": {
-        "address": "地址",
-        "for_all_chain": "为所有链保存这个名字"
+        "address": "地址"
       },
       "no_suggestions_available": "没有可用的建议",
       "validation": {
@@ -772,8 +768,7 @@
   "asset_locations": {
     "header": {
       "percentage": "百分比",
-      "validator": "验证器索引|公钥",
-      "value": "{symbol} 值"
+      "validator": "验证器索引|公钥"
     },
     "title": "资产位置"
   },
@@ -793,7 +788,6 @@
       "delete_error": "无法删除映射： {message}",
       "edit_error": "无法编辑映射： {message}",
       "edit_title": "编辑映射",
-      "exchange": "交换",
       "filter_by_exchange": "按交易所筛选",
       "filter_by_location_symbol": "按资产符号筛选",
       "form": {
@@ -1163,6 +1157,7 @@
     "details": "细节",
     "entry_type": "输入类型",
     "events": "事件",
+    "exchange": "交易所",
     "fee": "费用",
     "filter": {
       "date_hint": "format {format} HH:mm:ss(时间/秒可选)",
@@ -1560,9 +1555,6 @@
     "subtitle": "这些是支持的日期格式选项",
     "title": "日期格式"
   },
-  "date_time_picker": {
-    "limit_now": "不能使用未来日期"
-  },
   "docker_warning": {
     "action": "是的，我明白了",
     "documentation": "文档",
@@ -1657,7 +1649,6 @@
       "activate_tooltip": "编辑交易所的 api 密钥。",
       "deactivate_tooltip": "取消对交易所 api 密钥的编辑。"
     },
-    "exchange": "交换",
     "name": {
       "non_empty": "名称字段不能为空。"
     }
@@ -1852,7 +1843,6 @@
     },
     "labels": {
       "btc_derivation_gap": "BTC衍生差距限制",
-      "chains_to_skip_detection": "跳过自动检测的 EVM 链",
       "date_display_format": "日期显示格式",
       "date_input_format": "日期输入格式",
       "treat_eth2_as_eth": "应将 ETH2 (Staked ETH) 视为 ETH"
@@ -1913,7 +1903,7 @@
       },
       "decimal_separator": {
         "error": "设置小数点分隔符错误",
-        "success": "十进制分隔符设置为 {decimalSeparator}"
+        "success": "十进制分隔符设置为 \"{decimalSeparator}\""
       },
       "floating_precision": {
         "error": "将浮动精度设置为 {precision} 时出错",
@@ -1922,7 +1912,7 @@
       },
       "thousand_separator": {
         "error": "千位分隔符设置错误",
-        "success": "千位分隔符设置为 {thousandSeparator}"
+        "success": "千位分隔符设置为 \"{thousandSeparator}\""
       },
       "treat_eth2_as_eth": {
         "error": "将 ETH2 视为 ETH 的错误更改设置"
@@ -2277,7 +2267,6 @@
       "create_a_custom_asset": "创建自定义资产",
       "input_manual_price": "添加和使用手动价格",
       "label": "标签",
-      "price_asset": "资产价格",
       "tags": "标签"
     },
     "type": {
@@ -2388,7 +2377,6 @@
       "non_fungible_balances": "NFT 余额"
     },
     "dashboard": "仪表板",
-    "defi": "DeFi",
     "defi_sub": {
       "airdrops": "空投"
     },
@@ -2915,9 +2903,7 @@
     "loading_hint": "您的报告生成可能需要一段时间，具体取决于您在选定时间段内执行的交易量和操作。",
     "loading_message": "正在生成您的报告，请稍候...",
     "report_period": "报告从{start}到{end}",
-    "settings_tooltip": "打开会计设置",
-    "upgrade": "从 {start} 开始处理了 {processed} 个事件。",
-    "upgrade2": "已达到免费版本的限制。要获得完整报告，请升级到{link}"
+    "settings_tooltip": "打开会计设置"
   },
   "profit_loss_reports": {
     "columns": {
@@ -3048,6 +3034,7 @@
   "staking": {
     "eth2": "ETH",
     "kraken": "Kraken",
+    "lido_csm": "Lido CSM",
     "liquity": "Liquity"
   },
   "staking_page": {
@@ -3373,9 +3360,13 @@
     "restart": "rotki 将立即重启以应用更新。"
   },
   "upgrade_row": {
-    "events": "从 {from} 到 {to} 处理了 {limit} out of {total} {label}。要查看更多请升级到 {link}",
+    "events": "@:upgrade_row.first_line 要查看更多请升级到 {link}",
+    "events_premium": "@:upgrade_row.first_line 要查看更多请 {link}",
+    "first_line": "从 {from} 到 {to} 处理了 {limit} out of {total} {label}。",
     "rotki_premium": "rotki 高级版",
-    "upgrade": "显示 {limit} out of {total} {label}。要查看更多，请升级到 {link}"
+    "upgrade": "显示 {limit} out of {total} {label}。要查看更多，请升级到 {link}",
+    "upgrade_premium": "显示 {limit} out of {total} {label}。要查看更多请 {link}",
+    "upgrade_your_plan": "升级您的计划"
   },
   "user_dropdown": {
     "change_privacy_mode": {

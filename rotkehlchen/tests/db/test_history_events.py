@@ -4,13 +4,14 @@ from unittest.mock import patch
 import pytest
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.decoding.oneinch.constants import CPT_ONEINCH_V6
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ONE
 from rotkehlchen.constants.assets import A_BTC, A_DAI, A_ETH, A_USDC, A_USDT
 from rotkehlchen.constants.limits import FREE_HISTORY_EVENTS_LIMIT
 from rotkehlchen.constants.misc import ZERO
+from rotkehlchen.db.cache import DBCacheStatic
 from rotkehlchen.db.constants import HISTORY_MAPPING_KEY_STATE, HISTORY_MAPPING_STATE_CUSTOMIZED
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.filtering import (
@@ -23,7 +24,7 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.asset_movement import AssetMovement
 from rotkehlchen.history.events.structures.base import HistoryBaseEntryType, HistoryEvent
 from rotkehlchen.history.events.structures.eth2 import EthDepositEvent, EthWithdrawalEvent
-from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
+from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.evm_swap import EvmSwapEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.tests.utils.factories import (
@@ -34,13 +35,13 @@ from rotkehlchen.tests.utils.factories import (
 from rotkehlchen.types import EVMTxHash, Location, Timestamp, TimestampMS, deserialize_evm_tx_hash
 
 
-def test_get_customized_event_identifiers(database):
+def test_get_customized_group_identifiers(database):
     db = DBHistoryEvents(database)
     with db.db.user_write() as write_cursor:
         db.add_history_event(
             write_cursor=write_cursor,
             event=HistoryEvent(
-                event_identifier=deserialize_evm_tx_hash('0x75ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791'),
+                group_identifier=deserialize_evm_tx_hash('0x75ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791'),
                 sequence_index=1,
                 timestamp=TimestampMS(1),
                 location=Location.ETHEREUM,
@@ -55,7 +56,7 @@ def test_get_customized_event_identifiers(database):
             write_cursor=write_cursor,
             history=[
                 HistoryEvent(
-                    event_identifier=deserialize_evm_tx_hash('0x15ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791'),
+                    group_identifier=deserialize_evm_tx_hash('0x15ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791'),
                     sequence_index=1,
                     timestamp=TimestampMS(1),
                     location=Location.OPTIMISM,
@@ -64,7 +65,7 @@ def test_get_customized_event_identifiers(database):
                     asset=A_ETH,
                     amount=ONE,
                 ), HistoryEvent(
-                    event_identifier=deserialize_evm_tx_hash('0x25ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791'),
+                    group_identifier=deserialize_evm_tx_hash('0x25ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791'),
                     sequence_index=1,
                     timestamp=TimestampMS(2),
                     location=Location.OPTIMISM,
@@ -78,7 +79,7 @@ def test_get_customized_event_identifiers(database):
         db.add_history_event(
             write_cursor=write_cursor,
             event=HistoryEvent(
-                event_identifier=deserialize_evm_tx_hash('0x35ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791'),
+                group_identifier=deserialize_evm_tx_hash('0x35ceef8e258c08fc2724c1286da0426cb6ec8df208a9ec269108430c30262791'),
                 sequence_index=1,
                 timestamp=TimestampMS(3),
                 location=Location.OPTIMISM,
@@ -91,9 +92,9 @@ def test_get_customized_event_identifiers(database):
         )
 
     with db.db.conn.read_ctx() as cursor:
-        assert db.get_customized_event_identifiers(cursor, location=None) == [1, 4]
-        assert db.get_customized_event_identifiers(cursor, location=Location.ETHEREUM) == [1]
-        assert db.get_customized_event_identifiers(cursor, location=Location.OPTIMISM) == [4]
+        assert db.get_customized_group_identifiers(cursor, location=None) == [1, 4]
+        assert db.get_customized_group_identifiers(cursor, location=Location.ETHEREUM) == [1]
+        assert db.get_customized_group_identifiers(cursor, location=Location.OPTIMISM) == [4]
 
 
 def add_history_events_to_db(db: DBHistoryEvents, data: dict[int, tuple[str, TimestampMS, FVal, dict | None]]) -> None:  # noqa: E501
@@ -103,7 +104,7 @@ def add_history_events_to_db(db: DBHistoryEvents, data: dict[int, tuple[str, Tim
             db.add_history_event(
                 write_cursor=write_cursor,
                 event=HistoryEvent(
-                    event_identifier=entry[0],
+                    group_identifier=entry[0],
                     sequence_index=1,
                     timestamp=entry[1],
                     location=Location.ETHEREUM,
@@ -116,14 +117,14 @@ def add_history_events_to_db(db: DBHistoryEvents, data: dict[int, tuple[str, Tim
             )
 
 
-def add_evm_events_to_db(db: DBHistoryEvents, data: dict[int, tuple[EVMTxHash, TimestampMS, FVal, str, EvmProduct, str, dict | None]]) -> None:  # noqa: E501
+def add_evm_events_to_db(db: DBHistoryEvents, data: dict[int, tuple[EVMTxHash, TimestampMS, FVal, str, str, dict | None]]) -> None:  # noqa: E501
     """Helper function to create EvmEvent fixtures"""
     with db.db.user_write() as write_cursor:
         for entry in data.values():
             db.add_history_event(
                 write_cursor=write_cursor,
                 event=EvmEvent(
-                    tx_hash=entry[0],
+                    tx_ref=entry[0],
                     sequence_index=1,
                     timestamp=entry[1],
                     location=Location.ETHEREUM,
@@ -132,10 +133,9 @@ def add_evm_events_to_db(db: DBHistoryEvents, data: dict[int, tuple[EVMTxHash, T
                     asset=A_ETH,
                     amount=entry[2],
                     counterparty=entry[3],
-                    product=entry[4],
-                    address=string_to_evm_address(entry[5]),
+                    address=string_to_evm_address(entry[4]),
                 ),
-                mapping_values=entry[6],
+                mapping_values=entry[5],
             )
 
 
@@ -147,7 +147,7 @@ def add_eth2_events_to_db(db: DBHistoryEvents, data: dict[int, tuple[EVMTxHash, 
                 write_cursor=write_cursor,
                 event=EthDepositEvent(
                     identifier=1,
-                    tx_hash=entry[0],
+                    tx_ref=entry[0],
                     validator_index=42,
                     sequence_index=1,
                     timestamp=entry[1],
@@ -166,10 +166,10 @@ def test_read_write_events_from_db(database):
         3: ('TEST3', TimestampMS(3), FVal(3), None),
     }
     evm_data = {  # mapping of identifier to unique data
-        4: (make_evm_tx_hash(), TimestampMS(4), FVal(4), 'gas', EvmProduct.POOL, '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
-        5: (make_evm_tx_hash(), TimestampMS(5), FVal(5), 'liquity', EvmProduct.STAKING, '0x85222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
-        6: (make_evm_tx_hash(), TimestampMS(6), FVal(6), 'aave', EvmProduct.POOL, '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe4', None),  # noqa: E501
-        7: (make_evm_tx_hash(), TimestampMS(7), FVal(7), 'compound', EvmProduct.POOL, '0x19222290DD7278Aa3Ddd389Cc1E1d165CC4BAf34', None),  # noqa: E501
+        4: (make_evm_tx_hash(), TimestampMS(4), FVal(4), 'gas', '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
+        5: (make_evm_tx_hash(), TimestampMS(5), FVal(5), 'liquity', '0x85222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
+        6: (make_evm_tx_hash(), TimestampMS(6), FVal(6), 'aave', '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe4', None),  # noqa: E501
+        7: (make_evm_tx_hash(), TimestampMS(7), FVal(7), 'compound', '0x19222290DD7278Aa3Ddd389Cc1E1d165CC4BAf34', None),  # noqa: E501
     }
 
     add_history_events_to_db(db, history_data)
@@ -190,7 +190,7 @@ def test_read_write_events_from_db(database):
                     data_entry = history_data[event.identifier]
                     expected_event = HistoryEvent(
                         identifier=event.identifier,
-                        event_identifier=data_entry[0],
+                        group_identifier=data_entry[0],
                         sequence_index=1,
                         timestamp=data_entry[1],
                         location=Location.ETHEREUM,
@@ -203,7 +203,7 @@ def test_read_write_events_from_db(database):
                     data_entry = evm_data[event.identifier]
                     expected_event = EvmEvent(
                         identifier=event.identifier,
-                        tx_hash=data_entry[0],
+                        tx_ref=data_entry[0],
                         sequence_index=1,
                         timestamp=data_entry[1],
                         location=Location.ETHEREUM,
@@ -212,16 +212,15 @@ def test_read_write_events_from_db(database):
                         asset=A_ETH,
                         amount=data_entry[2],
                         counterparty=data_entry[3],
-                        product=data_entry[4],
-                        address=data_entry[5],
+                        address=data_entry[4],
                     )
                 assert event == expected_event
 
 
 @pytest.mark.parametrize(
-    ('entries_limit', 'group_by_event_ids'), [(None, False), (None, True), (FREE_HISTORY_EVENTS_LIMIT, False), (FREE_HISTORY_EVENTS_LIMIT, True)],  # noqa: E501
+    ('entries_limit', 'aggregate_by_group_ids'), [(None, False), (None, True), (FREE_HISTORY_EVENTS_LIMIT, False), (FREE_HISTORY_EVENTS_LIMIT, True)],  # noqa: E501
 )
-def test_read_write_customized_events_from_db(database: DBHandler, entries_limit: int, group_by_event_ids: bool) -> None:  # noqa: E501
+def test_read_write_customized_events_from_db(database: DBHandler, entries_limit: int, aggregate_by_group_ids: bool) -> None:  # noqa: E501
     """Tests filtering for fetching only the customized events"""
     db = DBHistoryEvents(database)
     history_data = {
@@ -232,9 +231,9 @@ def test_read_write_customized_events_from_db(database: DBHandler, entries_limit
 
     tx_hashes = [make_evm_tx_hash() for x in range(5)]
     evm_data = {
-        4: (tx_hashes[0], TimestampMS(4), FVal(4), 'gas', EvmProduct.POOL, '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
-        5: (tx_hashes[1], TimestampMS(5), FVal(5), 'liquity', EvmProduct.STAKING, '0x85222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
-        6: (tx_hashes[2], TimestampMS(6), FVal(6), 'aave', EvmProduct.POOL, '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe4', {HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED}),  # noqa: E501
+        4: (tx_hashes[0], TimestampMS(4), FVal(4), 'gas', '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
+        5: (tx_hashes[1], TimestampMS(5), FVal(5), 'liquity', '0x85222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
+        6: (tx_hashes[2], TimestampMS(6), FVal(6), 'aave', '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe4', {HISTORY_MAPPING_KEY_STATE: HISTORY_MAPPING_STATE_CUSTOMIZED}),  # noqa: E501
     }
     eth2_data = {
         7: (tx_hashes[3], TimestampMS(7), FVal(6), '0x95222290DD7278Aa3Ddd389Cc1E1d165CC4BAfe5', None),  # noqa: E501
@@ -269,16 +268,16 @@ def test_read_write_customized_events_from_db(database: DBHandler, entries_limit
                 cursor=cursor,
                 filter_query=filtering_class.make(**filter_args),
                 entries_limit=entries_limit,
-                group_by_event_ids=group_by_event_ids,
+                aggregate_by_group_ids=aggregate_by_group_ids,
             )
-            if group_by_event_ids is False:  # don't check the grouping case. Just make sure no exception is raised  # noqa: E501
-                filtered_ids = [x.tx_hash if isinstance(x, EvmEvent) else x.event_identifier for x in events]  # type: ignore  # events are not tuples when group_by_event_ids is False  # noqa: E501
+            if aggregate_by_group_ids is False:  # don't check the grouping case. Just make sure no exception is raised  # noqa: E501
+                filtered_ids = [x.tx_ref if isinstance(x, EvmEvent) else x.group_identifier for x in events]  # type: ignore  # events are not tuples when aggregate_by_group_ids is False  # noqa: E501
                 assert filtered_ids == expected_ids
 
             db.get_history_events_count(  # don't check result, just check for exception
                 cursor=cursor,
                 query_filter=filtering_class.make(**filter_args),
-                group_by_event_ids=group_by_event_ids,
+                aggregate_by_group_ids=aggregate_by_group_ids,
                 entries_limit=entries_limit,
             )
 
@@ -290,7 +289,7 @@ def test_delete_last_event(database):
     """
     db = DBHistoryEvents(database)
     with db.db.user_write() as write_cursor:
-        withdrawal_event_identifier = db.add_history_event(
+        withdrawal_group_identifier = db.add_history_event(
             write_cursor=write_cursor,
             event=EthWithdrawalEvent(
                 validator_index=1000,
@@ -300,19 +299,19 @@ def test_delete_last_event(database):
                 is_exit=True,
             ),
         )
-        evm_event_identifier = db.add_history_event(
+        evm_group_identifier = db.add_history_event(
             write_cursor=write_cursor,
             event=make_ethereum_event(index=1),
         )
     with db.db.conn.read_ctx() as cursor:
         assert len(db.get_history_events_internal(cursor, HistoryEventFilterQuery.make())) == 2
 
-    msg = db.delete_history_events_by_identifier(identifiers=[withdrawal_event_identifier])
+    msg = db.delete_history_events_by_identifier(identifiers=[withdrawal_group_identifier])
     assert msg is None
     with db.db.conn.read_ctx() as cursor:
         assert len(db.get_history_events_internal(cursor, HistoryEventFilterQuery.make())) == 1, 'Only the EVM event should be left'  # noqa: E501
 
-    msg = db.delete_history_events_by_identifier(identifiers=[evm_event_identifier])
+    msg = db.delete_history_events_by_identifier(identifiers=[evm_group_identifier])
     assert 'was the last event of a transaction' in msg
     with db.db.conn.read_ctx() as cursor:
         assert len(db.get_history_events_internal(cursor, HistoryEventFilterQuery.make())) == 1, 'EVM event should be left'  # noqa: E501
@@ -321,17 +320,17 @@ def test_delete_last_event(database):
 def test_get_history_events_free_filter(database: 'DBHandler'):
     """Test that the history events filter works consistently with has_premium=True/False"""
     history_events = DBHistoryEvents(database=database)
-    event_identifiers = [make_evm_tx_hash().hex() for _ in range(6)]  # pylint: disable=no-member
+    group_identifiers = [str(make_evm_tx_hash()) for _ in range(6)]
     dummy_events = (
         AssetMovement(
-            event_identifier=event_identifiers[5],
+            group_identifier=group_identifiers[5],
             timestamp=TimestampMS(1000),
             location=Location.KRAKEN,
             event_type=HistoryEventType.DEPOSIT,
             asset=A_BTC,
             amount=ONE,
         ), HistoryEvent(
-            event_identifier=event_identifiers[0],
+            group_identifier=group_identifiers[0],
             sequence_index=0,
             timestamp=TimestampMS(1000),
             location=Location.OPTIMISM,
@@ -340,7 +339,7 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
             asset=A_ETH,
             amount=ONE,
         ), HistoryEvent(
-            event_identifier=event_identifiers[1],
+            group_identifier=group_identifiers[1],
             sequence_index=0,
             timestamp=TimestampMS(2000),
             location=Location.OPTIMISM,
@@ -349,7 +348,7 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
             asset=A_ETH,
             amount=FVal(2),
         ), HistoryEvent(
-            event_identifier=event_identifiers[1],
+            group_identifier=group_identifiers[1],
             sequence_index=1,
             timestamp=TimestampMS(2000),
             location=Location.COINBASE,
@@ -358,7 +357,7 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
             asset=A_USDC,
             amount=FVal(1000),
         ), HistoryEvent(
-            event_identifier=event_identifiers[2],
+            group_identifier=group_identifiers[2],
             sequence_index=0,
             timestamp=TimestampMS(3000),
             location=Location.BLOCKCHAIN,
@@ -367,7 +366,7 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
             asset=A_USDT,
             amount=FVal(5),
         ), HistoryEvent(
-            event_identifier=event_identifiers[2],
+            group_identifier=group_identifiers[2],
             sequence_index=1,
             timestamp=TimestampMS(3000),
             location=Location.ETHEREUM,
@@ -376,7 +375,7 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
             asset=A_USDT,
             amount=FVal('1.5'),
         ), HistoryEvent(
-            event_identifier=event_identifiers[2],
+            group_identifier=group_identifiers[2],
             sequence_index=2,
             timestamp=TimestampMS(3000),
             location=Location.COINBASE,
@@ -385,7 +384,7 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
             asset=A_USDT,
             amount=FVal('0.02762431'),
         ), HistoryEvent(
-            event_identifier=event_identifiers[3],
+            group_identifier=group_identifiers[3],
             sequence_index=0,
             timestamp=TimestampMS(4000),
             location=Location.COINBASE,
@@ -394,7 +393,7 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
             asset=A_USDT,
             amount=FVal('0.000076'),
         ), HistoryEvent(
-            event_identifier=event_identifiers[3],
+            group_identifier=group_identifiers[3],
             sequence_index=1,
             timestamp=TimestampMS(4000),
             location=Location.COINBASE,
@@ -403,7 +402,7 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
             asset=A_ETH,
             amount=ONE,
         ), HistoryEvent(
-            event_identifier=event_identifiers[3],
+            group_identifier=group_identifiers[3],
             sequence_index=2,
             timestamp=TimestampMS(4000),
             location=Location.COINBASE,
@@ -412,7 +411,7 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
             asset=A_ETH,
             amount=FVal(1000),
         ), HistoryEvent(
-            event_identifier=event_identifiers[4],
+            group_identifier=group_identifiers[4],
             sequence_index=0,
             timestamp=TimestampMS(5000),
             location=Location.ETHEREUM,
@@ -447,23 +446,23 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
                 cursor=cursor,
                 filter_query=filters,
                 entries_limit=None,
-                group_by_event_ids=True,
+                aggregate_by_group_ids=True,
             ) == history_events.get_history_events(
                 cursor=cursor,
                 filter_query=filters,
                 entries_limit=None,
-                group_by_event_ids=True,
+                aggregate_by_group_ids=True,
             ) != []
             assert history_events.get_history_events(  # when not grouping
                 cursor=cursor,
                 filter_query=filters,
                 entries_limit=None,
-                group_by_event_ids=False,
+                aggregate_by_group_ids=False,
             ) == history_events.get_history_events(
                 cursor=cursor,
                 filter_query=filters,
                 entries_limit=None,
-                group_by_event_ids=False,
+                aggregate_by_group_ids=False,
             ) != []
 
         with patch(target='rotkehlchen.tests.db.test_history_events.FREE_HISTORY_EVENTS_LIMIT', new=3):  # noqa: E501
@@ -477,28 +476,28 @@ def test_get_history_events_free_filter(database: 'DBHandler'):
                 premium_grouped_result = history_events.get_history_events_internal(  # when grouping  # noqa: E501
                     cursor=cursor,
                     filter_query=filters,
-                    group_by_event_ids=True,
+                    aggregate_by_group_ids=True,
                 )
                 assert len(premium_grouped_result) > 3
                 free_grouped_result = history_events.get_history_events(
                     cursor=cursor,
                     filter_query=filters,
                     entries_limit=FREE_HISTORY_EVENTS_LIMIT,
-                    group_by_event_ids=True,
+                    aggregate_by_group_ids=True,
                 )
                 assert len(free_grouped_result) == min(3, len(premium_grouped_result))
                 assert free_grouped_result == premium_grouped_result[-3:]
                 premium_result = history_events.get_history_events_internal(  # when not grouping
                     cursor=cursor,
                     filter_query=filters,
-                    group_by_event_ids=False,
+                    aggregate_by_group_ids=False,
                 )
                 assert len(premium_result) > 3
                 free_result = history_events.get_history_events(
                     cursor=cursor,
                     filter_query=filters,
                     entries_limit=FREE_HISTORY_EVENTS_LIMIT,
-                    group_by_event_ids=False,
+                    aggregate_by_group_ids=False,
                 )
                 for free_event in free_result:
                     assert free_event.identifier is not None
@@ -518,7 +517,7 @@ def test_match_exact_events(database: 'DBHandler', start_with_valid_premium: boo
             write_cursor=write_cursor,
             history=[
                 EvmEvent(
-                    tx_hash=(tx_hash := make_evm_tx_hash()),
+                    tx_ref=(tx_hash := make_evm_tx_hash()),
                     sequence_index=0,
                     timestamp=timestamp,
                     location=Location.BASE,
@@ -530,7 +529,7 @@ def test_match_exact_events(database: 'DBHandler', start_with_valid_premium: boo
                     notes=f'Burn {gas} ETH for gas',
                     counterparty=CPT_GAS,
                 ), EvmEvent(
-                    tx_hash=tx_hash,
+                    tx_ref=tx_hash,
                     sequence_index=2,
                     timestamp=timestamp,
                     location=Location.BASE,
@@ -541,7 +540,7 @@ def test_match_exact_events(database: 'DBHandler', start_with_valid_premium: boo
                     location_label=account,
                     notes=f'Revoke DAI spending approval of {account} by {CPT_ONEINCH_V6}',
                 ), EvmSwapEvent(
-                    tx_hash=tx_hash,
+                    tx_ref=tx_hash,
                     sequence_index=3,
                     timestamp=timestamp,
                     location=Location.BASE,
@@ -552,7 +551,7 @@ def test_match_exact_events(database: 'DBHandler', start_with_valid_premium: boo
                     notes=f'Swap {swap_amount} DAI in 1inch-v6',
                     counterparty=CPT_ONEINCH_V6,
                 ), EvmSwapEvent(
-                    tx_hash=tx_hash,
+                    tx_ref=tx_hash,
                     sequence_index=4,
                     timestamp=timestamp,
                     location=Location.BASE,
@@ -571,14 +570,14 @@ def test_match_exact_events(database: 'DBHandler', start_with_valid_premium: boo
             cursor=cursor,
             filter_query=EvmEventFilterQuery.make(assets=(A_DAI,)),
             entries_limit=entries_limit,
-            group_by_event_ids=False,
+            aggregate_by_group_ids=False,
             match_exact_events=True,
         )
         result_no_match = db.get_history_events(
             cursor=cursor,
             filter_query=EvmEventFilterQuery.make(assets=(A_DAI,)),
             entries_limit=entries_limit,
-            group_by_event_ids=False,
+            aggregate_by_group_ids=False,
             match_exact_events=False,
         )
 
@@ -591,16 +590,144 @@ def test_match_exact_events(database: 'DBHandler', start_with_valid_premium: boo
             cursor=cursor,
             filter_query=EvmEventFilterQuery.make(assets=(A_DAI,)),
             entries_limit=entries_limit,
-            group_by_event_ids=True,
+            aggregate_by_group_ids=True,
             match_exact_events=True,
         )
         result_no_match_grouped = db.get_history_events(
             cursor=cursor,
             filter_query=EvmEventFilterQuery.make(assets=(A_DAI,)),
             entries_limit=entries_limit,
-            group_by_event_ids=True,
+            aggregate_by_group_ids=True,
             match_exact_events=False,
         )
         assert result_match_grouped[0][0] == 2 and result_no_match_grouped[0][0] == 4
         assert result_match_grouped[0][1].asset == A_DAI
         assert result_match_grouped[0][1].asset == A_DAI
+
+
+def test_event_modification_tracks_earliest_timestamp(database: 'DBHandler') -> None:
+    db = DBHistoryEvents(database)
+    cache_key = DBCacheStatic.STALE_BALANCES_FROM_TS.value
+
+    with database.conn.read_ctx() as cursor:
+        result = cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
+        ).fetchone()
+        assert result is None
+
+    with database.user_write() as write_cursor:
+        db.add_history_events(
+            write_cursor=write_cursor,
+            history=[(eth_event := HistoryEvent(
+                group_identifier='TEST1',
+                sequence_index=1,
+                timestamp=TimestampMS(3000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ONE,
+            )), HistoryEvent(
+                group_identifier='TEST2',
+                sequence_index=1,
+                timestamp=(ts_2000 := TimestampMS(2000)),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_BTC,
+                amount=ONE,
+            )],
+        )
+
+    with database.conn.read_ctx() as cursor:
+        result = cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
+        ).fetchone()
+        assert result[0] == str(ts_2000)  # global minimum across all assets
+
+    with database.user_write() as write_cursor:
+        db.add_history_event(
+            write_cursor=write_cursor,
+            event=HistoryEvent(
+                group_identifier='TEST3',
+                sequence_index=1,
+                timestamp=(ts_1000 := TimestampMS(1000)),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ONE,
+            ),
+        )
+
+    with database.conn.read_ctx() as cursor:
+        result = cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
+        ).fetchone()
+        assert result[0] == str(ts_1000)  # updated to earlier timestamp
+
+    # add event at later timestamp 5000 and cache should remain at 1000
+    with database.user_write() as write_cursor:
+        db.add_history_event(
+            write_cursor=write_cursor,
+            event=HistoryEvent(
+                group_identifier='TEST4',
+                sequence_index=1,
+                timestamp=TimestampMS(5000),
+                location=Location.ETHEREUM,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_ETH,
+                amount=ONE,
+            ),
+        )
+
+    with database.conn.read_ctx() as cursor:
+        result = cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
+        ).fetchone()
+        assert result[0] == str(ts_1000)  # remains at minimum
+
+    # edit notes only and _mark_events_modified should NOT be called
+    with (
+        patch.object(db, '_mark_events_modified') as mock_mark,
+        database.user_write() as write_cursor,
+    ):
+        eth_event.identifier = 1
+        eth_event.notes = 'Updated notes'
+        db.edit_history_event(write_cursor=write_cursor, event=eth_event)
+        mock_mark.assert_not_called()
+
+    # edit asset and should update cache
+    with database.user_write() as write_cursor:
+        eth_event.asset = A_DAI
+        db.edit_history_event(write_cursor=write_cursor, event=eth_event)
+
+    with database.conn.read_ctx() as cursor:
+        result = cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
+        ).fetchone()
+        assert result[0] == str(ts_1000)  # still the global minimum
+
+    # test purge_exchange_data updates cache via delete_events_and_track
+    with database.user_write() as write_cursor:
+        db.add_history_event(
+            write_cursor=write_cursor,
+            event=HistoryEvent(
+                group_identifier='KRAKEN1',
+                sequence_index=1,
+                timestamp=(ts_500 := TimestampMS(500)),
+                location=Location.KRAKEN,
+                event_type=HistoryEventType.TRADE,
+                event_subtype=HistoryEventSubType.NONE,
+                asset=A_USDC,
+                amount=ONE,
+            ),
+        )
+        database.purge_exchange_data(write_cursor=write_cursor, location=Location.KRAKEN)
+
+    with database.conn.read_ctx() as cursor:
+        result = cursor.execute(
+            'SELECT value FROM key_value_cache WHERE name=?', (cache_key,),
+        ).fetchone()
+        assert result[0] == str(ts_500)  # updated to deleted event's timestamp

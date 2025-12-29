@@ -30,9 +30,6 @@
       }
     },
     "edit_tooltip": "Επεξεργασία λογαριασμού",
-    "headers": {
-      "usd_value": "{symbol} value"
-    },
     "refresh_tooltip": "Refresh {blockchain} balances ignoring any cached entries"
   },
   "account_form": {
@@ -44,7 +41,7 @@
     "labels": {
       "addresses": "Addresses",
       "addresses_entries": "no entries | {count} unique entry | {count} unique entries",
-      "addresses_hint": "Insert multiple comma separated addresses",
+      "addresses_hint": "Εισαγάγετε πολλές διευθύνσεις διαχωρισμένες με κόμματα ή νέες γραμμές",
       "blockchain": "Επιλέξτε blockchain | Επιλέξτε blockchains",
       "btc": {
         "derivation_path": "Derivation Path",
@@ -677,8 +674,7 @@
     },
     "form": {
       "labels": {
-        "address": "Address",
-        "for_all_chain": "Save this name for all chains"
+        "address": "Address"
       },
       "no_suggestions_available": "No Suggestions Available",
       "validation": {
@@ -775,8 +771,7 @@
   "asset_locations": {
     "header": {
       "percentage": "Percentage",
-      "validator": "Validator Index | Public Key",
-      "value": "{symbol} value"
+      "validator": "Validator Index | Public Key"
     },
     "title": "Asset Locations"
   },
@@ -795,7 +790,6 @@
       "delete_error": "Δεν κατέστη δυνατή η διαγραφή της αντιστοίχισης: {message}",
       "edit_error": "Δεν ήταν δυνατή η επεξεργασία της αντιστοίχισης: {message}",
       "edit_title": "Επεξεργασία της χαρτογράφησης",
-      "exchange": "Exchange",
       "filter_by_exchange": "Φιλτράρισμα με βάση την ανταλλαγή",
       "filter_by_location_symbol": "Φίλτρο ανά σύμβολο περιουσιακού στοιχείου",
       "form": {
@@ -868,10 +862,6 @@
       "title": "Reset assets database"
     },
     "skip_notification": "Don't notify me until the next update",
-    "success": {
-      "description": "The asset database has been successfully updated to version {remoteVersion}. You will now need to re-login to apply the changes",
-      "title": "Asset database update"
-    },
     "title": "A supported asset update is available",
     "total_changes": "This update contains {changes} asset changes.",
     "up_to_version": "Only update up to version"
@@ -1004,8 +994,8 @@
     "advanced": "Advanced",
     "config_file_disabled": "This parameter is already set in the rotki_config.json",
     "confirm": {
-      "message": "Are you sure you want to rest the backend settings to default?",
-      "title": "Rest backend settings"
+      "message": "Are you sure you want to reset the backend settings to default?",
+      "title": "Reset backend settings"
     },
     "data_directory": {
       "select": "Select where rotki will store the data"
@@ -1147,6 +1137,7 @@
     "details": "Details",
     "entry_type": "Τύπος εισόδου",
     "events": "Events",
+    "exchange": "Exchange",
     "here": "here",
     "ignored_in_accounting": "Ignored in Accounting",
     "important_notice": "Important notice:",
@@ -1531,9 +1522,6 @@
     "subtitle": "These are the supported date formatting options",
     "title": "Date Format"
   },
-  "date_time_picker": {
-    "limit_now": "Cannot use future date"
-  },
   "ens_names": {
     "task": {
       "title": "Querying ENS names"
@@ -1613,7 +1601,6 @@
       "activate_tooltip": "Edit the api keys for the exchange.",
       "deactivate_tooltip": "Cancel the edit of the api keys for the exchange."
     },
-    "exchange": "Exchange",
     "name": {
       "non_empty": "The name field cannot be empty."
     }
@@ -1813,7 +1800,6 @@
     },
     "labels": {
       "btc_derivation_gap": "BTC derivation gap limit",
-      "chains_to_skip_detection": "Αλυσίδες EVM για τις οποίες πρέπει να παραλειφθεί η αυτόματη ανίχνευση",
       "date_display_format": "Date display format",
       "date_input_format": "Date input format",
       "treat_eth2_as_eth": "Should treat ETH2 (Staked ETH) as ETH"
@@ -1874,7 +1860,7 @@
       },
       "decimal_separator": {
         "error": "Error setting decimal separator",
-        "success": "Decimal separator set to {decimalSeparator}"
+        "success": "Decimal separator set to \"{decimalSeparator}\""
       },
       "floating_precision": {
         "error": "Error setting floating precision to {precision}",
@@ -1883,7 +1869,7 @@
       },
       "thousand_separator": {
         "error": "Error setting thousand separator",
-        "success": "Thousand separator set to {thousandSeparator}"
+        "success": "Thousand separator set to \"{thousandSeparator}\""
       },
       "treat_eth2_as_eth": {
         "error": "Error change setting for treat ETH2 (Staked ETH) as ETH"
@@ -2228,7 +2214,6 @@
       "create_a_custom_asset": "Create a custom asset",
       "input_manual_price": "Add and use manual price",
       "label": "Label",
-      "price_asset": "Asset Price",
       "tags": "Tags"
     },
     "type": {
@@ -2316,7 +2301,6 @@
       "non_fungible_balances": "Υπόλοιπα NFT"
     },
     "dashboard": "Ταμπλό",
-    "defi": "DeFi",
     "defi_sub": {
       "airdrops": "Airdrops"
     },
@@ -2799,9 +2783,7 @@
     "loading_hint": "Your report generation might take a while depending on the amount of trades and actions you performed during the selected period.",
     "loading_message": "Please wait while your report is generated...",
     "report_period": "Report starting from {start} to {end}",
-    "settings_tooltip": "Open the accounting settings",
-    "upgrade": "{processed} total events have been processed starting from {start}.",
-    "upgrade2": "The limit of the free version has been reached. To get the full report please upgrade to {link}"
+    "settings_tooltip": "Open the accounting settings"
   },
   "profit_loss_reports": {
     "columns": {
@@ -3169,7 +3151,7 @@
       "location": "filter by event location",
       "protocol": "filter by the protocol of the events",
       "start_date": "filter by the start date of the transaction period",
-      "tx_hash": "filter by tx hash(es)",
+      "tx_hash": "filter by tx hash(es) or signature(s)",
       "validator_index": "filter by validator index(es)"
     },
     "ignore": "Ignore Tx in Accounting",
@@ -3245,11 +3227,6 @@
     "messages": "A new version of rotki is available. See {releaseNotes}.",
     "release_notes": "release notes",
     "restart": "rotki will restart in a moment to apply the update."
-  },
-  "upgrade_row": {
-    "events": "Processed {limit} out of {total} {label} from {from} until {to}. To view more please upgrade to {link}",
-    "rotki_premium": "rotki Premium",
-    "upgrade": "Displaying {limit} out of {total} {label}. To view more please upgrade to {link}"
   },
   "user_dropdown": {
     "change_privacy_mode": {

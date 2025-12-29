@@ -200,11 +200,38 @@ describe('composables::history/notes', () => {
     expect(formatted).toMatchObject(expected);
   });
 
-  describe('with TX Hash', () => {
+  it('with Solana addresses', () => {
+    const address1 = '7BgBvyjrZX1YKz4oh9mjb8ZScatkkwb8DzFx7LoiVkM3';
+    const address2 = 'DYw8jCTfwHNRJhhmFcbXvVDTqWMEVFBX6ZKUmG5CNSKK';
+    const notes = `Address ${address1},${address2}`;
+
+    const formatted = get(formatNotes({ notes }));
+
+    const expected: NoteFormat[] = [
+      {
+        type: NoteType.WORD,
+        word: 'Address',
+      },
+      {
+        type: NoteType.ADDRESS,
+        address: address1,
+        showHashLink: true,
+      },
+      {
+        type: NoteType.ADDRESS,
+        address: address2,
+        showHashLink: true,
+      },
+    ];
+
+    expect(formatted).toMatchObject(expected);
+  });
+
+  describe('with Tx Ref', () => {
     const txHash = '0xdb11f732bc83d29b52b20506cdd795196d3d0c5c42f9ad15b31bb4257c4990a5';
     const notes = `TxHash ${txHash}`;
 
-    it('noTxHash = false', () => {
+    it('noTxRef = false', () => {
       const formatted = get(formatNotes({ notes }));
 
       const expected: NoteFormat[] = [
@@ -250,8 +277,8 @@ describe('composables::history/notes', () => {
       expect(formatted).toMatchObject(expected);
     });
 
-    it('noTxHash = true', () => {
-      const formatted = get(formatNotes({ notes, noTxHash: true }));
+    it('noTxRef = true', () => {
+      const formatted = get(formatNotes({ notes, noTxRef: true }));
 
       const expected: NoteFormat[] = [
         {
@@ -495,6 +522,83 @@ describe('composables::history/notes', () => {
       {
         type: NoteType.WORD,
         word: 'EUR) to merchant.',
+      },
+    ];
+
+    expect(formatted).toMatchObject(expected);
+  });
+
+  it('should handle country flag for gnosis pay event notes', () => {
+    const notes = 'Pay 8.5 EUR to Lidl in Berlin :country:DE:';
+
+    const formatted = get(formatNotes({ notes, counterparty: 'gnosis_pay' }));
+
+    const expected: NoteFormat[] = [
+      {
+        type: NoteType.WORD,
+        word: 'Pay',
+      },
+      {
+        type: NoteType.AMOUNT,
+        amount: bigNumberify(8.5),
+      },
+      {
+        type: NoteType.WORD,
+        word: 'EUR to Lidl in Berlin',
+      },
+      {
+        type: NoteType.FLAG,
+        countryCode: 'de',
+      },
+    ];
+
+    expect(formatted).toMatchObject(expected);
+  });
+
+  it('should handle merchant code for gnosis pay event notes', () => {
+    const notes = 'Pay 8.5 EUR to :merchant_code:5411: Lidl in Berlin :country:DE:';
+
+    const formatted = get(formatNotes({ notes, counterparty: 'gnosis_pay' }));
+
+    const expected: NoteFormat[] = [
+      {
+        type: NoteType.WORD,
+        word: 'Pay',
+      },
+      {
+        type: NoteType.AMOUNT,
+        amount: bigNumberify(8.5),
+      },
+      {
+        type: NoteType.WORD,
+        word: 'EUR to',
+      },
+      {
+        type: NoteType.MERCHANT_CODE,
+        merchantCode: '5411',
+      },
+      {
+        type: NoteType.WORD,
+        word: 'Lidl in Berlin',
+      },
+      {
+        type: NoteType.FLAG,
+        countryCode: 'de',
+      },
+    ];
+
+    expect(formatted).toMatchObject(expected);
+  });
+
+  it('should not handle country flag or merchant code for non-gnosis_pay counterparty', () => {
+    const notes = 'Pay 8.5 EUR to :merchant_code:5411: Lidl in Berlin :country:DE:';
+
+    const formatted = get(formatNotes({ notes, counterparty: 'other' }));
+
+    const expected: NoteFormat[] = [
+      {
+        type: NoteType.WORD,
+        word: 'Pay 8.5 EUR to :merchant_code:5411: Lidl in Berlin :country:DE:',
       },
     ];
 

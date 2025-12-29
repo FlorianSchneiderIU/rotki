@@ -6,6 +6,7 @@ import { useCurrencies } from '@/types/currencies';
 import { Exchange, KrakenAccountType } from '@/types/exchanges';
 import { ModuleEnum } from '@/types/modules';
 import { AddressNamePriorityEnum } from '@/types/settings/address-name-priorities';
+import { EvmIndexerEnum } from '@/types/settings/evm-indexer';
 import { parseFrontendSettings } from '@/types/settings/frontend-settings';
 import { PriceOracleEnum } from '@/types/settings/price-oracle';
 
@@ -31,13 +32,17 @@ const GeneralSettings = z.object({
   ),
   beaconRpcEndpoint: z.string(),
   btcDerivationGapLimit: z.number(),
+  btcMempoolApi: z.string(),
   connectTimeout: z.number().min(1),
   csvExportDelimiter: z.string().max(1),
   currentPriceOracles: z.array(PriceOracleEnum),
   dateDisplayFormat: z.string(),
+  defaultEvmIndexerOrder: z.array(EvmIndexerEnum),
   displayDateInLocaltime: z.boolean(),
   dotRpcEndpoint: z.string(),
+  eventsProcessingFrequency: z.number().min(1),
   evmchainsToSkipDetection: z.array(z.string()),
+  evmIndexersOrder: z.record(z.string(), z.array(EvmIndexerEnum)),
   historicalPriceOracles: z.array(PriceOracleEnum),
   inferZeroTimedBalances: z.boolean(),
   ksmRpcEndpoint: z.string(),
@@ -65,7 +70,7 @@ export enum CostBasisMethod {
   ACB = 'acb',
 }
 
-export const CostBasisMethodEnum = z.enum(CostBasisMethod);
+const CostBasisMethodEnum = z.enum(CostBasisMethod);
 
 export const BaseAccountingSettings = z.object({
   calculatePastCostBasis: z.boolean(),
@@ -112,7 +117,7 @@ const BaseData = z.object({
 
 type BaseData = z.infer<typeof BaseData>;
 
-export const UserSettings = z.object({
+const UserSettings = z.object({
   ...BaseData.shape,
   ...Settings.shape,
 });
@@ -144,13 +149,17 @@ function getGeneralSettings(settings: UserSettings): GeneralSettings {
     balanceSaveFrequency: settings.balanceSaveFrequency,
     beaconRpcEndpoint: settings.beaconRpcEndpoint,
     btcDerivationGapLimit: settings.btcDerivationGapLimit,
+    btcMempoolApi: settings.btcMempoolApi,
     connectTimeout: settings.connectTimeout,
     csvExportDelimiter: settings.csvExportDelimiter,
     currentPriceOracles: settings.currentPriceOracles,
     dateDisplayFormat: settings.dateDisplayFormat,
+    defaultEvmIndexerOrder: settings.defaultEvmIndexerOrder,
     displayDateInLocaltime: settings.displayDateInLocaltime,
     dotRpcEndpoint: settings.dotRpcEndpoint,
+    eventsProcessingFrequency: settings.eventsProcessingFrequency,
     evmchainsToSkipDetection: settings.evmchainsToSkipDetection,
+    evmIndexersOrder: settings.evmIndexersOrder,
     historicalPriceOracles: settings.historicalPriceOracles,
     inferZeroTimedBalances: settings.inferZeroTimedBalances,
     ksmRpcEndpoint: settings.ksmRpcEndpoint,
@@ -205,13 +214,6 @@ const ApiKey = z.object({
   apiKey: z.string(),
 });
 
-const Auth = z.object({
-  password: z.string(),
-  username: z.string(),
-});
-
-export type Auth = z.infer<typeof Auth>;
-
 export const ExternalServiceKeys = z.object({
   alchemy: ApiKey.optional(),
   beaconchain: ApiKey.optional(),
@@ -222,8 +224,9 @@ export const ExternalServiceKeys = z.object({
   defillama: ApiKey.optional(),
   etherscan: ApiKey.optional(),
   gnosis_pay: ApiKey.optional(),
+  helius: ApiKey.optional(),
   loopring: ApiKey.optional(),
-  monerium: Auth.optional(),
+  monerium: ApiKey.optional(),
   opensea: ApiKey.optional(),
   thegraph: ApiKey.optional(),
 });
@@ -232,18 +235,10 @@ export type ExternalServiceKeys = z.infer<typeof ExternalServiceKeys>;
 
 export type ExternalServiceName = ToSnakeCase<keyof ExternalServiceKeys>;
 
-export interface ExternalServicePayloadWithApiKey {
+export interface ExternalServiceKey {
   readonly name: string;
   readonly apiKey: string;
 }
-
-export interface ExternalServicePayloadWithAuth {
-  readonly name: string;
-  readonly username: string;
-  readonly password: string;
-}
-
-export type ExternalServiceKey = ExternalServicePayloadWithApiKey | ExternalServicePayloadWithAuth;
 
 export const ExchangeRates = z.record(z.string(), NumericString);
 

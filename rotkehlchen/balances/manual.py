@@ -60,20 +60,21 @@ def get_manually_tracked_balances(
     balances_with_value = []
     for entry in balances:
         try:
-            price = Inquirer.find_usd_price(entry.asset) if not entry.asset_is_missing else ZERO_PRICE  # noqa: E501
+            price = Inquirer.find_main_currency_prices(
+                [entry.asset],
+            ).get(entry.asset, ZERO_PRICE) if not entry.asset_is_missing else ZERO_PRICE
         except RemoteError as e:
             db.msg_aggregator.add_warning(
-                f'Could not find price for {entry.asset.identifier} during '
-                f'manually tracked balance querying due to {e!s}',
+                f'Could not find price for {entry.asset.identifier} to '
+                f'during manually tracked balance querying due to {e!s}',
             )
             price = ZERO_PRICE
 
-        value = Balance(amount=entry.amount, usd_value=price * entry.amount)
         balances_with_value.append(ManuallyTrackedBalanceWithValue(
             identifier=entry.identifier,
             asset=entry.asset,
             label=entry.label,
-            value=value,
+            value=Balance(amount=entry.amount, value=price * entry.amount),
             location=entry.location,
             tags=entry.tags,
             balance_type=entry.balance_type,

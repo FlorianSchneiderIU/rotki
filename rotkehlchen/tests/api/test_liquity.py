@@ -34,6 +34,20 @@ JUSTIN = string_to_evm_address('0x3DdfA8eC3052539b6C9549F12cEA2C295cfF5296')
 LIQUITY_POOL_DEPOSITOR = string_to_evm_address('0xFBcAFB005695afa660836BaC42567cf6917911ac')
 
 
+def make_liquity_proxy_patch(
+        user_address: ChecksumEvmAddress,
+        proxy_address: ChecksumEvmAddress,
+) -> _patch:
+    """Helper function to patch the liquity proxy detection after https://github.com/rotki/rotki/pull/11038
+    to avoid needing to re-record VCRs on tests where the tested addresses no longer have the
+    balances etc that are being tested.
+    """
+    return patch(
+        target='rotkehlchen.chain.evm.proxies_inquirer.EvmProxiesInquirer.get_or_query_liquity_proxy',
+        return_value={user_address: {proxy_address}},
+    )
+
+
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('ethereum_accounts', [[LQTY_ADDR]])
 @pytest.mark.parametrize('ethereum_modules', [['liquity']])
@@ -62,12 +76,12 @@ def test_trove_position(rotkehlchen_api_server: APIServer, inquirer: Inquirer) -
         '0x063c26fF1592688B73d8e2A18BA4C23654e2792E': {
             'collateral': {
                 'amount': '0',
-                'usd_value': '0.0',
+                'value': '0.0',
                 'asset': 'ETH',
             },
             'debt': {
                 'amount': '0',
-                'usd_value': '0.0',
+                'value': '0.0',
                 'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
             },
             'collateralization_ratio': None,
@@ -86,10 +100,15 @@ def test_trove_position(rotkehlchen_api_server: APIServer, inquirer: Inquirer) -
 def test_trove_staking(rotkehlchen_api_server: APIServer, inquirer: Inquirer, ethereum_accounts: list[ChecksumEvmAddress]) -> None:  # pylint: disable=unused-argument  # noqa: E501
     """Test that we can get the status of the staked lqty"""
     async_query = random.choice([False, True])
-    response = requests.get(api_url_for(
-        rotkehlchen_api_server,
-        'liquitystakingresource',
-    ), json={'async_query': async_query})
+    with make_liquity_proxy_patch(
+        user_address=ethereum_accounts[0],
+        proxy_address=string_to_evm_address('0xD29d5Db21CD29BC5aA35FB071a0d5E3526b513BC'),
+    ):
+        response = requests.get(api_url_for(
+            rotkehlchen_api_server,
+            'liquitystakingresource',
+        ), json={'async_query': async_query})
+
     result = assert_proper_response_with_result(
         response=response,
         rotkehlchen_api_server=rotkehlchen_api_server,
@@ -103,31 +122,31 @@ def test_trove_staking(rotkehlchen_api_server: APIServer, inquirer: Inquirer, et
             'staked': {
                 'asset': A_LQTY.identifier,
                 'amount': '613.102214311218459876',
-                'usd_value': '919.6533214668276898140',
+                'value': '919.6533214668276898140',
             },
             'lusd_rewards': {
                 'asset': A_LUSD.identifier,
                 'amount': '0.031242621411895105',
-                'usd_value': '0.0468639321178426575',
+                'value': '0.0468639321178426575',
             },
             'eth_rewards': {
                 'asset': A_ETH.identifier,
                 'amount': '0.000036437529327527',
-                'usd_value': '0.0000546562939912905',
+                'value': '0.0000546562939912905',
             },
         },
         'proxies': {
             '0xD29d5Db21CD29BC5aA35FB071a0d5E3526b513BC': {
-                'eth_rewards': {'amount': '0', 'asset': 'ETH', 'usd_value': '0.0'},
+                'eth_rewards': {'amount': '0', 'asset': 'ETH', 'value': '0.0'},
                 'lusd_rewards': {
                     'amount': '0',
                     'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
-                    'usd_value': '0.0',
+                    'value': '0.0',
                 },
                 'staked': {
                     'amount': '0',
                     'asset': 'eip155:1/erc20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D',
-                    'usd_value': '0.0',
+                    'value': '0.0',
                 },
             },
         },
@@ -195,12 +214,12 @@ def test_account_with_proxy(rotkehlchen_api_server: APIServer, inquirer: Inquire
         '0x063c26fF1592688B73d8e2A18BA4C23654e2792E': {
             'collateral': {
                 'amount': '0',
-                'usd_value': '0.0',
+                'value': '0.0',
                 'asset': 'ETH',
             },
             'debt': {
                 'amount': '0',
-                'usd_value': '0.0',
+                'value': '0.0',
                 'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
             },
             'collateralization_ratio': None,
@@ -211,12 +230,12 @@ def test_account_with_proxy(rotkehlchen_api_server: APIServer, inquirer: Inquire
         '0x9476832d4687c14b2c1a04E2ee4693162a7340B6': {
             'collateral': {
                 'amount': '0',
-                'usd_value': '0.0',
+                'value': '0.0',
                 'asset': 'ETH',
             },
             'debt': {
                 'amount': '0',
-                'usd_value': '0.0',
+                'value': '0.0',
                 'asset': 'eip155:1/erc20:0x5f98805A4E8be255a32880FDeC7F6728C6568bA0',
             },
             'collateralization_ratio': None,
@@ -238,16 +257,20 @@ def test_account_with_proxy(rotkehlchen_api_server: APIServer, inquirer: Inquire
 def test_staking_v2_with_liquity_proxy(rotkehlchen_api_server: APIServer, ethereum_accounts: list[ChecksumEvmAddress], inquirer: Inquirer) -> None:  # pylint: disable=unused-argument  # noqa: E501
     """Test that we get staking balance, staked using the new liquity proxy in v2 staking"""
     async_query = random.choice([False, True])
-    response = requests.get(api_url_for(
-        rotkehlchen_api_server,
-        'liquitystakingresource',
-    ), json={'async_query': async_query})
+    with make_liquity_proxy_patch(
+        user_address=(user := ethereum_accounts[0]),
+        proxy_address=(proxy := string_to_evm_address('0x1CA64c0DC9194c6635e1c14C14B795be04833AEC')),  # noqa: E501
+    ):
+        response = requests.get(api_url_for(
+            rotkehlchen_api_server,
+            'liquitystakingresource',
+        ), json={'async_query': async_query})
+
     result = assert_proper_response_with_result(
         response=response,
         rotkehlchen_api_server=rotkehlchen_api_server,
         async_query=async_query,
     )
-    user, proxy = ethereum_accounts[0], '0x1CA64c0DC9194c6635e1c14C14B795be04833AEC'
     assert result[user]['balances']['staked']['amount'] == '0'
     assert result[user]['balances']['eth_rewards']['amount'] == '0'
     assert result[user]['balances']['lusd_rewards']['amount'] == '0'
@@ -297,15 +320,15 @@ def test_stability_pool(rotkehlchen_api_server: APIServer) -> None:
     expected_amount = FVal('43.180853032438783295')
     assert result[JUSTIN]['balances']['gains']['asset'] == A_ETH
     assert FVal(result[JUSTIN]['balances']['gains']['amount']) == expected_amount
-    assert FVal(result[JUSTIN]['balances']['gains']['usd_value']) == expected_amount * FVal(1.5)
+    assert FVal(result[JUSTIN]['balances']['gains']['value']) == expected_amount * FVal(1.5)
     expected_amount = FVal('114160.573902982554552744')
     assert result[JUSTIN]['balances']['rewards']['asset'] == A_LQTY
     assert FVal(result[JUSTIN]['balances']['rewards']['amount']) == expected_amount
-    assert FVal(result[JUSTIN]['balances']['rewards']['usd_value']) == expected_amount * FVal(1.5)
+    assert FVal(result[JUSTIN]['balances']['rewards']['value']) == expected_amount * FVal(1.5)
     expected_amount = FVal('10211401.723115634393264567')
     assert result[JUSTIN]['balances']['deposited']['asset'] == A_LUSD
     assert FVal(result[JUSTIN]['balances']['deposited']['amount']) == expected_amount
-    assert FVal(result[JUSTIN]['balances']['deposited']['usd_value']) == expected_amount * FVal(1.5)  # noqa: E501
+    assert FVal(result[JUSTIN]['balances']['deposited']['value']) == expected_amount * FVal(1.5)
 
 
 @pytest.mark.parametrize('new_db_unlock_actions', [None])
@@ -330,7 +353,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
     reward_lusd_event = make_evm_tx_hash()
     evm_events = [
         EvmEvent(  # deposit 1 for address 0
-            tx_hash=make_evm_tx_hash(),
+            tx_ref=make_evm_tx_hash(),
             sequence_index=1,
             timestamp=default_ts,
             location=Location.ETHEREUM,
@@ -341,7 +364,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[0],
         ), EvmEvent(  # deposit 2 for address 0
-            tx_hash=make_evm_tx_hash(),
+            tx_ref=make_evm_tx_hash(),
             sequence_index=1,
             timestamp=default_ts,
             location=Location.ETHEREUM,
@@ -352,7 +375,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[0],
         ), EvmEvent(  # deposit 1 for address 1
-            tx_hash=make_evm_tx_hash(),
+            tx_ref=make_evm_tx_hash(),
             sequence_index=1,
             timestamp=default_ts,
             location=Location.ETHEREUM,
@@ -363,7 +386,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[1],
         ), EvmEvent(  # address 0 stability pool gains
-            tx_hash=make_evm_tx_hash(),
+            tx_ref=make_evm_tx_hash(),
             sequence_index=1,
             timestamp=default_ts,
             location=Location.ETHEREUM,
@@ -374,7 +397,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[0],
         ), EvmEvent(  # address 1 stability pool gains
-            tx_hash=make_evm_tx_hash(),
+            tx_ref=make_evm_tx_hash(),
             sequence_index=1,
             timestamp=default_ts,
             location=Location.ETHEREUM,
@@ -385,7 +408,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[1],
         ), EvmEvent(  # stake lqty and get reward
-            tx_hash=reward_lusd_event,
+            tx_ref=reward_lusd_event,
             sequence_index=1,
             timestamp=default_ts,
             location=Location.ETHEREUM,
@@ -396,7 +419,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[1],
         ), EvmEvent(
-            tx_hash=reward_lusd_event,
+            tx_ref=reward_lusd_event,
             sequence_index=2,
             timestamp=default_ts,
             location=Location.ETHEREUM,
@@ -407,7 +430,7 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
             counterparty=CPT_LIQUITY,
             location_label=ethereum_accounts[1],
         ), EvmEvent(  # lqty reward for address 0
-            tx_hash=make_evm_tx_hash(),
+            tx_ref=make_evm_tx_hash(),
             sequence_index=2,
             timestamp=default_ts,
             location=Location.ETHEREUM,
@@ -455,22 +478,25 @@ def test_staking_stats(rotkehlchen_api_server: APIServer, ethereum_accounts: lis
 @pytest.mark.parametrize('should_mock_current_price_queries', [True])
 def test_proxy_info_is_shown(
         rotkehlchen_api_server: APIServer,
-        ethereum_accounts: list[str],
-    ) -> None:
+        ethereum_accounts: list[ChecksumEvmAddress],
+) -> None:
     """Check that information about proxies is added to the responses for liquity endpoints"""
-    user_address = ethereum_accounts[0]
-    response = requests.get(api_url_for(
-        rotkehlchen_api_server,
-        'liquitystabilitypoolresource',
-    ), json={'async_query': False})
+    with make_liquity_proxy_patch(
+        user_address=(user_address := ethereum_accounts[0]),
+        proxy_address=(proxy_address := string_to_evm_address('0x3Dd5BbB839f8AE9B64c73780e89Fdd1181Bf5205')),  # noqa: E501
+    ):
+        response = requests.get(api_url_for(
+            rotkehlchen_api_server,
+            'liquitystabilitypoolresource',
+        ), json={'async_query': False})
 
-    result = assert_proper_sync_response_with_result(response)
-    assert 'gains' in result[user_address]['proxies']['0x3Dd5BbB839f8AE9B64c73780e89Fdd1181Bf5205']
+        result = assert_proper_sync_response_with_result(response)
+        assert 'gains' in result[user_address]['proxies'][proxy_address]
 
-    # check the other endpoint.
-    response = requests.get(api_url_for(
-        rotkehlchen_api_server,
-        'liquitystakingresource',
-    ), json={'async_query': False})
-    result = assert_proper_sync_response_with_result(response)
-    assert 'staked' in result[user_address]['proxies']['0x3Dd5BbB839f8AE9B64c73780e89Fdd1181Bf5205']  # noqa: E501
+        # check the other endpoint.
+        response = requests.get(api_url_for(
+            rotkehlchen_api_server,
+            'liquitystakingresource',
+        ), json={'async_query': False})
+        result = assert_proper_sync_response_with_result(response)
+        assert 'staked' in result[user_address]['proxies'][proxy_address]

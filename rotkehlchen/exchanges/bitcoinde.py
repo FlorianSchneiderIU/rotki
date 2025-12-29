@@ -19,7 +19,7 @@ from rotkehlchen.exchanges.data_structures import Location, MarginPosition
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.exchanges.utils import SignatureGeneratorMixin
 from rotkehlchen.history.events.structures.swap import SwapEvent, create_swap_events
-from rotkehlchen.history.events.utils import create_event_identifier_from_unique_id
+from rotkehlchen.history.events.utils import create_group_identifier_from_unique_id
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -195,11 +195,11 @@ class Bitcoinde(ExchangeInterface, SignatureGeneratorMixin):
                 )
                 continue
             try:
-                usd_price = Inquirer.find_usd_price(asset=asset)
+                price = Inquirer.find_main_currency_price(asset)
             except RemoteError as e:
                 self.msg_aggregator.add_error(
                     f'Error processing Bitcoin.de balance entry due to inability to '
-                    f'query USD price: {e!s}. Skipping balance entry',
+                    f'query price: {e!s}. Skipping balance entry',
                 )
                 continue
 
@@ -214,7 +214,7 @@ class Bitcoinde(ExchangeInterface, SignatureGeneratorMixin):
 
             assets_balance[asset] = Balance(
                 amount=amount,
-                usd_value=amount * usd_price,
+                value=amount * price,
             )
 
         return assets_balance, ''
@@ -248,7 +248,7 @@ class Bitcoinde(ExchangeInterface, SignatureGeneratorMixin):
             receive=AssetAmount(asset=receive_asset, amount=receive_amount),
             fee=AssetAmount(asset=A_EUR, amount=deserialize_fval_or_zero(raw_trade['fee_currency_to_pay'])),  # noqa: E501
             location_label=self.name,
-            event_identifier=create_event_identifier_from_unique_id(
+            group_identifier=create_group_identifier_from_unique_id(
                 location=self.location,
                 unique_id=raw_trade['trade_id'],
             ),
@@ -258,6 +258,7 @@ class Bitcoinde(ExchangeInterface, SignatureGeneratorMixin):
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
+            force_refresh: bool = False,
     ) -> tuple[Sequence['HistoryBaseEntry'], Timestamp]:
 
         page = 1

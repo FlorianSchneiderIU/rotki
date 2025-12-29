@@ -25,7 +25,7 @@ from rotkehlchen.tests.utils.api import (
 from rotkehlchen.tests.utils.factories import (
     UNIT_BTC_ADDRESS1,
     UNIT_BTC_ADDRESS2,
-    make_btc_tx_hash,
+    make_btc_tx_id,
 )
 from rotkehlchen.types import BTCAddress, Location, SupportedBlockchain, TimestampMS
 
@@ -95,11 +95,11 @@ def _check_xpub_addition_outcome(outcome: dict[str, Any], xpub: str) -> None:
     for address in EXPECTED_XPUB_ADDRESSES:
         assert address in xpub_data['addresses']
         assert xpub_data['addresses'][address]['amount'] is not None
-        assert xpub_data['addresses'][address]['usd_value'] is not None
+        assert xpub_data['addresses'][address]['value'] is not None
 
     totals = outcome['totals']['assets']
     assert totals['BTC'][DEFAULT_BALANCE_LABEL]['amount'] is not None
-    assert totals['BTC'][DEFAULT_BALANCE_LABEL]['usd_value'] is not None
+    assert totals['BTC'][DEFAULT_BALANCE_LABEL]['value'] is not None
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
@@ -637,7 +637,7 @@ def test_delete_btc_account(
                 dbevents.add_history_event(
                     write_cursor=write_cursor,
                     event=HistoryEvent(
-                        event_identifier=make_btc_tx_hash(),
+                        group_identifier=make_btc_tx_id(),
                         sequence_index=0,
                         timestamp=TimestampMS(1500000000000),
                         location=Location.BITCOIN,
@@ -671,7 +671,7 @@ def test_delete_btc_account(
         )
         assert len(events) == 3  # Events remaining are the customized event from address1 and both events from address2  # noqa: E501
         assert events[0].location_label == btc_accounts[0]
-        assert events[0].identifier in dbevents.get_customized_event_identifiers(
+        assert events[0].identifier in dbevents.get_customized_group_identifiers(
             cursor=cursor,
             location=Location.BITCOIN,
         )
@@ -686,3 +686,39 @@ def test_delete_btc_account(
                 name=DBCacheDynamic.LAST_BTC_TX_BLOCK,
                 address=address,
             ) == expected_value
+
+
+@pytest.mark.vcr
+def test_get_xpub_balances_ignore_cache_behavior(rotkehlchen_api_server: 'APIServer') -> None:
+    """Test that ignore_cache parameter controls whether xpub derivation is called"""
+    assert_proper_sync_response_with_result(requests.put(
+        api_url_for(rotkehlchen_api_server, 'btcxpubresource', blockchain='BTC'),
+        json={
+            'xpub': (xpub := 'xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8'),  # noqa: E501
+            'derivation_path': (derivation_path := 'm/0/0'),
+        },
+    ))
+
+    # Test with ignore_cache=False - should NOT call check_for_new_xpub_addresses
+    with patch('rotkehlchen.chain.bitcoin.xpub.XpubManager.check_for_new_xpub_addresses') as mock_check:  # noqa: E501
+        assert_proper_sync_response_with_result(requests.get(
+            api_url_for(rotkehlchen_api_server, 'btcxpubresource', blockchain='BTC'),
+            json={
+                'xpub': xpub,
+                'derivation_path': derivation_path,
+                'ignore_cache': False,
+            },
+        ))
+        mock_check.assert_not_called()
+
+    # Test with ignore_cache=True - should call check_for_new_xpub_addresses
+    with patch('rotkehlchen.chain.bitcoin.xpub.XpubManager.check_for_new_xpub_addresses') as mock_check:  # noqa: E501
+        assert_proper_sync_response_with_result(requests.get(
+            api_url_for(rotkehlchen_api_server, 'btcxpubresource', blockchain='BTC'),
+            json={
+                'xpub': xpub,
+                'derivation_path': derivation_path,
+                'ignore_cache': True,
+            },
+        ))
+        mock_check.assert_called()

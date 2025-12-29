@@ -1,17 +1,17 @@
 import type { ExchangeBalancePayload } from '@/types/blockchain/accounts';
-import type { EditExchange, Exchange, ExchangeFormData } from '@/types/exchanges';
 import type { ExchangeMeta } from '@/types/task';
 import { assert, toSentenceCase } from '@rotki/common';
 import { startPromise } from '@shared/utils';
 import { useExchangeApi } from '@/composables/api/balances/exchanges';
 import { useStatusUpdater } from '@/composables/status';
-import { useUsdValueThreshold } from '@/composables/usd-value-threshold';
+import { useValueThreshold } from '@/composables/usd-value-threshold';
 import { useBalancesStore } from '@/modules/balances/use-balances-store';
 import { useMessageStore } from '@/store/message';
 import { useNotificationsStore } from '@/store/notifications';
 import { useSessionSettingsStore } from '@/store/settings/session';
 import { useTaskStore } from '@/store/tasks';
 import { AssetBalances } from '@/types/balances';
+import { type EditExchange, Exchange, type ExchangeFormData } from '@/types/exchanges';
 import { BalanceSource } from '@/types/settings/frontend-settings';
 import { Section, Status } from '@/types/status';
 import { TaskType } from '@/types/task-type';
@@ -36,7 +36,7 @@ export function useExchanges(): UseExchangesReturn {
   const { connectedExchanges } = storeToRefs(useSessionSettingsStore());
   const { setConnectedExchanges } = useSessionSettingsStore();
   const { queryExchangeBalances } = useExchangeApi();
-  const balanceUsdValueThreshold = useUsdValueThreshold(BalanceSource.EXCHANGES);
+  const valueThreshold = useValueThreshold(BalanceSource.EXCHANGES);
 
   const { callSetupExchange, queryRemoveExchange } = useExchangeApi();
   const { setMessage } = useMessageStore();
@@ -46,7 +46,7 @@ export function useExchanges(): UseExchangesReturn {
     const taskType = TaskType.QUERY_EXCHANGE_BALANCES;
     const meta = metadata<ExchangeMeta>(taskType);
 
-    const threshold = get(balanceUsdValueThreshold);
+    const threshold = get(valueThreshold);
 
     if (isTaskRunning(taskType) && meta?.location === location)
       return;
@@ -113,7 +113,7 @@ export function useExchanges(): UseExchangesReturn {
     setConnectedExchanges([...get(connectedExchanges), exchange]);
   };
 
-  const editExchange = ({ exchange: { krakenAccountType, location, name: oldName }, newName }: EditExchange): void => {
+  const editExchange = ({ exchange: { krakenAccountType, location, name: oldName, okxLocation }, newName }: EditExchange): void => {
     const exchanges = [...get(connectedExchanges)];
     const name = newName ?? oldName;
     const index = exchanges.findIndex(value => value.name === oldName && value.location === location);
@@ -122,6 +122,7 @@ export function useExchanges(): UseExchangesReturn {
       krakenAccountType,
       location,
       name,
+      okxLocation,
     };
     setConnectedExchanges(exchanges);
   };
@@ -155,7 +156,6 @@ export function useExchanges(): UseExchangesReturn {
         // if multiple keys exist for the deleted exchange, re-fetch and update the balances for the location
         if (exchanges.some(exch => exch.location === exchange.location)) {
           await fetchExchangeBalances({
-            ignoreCache: false,
             location: exchange.location,
           });
         }
@@ -176,27 +176,31 @@ export function useExchanges(): UseExchangesReturn {
   };
 
   const setupExchange = async (exchange: ExchangeFormData): Promise<boolean> => {
-    const success = await callSetupExchange(exchange);
-    const { krakenAccountType, location, mode, name, newName } = exchange;
-    const exchangeEntry: Exchange = {
-      krakenAccountType,
-      location,
-      name,
+    const { krakenAccountType, location, mode, newName, okxLocation } = exchange;
+
+    const filteredPayload: ExchangeFormData = {
+      ...exchange,
+      krakenAccountType: location === 'kraken' ? krakenAccountType : undefined,
+      okxLocation: location === 'okx' ? okxLocation : undefined,
     };
 
+    const success = await callSetupExchange(filteredPayload);
+
+    // Only get the essential exchange data to store in memory, excluding the api key and secret
+    const essentialExchangeData = Exchange.parse(filteredPayload);
+
     if (mode !== 'edit') {
-      addExchange(exchangeEntry);
+      addExchange(essentialExchangeData);
     }
     else {
       editExchange({
-        exchange: exchangeEntry,
+        exchange: essentialExchangeData,
         newName,
       });
     }
 
     startPromise(
       fetchExchangeBalances({
-        ignoreCache: false,
         location,
       }),
     );

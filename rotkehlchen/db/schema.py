@@ -114,6 +114,8 @@ INSERT OR IGNORE INTO location(location, seq) VALUES ('u', 53);
 INSERT OR IGNORE INTO location(location, seq) VALUES ('v', 54);
 /* Solana */
 INSERT OR IGNORE INTO location(location, seq) VALUES ('w', 55);
+/* Avalanche */
+INSERT OR IGNORE INTO location(location, seq) VALUES ('x', 56);
 """
 
 # Custom enum table for Balance categories (asset/liability)
@@ -525,7 +527,7 @@ DB_CREATE_HISTORY_EVENTS = """
 CREATE TABLE IF NOT EXISTS history_events (
     identifier INTEGER NOT NULL PRIMARY KEY,
     entry_type INTEGER NOT NULL,
-    event_identifier TEXT NOT NULL,
+    group_identifier TEXT NOT NULL,
     sequence_index INTEGER NOT NULL,
     timestamp INTEGER NOT NULL,
     location CHAR(1) NOT NULL DEFAULT('A') REFERENCES location(location),
@@ -538,18 +540,17 @@ CREATE TABLE IF NOT EXISTS history_events (
     extra_data TEXT,
     ignored INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY(asset) REFERENCES assets(identifier) ON UPDATE CASCADE,
-    UNIQUE(event_identifier, sequence_index)
+    UNIQUE(group_identifier, sequence_index)
 );
 """
 
 
-# Table that extends history_events table and stores data specific to evm events.
-DB_CREATE_EVM_EVENTS_INFO = """
-CREATE TABLE IF NOT EXISTS evm_events_info(
+# Table that extends history_events table and stores chain-agnostic transaction metadata.
+DB_CREATE_CHAIN_EVENTS_INFO = """
+CREATE TABLE IF NOT EXISTS chain_events_info (
     identifier INTEGER PRIMARY KEY,
-    tx_hash BLOB NOT NULL,
+    tx_ref BLOB NOT NULL,
     counterparty TEXT,
-    product TEXT,
     address TEXT,
     FOREIGN KEY(identifier) REFERENCES history_events(identifier) ON UPDATE CASCADE ON DELETE CASCADE
 );
@@ -655,7 +656,18 @@ CREATE TABLE IF NOT EXISTS accounting_rules(
     count_entire_amount_spend INTEGER NOT NULL CHECK (count_entire_amount_spend IN (0, 1)),
     count_cost_basis_pnl INTEGER NOT NULL CHECK (count_cost_basis_pnl IN (0, 1)),
     accounting_treatment TEXT,
-    UNIQUE(type, subtype, counterparty)
+    is_event_specific INTEGER NOT NULL CHECK (is_event_specific IN (0, 1)) DEFAULT 0
+);
+"""
+
+DB_CREATE_ACCOUNTING_RULE_EVENTS = """
+CREATE TABLE IF NOT EXISTS accounting_rule_events(
+    identifier INTEGER NOT NULL PRIMARY KEY,
+    rule_id INTEGER NOT NULL,
+    event_id INTEGER NOT NULL,
+    FOREIGN KEY(event_id) REFERENCES history_events(identifier) ON DELETE CASCADE,
+    FOREIGN KEY(rule_id) REFERENCES accounting_rules(identifier) ON DELETE CASCADE,
+    UNIQUE(rule_id, event_id)
 );
 """
 
@@ -732,8 +744,123 @@ CREATE TABLE IF NOT EXISTS gnosispay_data (
     billing_symbol TEXT,
     billing_amount TEXT,
     reversal_symbol TEXT,
-    reversal_amount TEXT,
-    reversal_tx_hash BLOB UNIQUE
+    reversal_amount TEXT
+);
+"""
+
+DB_CREATE_SOLANA_TRANSACTIONS = """
+CREATE TABLE IF NOT EXISTS solana_transactions (
+    identifier INTEGER PRIMARY KEY NOT NULL,
+    slot INTEGER NOT NULL,
+    fee INTEGER NOT NULL,
+    block_time INTEGER NOT NULL,
+    success INTEGER NOT NULL CHECK(success IN (0, 1)),
+    signature BLOB NOT NULL UNIQUE
+);
+"""
+
+# stores all accounts involved in the transaction
+# account_index maintains original position in transaction
+DB_CREATE_SOLANA_TX_ACCOUNT_KEYS = """
+CREATE TABLE IF NOT EXISTS solana_tx_account_keys (
+    tx_id INTEGER NOT NULL,
+    account_index INTEGER NOT NULL,
+    address BLOB NOT NULL,
+    PRIMARY KEY(tx_id, account_index),
+    FOREIGN KEY(tx_id) REFERENCES solana_transactions(identifier) ON DELETE CASCADE ON UPDATE CASCADE
+);
+"""  # noqa: E501
+
+# stores all instructions (top-level and inner/cross-program invocation)
+# execution_index: flat execution order within transaction
+# parent_execution_index: uses TOP_LEVEL_PARENT constant for top-level instructions
+DB_CREATE_SOLANA_TX_INSTRUCTIONS = """
+CREATE TABLE IF NOT EXISTS solana_tx_instructions (
+    identifier INTEGER NOT NULL PRIMARY KEY,
+    tx_id INTEGER NOT NULL,
+    execution_index INTEGER NOT NULL,
+    parent_execution_index INTEGER NOT NULL,
+    program_id_index INTEGER NOT NULL,
+    data BLOB,
+    FOREIGN KEY(tx_id) REFERENCES solana_transactions(identifier) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(tx_id, program_id_index) REFERENCES solana_tx_account_keys(tx_id, account_index) ON DELETE CASCADE ON UPDATE CASCADE
+);
+"""  # noqa: E501
+
+# maps which accounts each instruction uses and in what order
+# references instructions by instruction identifier
+DB_CREATE_SOLANA_TX_INSTRUCTION_ACCOUNTS = """
+CREATE TABLE IF NOT EXISTS solana_tx_instruction_accounts (
+    identifier INTEGER NOT NULL PRIMARY KEY,
+    instruction_id INTEGER NOT NULL,
+    account_order INTEGER NOT NULL,
+    account_index INTEGER NOT NULL,
+    tx_id INTEGER NOT NULL,
+    FOREIGN KEY(instruction_id) REFERENCES solana_tx_instructions(identifier) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY(tx_id, account_index) REFERENCES solana_tx_account_keys(tx_id, account_index) ON DELETE CASCADE ON UPDATE CASCADE
+);
+"""  # noqa: E501
+
+DB_CREATE_SOLANA_ADDRESS_MAPPINGS = """
+CREATE TABLE IF NOT EXISTS solanatx_address_mappings (
+    tx_id INTEGER NOT NULL,
+    address TEXT NOT NULL,
+    PRIMARY KEY(tx_id, address),
+    FOREIGN KEY(tx_id) REFERENCES solana_transactions(identifier) ON DELETE CASCADE ON UPDATE CASCADE
+);
+"""  # noqa: E501
+
+DB_CREATE_SOLANA_TX_MAPPINGS = """
+CREATE TABLE IF NOT EXISTS solana_tx_mappings (
+    tx_id INTEGER NOT NULL,
+    value INTEGER NOT NULL,
+    FOREIGN KEY(tx_id) references solana_transactions(identifier) ON UPDATE CASCADE ON DELETE CASCADE,
+    PRIMARY KEY (tx_id, value)
+);
+"""  # noqa: E501
+
+# Lido CSM tracking tables. All columns are consumed by DBLidoCsm for enforcing the
+# FK to tracked Ethereum accounts and persisting cached metrics snapshots.
+DB_CREATE_LIDO_CSM_NODE_OPERATORS = """
+CREATE TABLE IF NOT EXISTS lido_csm_node_operators (
+    node_operator_id INTEGER NOT NULL PRIMARY KEY,
+    address TEXT NOT NULL,
+    blockchain TEXT GENERATED ALWAYS AS ('ETH') VIRTUAL,
+    FOREIGN KEY(blockchain, address)
+        REFERENCES blockchain_accounts(blockchain, account)
+        ON DELETE CASCADE
+);
+"""
+
+DB_CREATE_LIDO_CSM_NODE_OPERATOR_METRICS = """
+CREATE TABLE IF NOT EXISTS lido_csm_node_operator_metrics (
+    node_operator_id INTEGER NOT NULL PRIMARY KEY,
+    operator_type_id INTEGER,
+    bond_current TEXT,
+    bond_required TEXT,
+    bond_claimable TEXT,
+    total_deposited_validators INTEGER,
+    rewards_pending TEXT,
+    updated_ts INTEGER,
+    FOREIGN KEY(node_operator_id)
+        REFERENCES lido_csm_node_operators(node_operator_id)
+        ON UPDATE CASCADE ON DELETE CASCADE
+);
+"""
+
+# Stores metrics for history events including balance, pnl, and cost_basis data.
+# Each row represents a metric for a specific bucket after the event is applied.
+# Bucket = (location, location_label, protocol, asset) where:
+# - protocol is NULL for wallet, or protocol name for DeFi positions (e.g., 'aave_v3', 'lido')
+# - metric_key is the type of metric ('balance', 'pnl', 'cost_basis', etc.)
+DB_CREATE_EVENT_METRICS = """
+CREATE TABLE IF NOT EXISTS event_metrics (
+    id INTEGER NOT NULL PRIMARY KEY,
+    event_identifier INTEGER NOT NULL REFERENCES history_events(identifier) ON DELETE CASCADE,
+    protocol TEXT,
+    metric_key TEXT NOT NULL,
+    metric_value TEXT NOT NULL,
+    UNIQUE(event_identifier, protocol, metric_key)
 );
 """
 
@@ -756,7 +883,11 @@ CREATE INDEX IF NOT EXISTS idx_history_events_asset ON history_events(asset);
 CREATE INDEX IF NOT EXISTS idx_history_events_type ON history_events(type);
 CREATE INDEX IF NOT EXISTS idx_history_events_subtype ON history_events(subtype);
 CREATE INDEX IF NOT EXISTS idx_history_events_ignored ON history_events(ignored);
-"""
+CREATE UNIQUE INDEX IF NOT EXISTS unique_generic_accounting_rules ON accounting_rules(type, subtype, counterparty) WHERE is_event_specific = 0;
+CREATE INDEX IF NOT EXISTS idx_event_metrics_event ON event_metrics(event_identifier);
+CREATE INDEX IF NOT EXISTS idx_event_metrics_protocol ON event_metrics(protocol);
+CREATE INDEX IF NOT EXISTS idx_event_metrics_metric_key ON event_metrics(metric_key);
+"""  # noqa: E501
 
 DB_SCRIPT_CREATE_TABLES = f"""
 PRAGMA foreign_keys=off;
@@ -795,7 +926,7 @@ BEGIN TRANSACTION;
 {DB_CREATE_ETH2_VALIDATORS}
 {DB_CREATE_ETH_VALIDATORS_DATA_CACHE}
 {DB_CREATE_HISTORY_EVENTS}
-{DB_CREATE_EVM_EVENTS_INFO}
+{DB_CREATE_CHAIN_EVENTS_INFO}
 {DB_CREATE_ETH_STAKING_EVENTS_INFO}
 {DB_CREATE_HISTORY_EVENTS_MAPPINGS}
 {DB_CREATE_IGNORED_ACTIONS}
@@ -806,6 +937,7 @@ BEGIN TRANSACTION;
 {DB_CREATE_USER_NOTES}
 {DB_CREATE_SKIPPED_EXTERNAL_EVENTS}
 {DB_CREATE_ACCOUNTING_RULE}
+{DB_CREATE_ACCOUNTING_RULE_EVENTS}
 {DB_CREATE_MAPPED_ACCOUNTING_RULES}
 {DB_CREATE_UNRESOLVED_REMOTE_CONFLICTS}
 {DB_CREATE_KEY_VALUE_CACHE}
@@ -813,6 +945,15 @@ BEGIN TRANSACTION;
 {DB_CREATE_CALENDAR_REMINDERS}
 {DB_CREATE_COWSWAP_ORDERS}
 {DB_CREATE_GNOSISPAY_DATA}
+{DB_CREATE_SOLANA_TRANSACTIONS}
+{DB_CREATE_SOLANA_TX_ACCOUNT_KEYS}
+{DB_CREATE_SOLANA_TX_INSTRUCTIONS}
+{DB_CREATE_SOLANA_TX_INSTRUCTION_ACCOUNTS}
+{DB_CREATE_SOLANA_ADDRESS_MAPPINGS}
+{DB_CREATE_SOLANA_TX_MAPPINGS}
+{DB_CREATE_LIDO_CSM_NODE_OPERATORS}
+{DB_CREATE_LIDO_CSM_NODE_OPERATOR_METRICS}
+{DB_CREATE_EVENT_METRICS}
 {DB_CREATE_INDEXES}
 COMMIT;
 PRAGMA foreign_keys=on;

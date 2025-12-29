@@ -1,6 +1,6 @@
 import { backoff } from '@shared/utils';
 import { useSessionApi } from '@/composables/api/session';
-import { camelCaseTransformer } from '@/services/axios-transformers';
+import { camelCaseTransformer } from '@/modules/api/transformers';
 import { useNotificationsStore } from '@/store/notifications';
 import { uniqueStrings } from '@/utils/data';
 import { logger } from '@/utils/logging';
@@ -31,7 +31,7 @@ export function useMessageHandling(): UseMessageHandling {
     const parseResult = WebsocketMessage.safeParse(camelCaseTransformer(JSON.parse(data)));
 
     if (!parseResult.success) {
-      logger.warn(`Invalid websocket message format:`, parseResult.error);
+      logger.warn(`Invalid websocket message format:`, parseResult.error, data);
       return;
     }
 

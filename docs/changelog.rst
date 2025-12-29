@@ -2,13 +2,155 @@
 Changelog
 =========
 
+* :feature:`11231` Users can now click a location in the blockchain balance summary on the dashboard to filter by that chain.
+* :feature:`10467` Users are now able to manually match asset movements with corresponding on-chain transactions.
+* :feature:`11198` Users are now able to see the type of merchant icon for Gnosis Pay transactions.
+* :feature:`11021` Users are now able to edit the name of a tag.
+* :feature:`10890` rotki will now properly handle Safe upgrades.
+* :feature:`4609` rotki will now properly handle Superfluid stream transactions and balances.
+* :feature:`10980` Users will now be able to report events if they see any issue with them through the history events page.
+* :feature:`6642` Users will now be able to provide feedback directly though the applications help & support sidebar.
+* :feature:`10854` rotki will now be faster to load assets.
+* :feature:`10869` MintClub claims on Base will now be decoded automatically.
+* :bug:`11099` rotki will now allow to create events manually with location Avalanche.
+* :bug:`11002` Liquity V2 proxy detection will now work correctly and proxy deployment transactions will be decoded properly.
+* :feature:`-` StakeDAO V2 Curve strategy transactions will be correctly decoded with vault balances properly detected.
+* :feature:`-` Morpho support is now extended to all chains rotki supports in which it is deployed including Arbitrum One, Polygon PoS, Optimism, etc.
+* :feature:`-` Jito tip payment events on Solana will now be properly decoded.
+* :feature:`-` rotki will now be able to decode Sushiswap RedSnwap router transactions.
+* :feature:`10599` Users will now be able to bulk ignore assets, or mark assets as spam, from the account page.
+* :bug:`11208` Users will now be able to use contract addresses to filter assets in asset selection fields.
 
+* :release:`1.41.3 <2025-12-19>`
+* :bug:`11166` Date time picker quick options will now work cumulatively, allowing users to go further back in time with multiple clicks.
+* :bug:`11168` The history event forms will now automatically scroll to the first error and expand any collapsed sections containing errors.
+* :feature:`-` The swap, asset movement and online events forms will now automatically generate a unique identifier if one is not provided.
+* :feature:`-` Input fields will now display a required indicator when validation requires a value.
+* :bug:`-` The calendar year navigation will no longer be limited to a 12-year range.
+* :bug:`-` The calendar will now preserve the selected date when switching months or years.
+* :bug:`-` rotki will now properly fall back to other indexers when Blockscout has incomplete data.
+* :bug:`-` Sushiswap LP balances will now have correct balances in the LP tokens view.
+* :feature:`-` Users will now be able to customize the indexer order when redecoding EVM transactions.
+* :bug:`-` Swap event creation form now correctly handles user notes for multiple fee assets.
+* :bug:`11146` Accumulating validators with multiple deposits will now show correct rewards and APR when exiting.
+* :bug:`-` Clicking the "more years" menu in the PnL report range selector will no longer cause an error during login.
+* :bug:`-` Gnosis Pay users will now be able to authenticate using Zeal Wallet.
+* :bug:`-` The WalletConnect modal should now be visible under all circumstances.
+* :bug:`11147` rotki will now properly detect staked GRT balances on Arbitrum after The Graph's Horizon upgrade.
+* :bug:`11149` rotki will now properly pull all new Coinbase events.
+* :bug:`-` Asset selection fields will now properly display ignored assets if they are already selected as the value.
+* :bug:`11113` An invalid Coinbase API key in the DB will no longer prevent logging into the app.
+* :bug:`-` Gas events will be editable again.
+* :bug:`11108` rotki will now correctly count the number of events allowed for the tier during the PnL report
+* :feature:`10832` rotki will now query and store Binance Convert trades (not supported for Binance US).
+* :feature:`11086` rotki will now properly handle Kraken margin profit, loss, fee, and any other so far unsupported event.
+* :bug:`11084` Indexer related backend query task will no longer randomly die.
+* :bug:`11094` rotki should now process correctly all the RPCs responses from Binance SC nodes.
+* :bug:`11148` Locked Curve CRV balances in the vote escrow contract will now show up correctly.
+* :bug:`-` Google calendar sync should no longer overwrite event reminder with the same title.
+
+* :release:`1.41.2 <2025-12-05>`
+* :feature:`11063` rotki has now improved the date/time range selector in the PnL report generation menu.
+* :bug:`-` Fix the issue that prevented pressing Enter from submitting most forms.
+* :feature:`-` Users will now see an indicator at the top if page-specific notes exist for that page.
+* :bug:`` Users will be given address options when filtering by address in the accounts table.
+* :bug:`-` More StakeDAO withdrawals are now decoded properly.
+* :bug:`-` Transaction decoding will no longer crash when a remote error occurs.
+* :bug:`-` Proper status notifications will be shown while the StakeDAO decoder cache is being queried.
+* :feature:`11039` rotki will now support Coinbase's new ED25519 API key format.
+* :bug:`11032` Deleted or missed Binance, Bitstamp, and Coinbase events are now properly restored when re-pulling exchange history data.
+* :feature:`` Users will now be able to change the order of used indexers for EVM chains.
+* :bug:`-` Curve pool native asset withdrawals will now include the pool in the event notes like withdrawals of other tokens.
+* :feature:`-` rotki will now properly decode Yearn staking deposit, withdrawal, and reward claim transactions.
+* :feature:`11030` rotki will now support cowswap transactions on Polygon PoS.
+* :bug:`10896` Users will be able to track the progress of repulling transactions.
+* :feature:`11014` Users will now be able to paste multiple market pairs to the binance market pairs input.
+* :bug:`11007` rotki will now show the proper balance of locked Pendle for vePendle positions.
+* :bug:`-` rotki will now properly decode Gearbox pool transactions for pools with no farming token or lp tokens beyond the pool token and underlying asset.
+* :feature:`-` rotki will now support blockscout and routescan as fallback indexers for retrieving transactions when etherscan fails or does not support a given chain.
+* :bug:`-` Users can now click a location in the manual balance summary on the dashboard to filter by that location.
+* :bug:`-` rotki will now show the protocol icon from DS Proxy correctly.
+* :bug:`11005` Fix an issue where adding a new manual balance with a custom asset/price unnecessarily fetches prices for all assets.
+* :bug:`10997` Binance CSV import will now properly handle trades with different counts of spend versus buy entries.
+* :feature:`9230` rotki will now provide quick options for the date time picker.
+* :feature:`10873` Users can now track Lido CSM node-operator bond balances by linking the accounting contract to their addresses.
+* :bug:`10979` Binance CSV import will now properly handle multiple trades with identical amounts at the same timestamp.
+* :bug:`10984` Fix Binance CSV import crash when multiple trades with different pairs occur at the same time.
+* :bug:`10960` rotki will now support swaps with fees in multiple different assets.
+* :bug: `10964` Fix an issue where the zoom state in the net value graph resets when the price is being queried.
+* :bug: `-` Curve vote escrow lock CRV extension transactions without any further CRV depositing will now be properly understood and taken into account for calendar reminders.
+
+* :release:`1.41.1 <2025-11-14>`
+* :bug:`-` Fix an issue where the warning to add a beaconcha.in API key keeps showing even if the user already added it.
+* :feature:`10734` Users will now be able to specify the collectible ID of an ERC721 token in the asset manager.
+* :bug:`10901` Users will now be able to change the log level without restarting the app, in the "Settings > General" menu.
+* :bug:`10862` rotki will now show a warning when a Gnosis Pay or Monerium transaction is manually redecoded but credentials are missing.
+* :bug:`-` rotki will now provide a clear device limit message when premium is deactivated due to exceeding the device limit.
+* :bug:`10914` rotki will now query polkadot and kusama balances correctly again after their migration to asset hub.
+* :bug:`-` rotki will no longer count fee in the withdrawn amount in poloniex
+* :bug:`10894` rotki will now properly decode more Aave V3 transactions involving native tokens.
+* :bug:`-` ERC20 transfers will no longer be missed when transaction querying fails due to network problems.
+* :bug:`-` rotki will now decode more kinds of Jupiter swaps.
+* :bug:`-` Fix an issue where editing the latest price of an asset in the asset page shows the wrong initial price.
+* :bug:`-` Contract deployment events will now display the deployed contract address in the event notes.
+* :bug:`10851` Users will be able to sort the account balance table by assets again.
+* :bug:`10853` Compound V3 native token deposit/withdrawals will be properly decoded with associated balances properly detected.
+* :bug:`-` 1inch limit order swaps will now be decoded correctly.
+* :bug:`10849` Monerium bridge transactions that involve Arbitrum or Scroll will be decoded properly.
+* :bug:`-` Uniswap V4 swaps with ETH fees paid through internal transactions will now be properly decoded.
+
+* :release:`1.41.0 <2025-10-30>`
+* :feature:`10604` Add support for Philippine Peso (PHP) as a fiat currency.
+* :feature:`9396` rotki will now properly decode onchain messages sent in EVM transactions.
+* :feature:`10544` rotki will now properly decode transactions for rotki sponsorship contract.
+* :feature:`10681` rotki will now provide an option in history events to persist filters when navigating between pages.
+* :feature:`-` rotki will now be able decode Jupiter swaps on Solana.
+* :feature:`9490` rotki will now properly handle Uniswap V4 transactions and LP balances in all supported chains.
+* :feature:`10630` Users will now be able to re-pull missed history events from exchanges.
+* :feature:`10637` rotki will now properly handle Runmoney.app transactions and balances in Base.
+* :feature:`9972` rotki will now properly handle Quickswap transactions and LP balances in all supported chains.
+* :feature:`-` Users will now be able to apply custom accounting rules to a specific event or group of related events without affecting existing rules.
+* :feature:`10321` Users can now delete multiple events in the history events section.
+* :feature:`9133` rotki will now properly decode wrapping stETH into wstETH and vice versa.
 * :feature:`-` Giveth donation transactions on Polygon PoS will now be properly decoded.
 * :feature:`-`: Uniswap V2 transactions will now be decoded correctly on all supported chains rather than just on mainnet.
 * :feature:`-`: Users will now be able to search for a chain when adding a new evm chain asset.
+* :feature:`10006` rotki will now be able to decode Balancer v3 transactions and LP balances in all supported chains.
+* :feature:`-` Cowswap in BNB smart chain is now supported.
+* :feature:`-` Monerium users will be able to authenticate just by signing in with monerium via oauth.
+* :feature:`-` OKX users of EEA or US will be able to choose their location and use the OKX api properly again.
+* :bug:`-` Filtering of events by accounts will now only include tracked accounts and exchange labels.
+* :bug:`10652` Cowswap swaps with a missing `fullAppData` field will now be properly decoded.
+* :bug:`-` Monerium aave v3 events will now always have the earn event at the end.
+* :bug:`-` Cowswap swaps that use the new ethflow contract or route through Spark Savings now decode correctly.
+* :bug:`-` Unwrapping WETH now properly records the ETH received as a redemption of wrapped tokens.
+
+* :release:`1.40.1 <2025-09-15>`
+* :bug:`10602` Users will be able to edit EVM swap events, even if the asset is ignored.
+* :bug:`-` Users will now be able to add EVM and EVM swap events from the "Add new event" button on top.
+* :feature:`-` Users will now be able to see the balance in these currencies: AED (United Arab Emirates Dirham), CZK (Czech koruna), ILS (Israeli new shekel), and MXN (Mexican Peso)
+* :bug:`-` Blockchain queries will no longer fail when certain nodes return empty responses.
+* :bug:`-` Editing a solana token will no longer set the asset type incorrectly.
+* :feature:`10591` rotki will now detect eligibility for the Linea Airdrop.
+* :bug:`-` Users will now be able to see the transaction hash of the deposit/withdrawal for the exchange asset movement event.
+* :bug:`10585` Token balances on mainnet Summer.fi proxy accounts will now be detected properly.
+* :bug:`-` Manual current prices are now properly saved as historical prices for use in balance graphs and charts.
+* :bug:`10578` rotki now has improved checks on usernames.
+* :bug:`-` rotki will now properly decode Paraswap swaps made using smart wallets.
+* :bug:`10570` Adding/editing an EVM event with a transaction hash not present in the DB will now pull the transaction from onchain.
+* :bug:`-` Balancer V2 swaps that swap multiple times before reaching the desired token or that swap to the chain's native token will now be properly decoded.
+* :bug:`10556` Editing ZKSync lite history events will be possible again.
+* :bug:`-` Beefy Finance reward pool and boost vault tokens will now be properly priced.
+* :bug:`-` Account delegation transactions will now be properly decoded and processed.
+* :feature:`-` OpenOcean arbitrum rewards transactions will now be decoded correctly.
+* :bug:`-` Curve swap transactions that use the new router will now be decoded properly across supported EVM chains.
+* :bug:`-` Fix an issue where the buttons to refresh Gnosis Pay and Monerium events were always disabled initially.
+* :bug:`10517` Morpho transactions that perform multiple actions in one go are now decoded properly.
+* :feature:`-` Users will now be able to filter history events by location labels, including account addresses and exchange labels.
+* :bug:`-` Analytics of transactions by protocol will now properly respect the selected date range.
 * :bug:`-` All single token curve pool withdrawals should decode properly now.
 * :bug:`10468` Crypto.com exchange integration should now be working properly.
-* :bug:`-` Crypto.com mobile app events imported via a CSV file will now have their location label set.
+* :bug:`-` Crypto.com mobile app events imported via a CSV file will now have their location label set.``
 * :bug:`-` Users can now access the Solana token migration guide using the correct link.
 * :bug:`10499` Crypto.com mobile app CSV imports will now properly handle limit order transactions that were previously failing to import.
 * :bug:`-` Fix an issue where some amounts in the history event notes are not scrambled/blurred when the privacy mode/scramble setting is activated.
@@ -717,7 +859,7 @@ Changelog
 * :feature:`-` Transactions changing the content hash of an ENS name will now be properly decoded.
 * :feature:`5255` Pnl report assets now have an etherscan link to make it easier to identify pool assets.
 * :feature:`6179` Users will now be able to import their trades, income and spending from BitcoinTaxes.
-* :feature:`-` Ethereum transactions involing bribe claim payouts from StakeDAO will now be decoded properly.
+* :feature:`-` Ethereum transactions involving bribe claim payouts from StakeDAO will now be decoded properly.
 * :feature:`-` Ethereum transactions involving locking and unlocking GNO using the locked GNO contract will now be decoded properly.
 * :feature:`5250` Ethereum transactions involving AAVE v1 and v2 liquidations will now be decoded properly.
 * :bug:`-` Fix issue for ledger actions with zero rate, where the rate isn't used in the PnL report.
@@ -1736,7 +1878,7 @@ Changelog
 
   - `Energi (NRG) <https://www.coingecko.com/en/coins/energi>`__
   - `Exeedme (XED) <https://www.coingecko.com/en/coins/exeedme>`__
-  - `Terra Virtua Kolect (TVK) <https://www.coingecko.com/en/coins/terra-virtua-kolect>`__
+  - `Terra Virtua Kolect (TVK) <https://www.coingecko.com/en/coins/terra-virtua-kolect>`__  # spellchecker:disable-line
   - `Celsius network token (CEL) <https://www.coingecko.com/en/coins/celsius-network-token>`__
   - `BTC Standard Hashrate Token (BTCST) <https://www.coingecko.com/en/coins/btc-standard-hashrate-token>`__
   - `Stakenet (XSN) <https://www.coingecko.com/en/coins/stakenet>`__

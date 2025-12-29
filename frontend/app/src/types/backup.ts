@@ -24,30 +24,9 @@ const UserDb = z.object({
   info: UserDbInfo,
 });
 
-const DatabaseInfo = z.object({
+export const DatabaseInfoSchema = z.object({
   globaldb: GlobalDbVersion,
   userdb: UserDb,
 });
 
-export type DatabaseInfo = z.infer<typeof DatabaseInfo>;
-
-export const DatabaseInfoResponse = z.object({
-  message: z.string(),
-  result: DatabaseInfo,
-});
-
-export type DatabaseInfoResponse = z.infer<typeof DatabaseInfoResponse>;
-
-export const CreateDatabaseResponse = z.object({
-  message: z.string(),
-  result: z.string(),
-});
-
-export type CreateDatabaseResponse = z.infer<typeof CreateDatabaseResponse>;
-
-export const DeleteDatabaseResponse = z.object({
-  message: z.string(),
-  result: z.boolean(),
-});
-
-export type DeleteDatabaseResponse = z.infer<typeof DeleteDatabaseResponse>;
+export type DatabaseInfo = z.infer<typeof DatabaseInfoSchema>;

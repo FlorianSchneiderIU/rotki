@@ -18,7 +18,8 @@ from rotkehlchen.constants.resolver import strethaddress_to_identifier
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.beaconchain.service import BeaconChain
-from rotkehlchen.externalapis.etherscan import Etherscan, HasChainActivity
+from rotkehlchen.externalapis.etherscan import Etherscan
+from rotkehlchen.externalapis.etherscan_like import HasChainActivity
 from rotkehlchen.fval import FVal
 from rotkehlchen.rotkehlchen import Rotkehlchen
 from rotkehlchen.serialization.deserialize import deserialize_evm_address
@@ -67,9 +68,9 @@ def assert_btc_balances_result(
         balance = satoshis_to_btc(FVal(btc_balances[idx]))
         assert FVal(standalone[account]['amount']) == balance
         if balance == ZERO:
-            assert FVal(standalone[account]['usd_value']) == ZERO
+            assert FVal(standalone[account]['value']) == ZERO
         else:
-            assert FVal(standalone[account]['usd_value']) > ZERO
+            assert FVal(standalone[account]['value']) > ZERO
 
     totals = result['totals'].get('assets', result['totals'])
     if also_eth:
@@ -80,9 +81,9 @@ def assert_btc_balances_result(
     expected_btc_total = sum(satoshis_to_btc(FVal(balance)) for balance in btc_balances)
     assert FVal(totals['BTC'][DEFAULT_BALANCE_LABEL]['amount']) == expected_btc_total
     if expected_btc_total == ZERO:
-        assert FVal(totals['BTC'][DEFAULT_BALANCE_LABEL]['usd_value']) == ZERO
+        assert FVal(totals['BTC'][DEFAULT_BALANCE_LABEL]['value']) == ZERO
     else:
-        assert FVal(totals['BTC'][DEFAULT_BALANCE_LABEL]['usd_value']) > ZERO
+        assert FVal(totals['BTC'][DEFAULT_BALANCE_LABEL]['value']) > ZERO
 
 
 def assert_eth_balances_result(
@@ -110,12 +111,12 @@ def assert_eth_balances_result(
         for idx, account in enumerate(eth_accounts):
             expected_amount = from_wei(FVal(eth_balances[idx]))
             amount = FVal(per_account[account]['assets'][A_ETH.identifier][DEFAULT_BALANCE_LABEL]['amount'])  # noqa: E501
-            usd_value = FVal(per_account[account]['assets'][A_ETH.identifier][DEFAULT_BALANCE_LABEL]['usd_value'])  # noqa: E501
+            value = FVal(per_account[account]['assets'][A_ETH.identifier][DEFAULT_BALANCE_LABEL]['value'])  # noqa: E501
             assert amount == expected_amount
             if amount == ZERO:
-                assert usd_value == ZERO
+                assert value == ZERO
             else:
-                assert usd_value > ZERO
+                assert value > ZERO
             for token, balances in token_balances.items():
                 expected_token_amount = FVal(balances[idx])
                 if expected_token_amount == ZERO:
@@ -123,9 +124,6 @@ def assert_eth_balances_result(
                     assert token.identifier not in per_account[account], msg
                 else:
                     token_amount = FVal(per_account[account]['assets'][token.identifier][DEFAULT_BALANCE_LABEL]['amount'])  # noqa: E501
-                    usd_value = FVal(
-                        per_account[account]['assets'][token.identifier][DEFAULT_BALANCE_LABEL]['usd_value'],
-                    )
                     assert token_amount == from_wei(expected_token_amount)
 
     if totals_only:
@@ -629,7 +627,7 @@ def setup_evm_addresses_activity_mock(
             return '0xsomecode'
         return '0x'
 
-    def mock_is_safe_or_eoa(address: ChecksumEvmAddress, chain: SupportedBlockchain):
+    def mock_is_safe_or_eoa(address: ChecksumEvmAddress):
         return address not in eth_contract_addresses
 
     def mock_avax_get_tx_count(account):
@@ -675,24 +673,24 @@ def setup_evm_addresses_activity_mock(
         '_query_api',
         side_effect=mock_zksync_lite_query_api,
     ))
-    stack.enter_context(patch.object(
-        chains_aggregator,
-        'is_safe_proxy_or_eoa',
-        side_effect=mock_is_safe_or_eoa,
-    ))
 
     for chain in EVM_CHAINS_WITH_TRANSACTIONS:
         manager = chains_aggregator.get_evm_manager(as_chain_id := chain.to_chain_id())
         stack.enter_context(patch.object(
-            manager.node_inquirer.etherscan,
-            'has_activity',
-            side_effect=lambda chain_id, account: mock_chain_has_activity(chain_id, account),  # noqa: PLW0108
+            manager.node_inquirer,
+            'is_safe_proxy_or_eoa',
+            side_effect=mock_is_safe_or_eoa,
         ))
+
+        indexers = [manager.node_inquirer.etherscan, manager.node_inquirer.routescan]
         if manager.node_inquirer.blockscout is not None:
+            indexers.append(manager.node_inquirer.blockscout)
+
+        for indexer in indexers:
             stack.enter_context(patch.object(
-                manager.node_inquirer.blockscout,
-                'has_activity',
-                side_effect=lambda account, i_chain=chain: mock_chain_has_activity(i_chain, account),  # noqa: E501
+                target=indexer,
+                attribute='has_activity',
+                side_effect=lambda chain_id, account: mock_chain_has_activity(chain_id, account),  # noqa: PLW0108
             ))
 
     return stack

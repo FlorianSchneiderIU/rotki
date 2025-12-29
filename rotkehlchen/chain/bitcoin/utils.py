@@ -1,19 +1,29 @@
 import hashlib
+import logging
 import platform
 from collections.abc import Sequence
 from enum import Enum, auto
+from http import HTTPStatus
 from typing import Any
 
 import base58check
 import bech32
-from bip_utils import Bech32ChecksumError, P2TRAddrEncoder, P2WPKHAddrEncoder, SegwitBech32Decoder
+import requests
+from bip_utils import P2TRAddrEncoder, P2WPKHAddrEncoder
 
+from rotkehlchen.constants.timing import GLOBAL_REQUESTS_TIMEOUT
+from rotkehlchen.db.settings import CachedSettings
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.errors.serialization import EncodingError
 from rotkehlchen.fval import FVal
+from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import ensure_type
 from rotkehlchen.types import BTCAddress
 from rotkehlchen.utils.misc import satoshis_to_btc
-from rotkehlchen.utils.network import request_get_dict
+from rotkehlchen.utils.network import request_get_dict, retry_calls
+
+logger = logging.getLogger(__name__)
+log = RotkehlchenLogsAdapter(logger)
 
 BIP32_HARDEN: int = 0x80000000
 
@@ -46,67 +56,6 @@ class OpCodes(bytes, Enum):
     # Cryptography
     OP_HASH160 = b'\xa9'
     OP_CHECKSIG = b'\xac'
-
-
-def is_valid_btc_address(value: str) -> bool:
-    """Validates a bitcoin address.
-
-    The major difference between `is_valid_bech32_address` and `is_valid_bech32_bech32m_address`
-    is that they validate two different BIPs specification and they're needed to maintain
-    backward compatibility.
-    """
-    return (
-        is_valid_base58_address(value) or
-        is_valid_bech32_address(value) or
-        is_valid_bech32_bip350_address(value)
-    )
-
-
-def is_valid_bech32_address(value: str) -> bool:
-    """Validates a bitcoin Segwit address using BIP-173
-    https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki
-    """
-    decoded = bech32.decode('bc', value)
-    return decoded != (None, None)
-
-
-def is_valid_bech32_bip350_address(value: str) -> bool:
-    """Validates a bitcoin Segwit address using BIP-350.
-
-    This validation is based on BIP-350 which improves on a flaw in BIP-173
-    https://github.com/bitcoin/bips/blob/master/bip-0350.mediawiki
-    """
-    try:
-        SegwitBech32Decoder.Decode('bc', value)
-    except (ValueError, Bech32ChecksumError):
-        return False
-    else:
-        return True
-
-
-def is_valid_base58_address(value: str) -> bool:
-    """Validates a bitcoin base58 address for the mainnet
-
-    Code is taken from:
-    https://github.com/joeblackwaslike/coinaddr/blob/ae35c7ae550a687d9a7c2e0cb090d52edbb29cb5/coinaddr/validation.py#L67-L87
-
-    """
-    if 25 > len(value) > 35:
-        return False
-
-    try:
-        abytes = base58check.b58decode(value)
-    except ValueError:
-        return False
-
-    if len(abytes) == 0 or abytes[0] not in {0x00, 0x05}:
-        return False
-
-    checksum = hashlib.sha256(hashlib.sha256(abytes[:-4]).digest()).digest()[:4]
-    if abytes[-4:] != checksum:
-        return False
-
-    return value == base58check.b58encode(abytes).decode()
 
 
 if platform.system() == 'Linux':
@@ -204,8 +153,7 @@ def is_valid_derivation_path(path: Any) -> tuple[bool, str]:
         if "'" in node:
             return (
                 False,
-                'Derivation paths accepted by rotki should have no hardened '
-                "nodes. Meaning no nodes with a '",
+                "Derivation paths accepted by rotki should have no hardened nodes. Meaning no nodes with a '",  # noqa: E501
             )
 
         try:
@@ -282,6 +230,31 @@ def scriptpubkey_to_btc_address(data: bytes) -> BTCAddress:
         return scriptpubkey_to_p2sh_address(data)
 
     return scriptpubkey_to_bech32_address(data)
+
+
+def query_blockstream_like_blockheight(base_url: str) -> int:
+    """
+    Query blockheight from APIs similar to blockstream.info
+    Returns the blockheight
+    May raise:
+    - RemoteError if got problems with querying the API
+    """
+    if (response := retry_calls(
+        times=CachedSettings().get_query_retry_limit(),
+        location='bitcoin',
+        handle_429=True,
+        backoff_in_seconds=4,
+        method_name='query_blockstream_like_height',
+        function=requests.get,
+        # function's arguments
+        url=(url := f'{base_url}/blocks/tip/height'),
+        timeout=GLOBAL_REQUESTS_TIMEOUT,
+    )).status_code != HTTPStatus.OK:
+        raise RemoteError(
+            f'{url} returned status: {response.status_code} with message: {response.text}')
+
+    log.debug(f'Got response: {response.text} from {base_url}/blocks/tip/height')
+    return int(response.text)
 
 
 def query_blockstream_like_account_info(

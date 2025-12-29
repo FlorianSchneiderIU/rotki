@@ -8,10 +8,36 @@ export const KrakenAccountType = z.enum(['starter', 'intermediate', 'pro']);
 
 export type KrakenAccountType = z.infer<typeof KrakenAccountType>;
 
-export const Exchange = z.object({
-  krakenAccountType: KrakenAccountType.optional(),
+const OKX_LOCATIONS = ['global', 'eea', 'us'];
+
+export const OkxLocation = z.enum(OKX_LOCATIONS);
+
+export type OkxLocation = z.infer<typeof OkxLocation>;
+
+function isValidOkxLocation(val: unknown): val is OkxLocation {
+  return typeof val === 'string' && OKX_LOCATIONS.includes(val);
+}
+
+export const QueryExchangeEventsPayload = z.object({
   location: z.string(),
   name: z.string(),
+});
+
+export type QueryExchangeEventsPayload = z.infer<typeof QueryExchangeEventsPayload>;
+
+export const Exchange = z.object({
+  ...QueryExchangeEventsPayload.shape,
+  krakenAccountType: KrakenAccountType.optional(),
+  okxLocation: z.preprocess(
+    (val) => {
+      if (val === undefined)
+        return undefined;
+      if (isValidOkxLocation(val))
+        return val;
+      return 'global';
+    },
+    OkxLocation.optional(),
+  ),
 });
 
 export type Exchange = z.infer<typeof Exchange>;
@@ -33,7 +59,7 @@ export interface EditExchange {
   readonly newName?: string;
 }
 
-export interface ExchangePayload {
+interface ExchangePayload {
   readonly name: string;
   readonly location: string;
   readonly apiKey: string;
@@ -41,6 +67,7 @@ export interface ExchangePayload {
   readonly passphrase: string;
   readonly krakenAccountType?: KrakenAccountType;
   readonly binanceMarkets?: string[];
+  readonly okxLocation?: OkxLocation;
 }
 
 export interface ExchangeFormData extends ExchangePayload {
@@ -61,7 +88,7 @@ export const ExchangeSavingsCollectionResponse = CollectionCommonFields.extend({
   assets: z.array(z.string()),
   entries: z.array(ExchangeSavingsEvent),
   received: z.array(AssetBalance),
-  totalUsdValue: NumericString,
+  totalValue: NumericString,
 });
 
 export type ExchangeSavingsCollectionResponse = z.infer<typeof ExchangeSavingsCollectionResponse>;

@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import type { GroupEventData } from '@/modules/history/management/forms/form-types';
 import type { ValidationErrors } from '@/types/api/errors';
-import type { AddSwapEventPayload, SwapEvent } from '@/types/history/events/schemas';
+import type { AddSwapEventPayload, FeeEntry, SwapEvent, SwapEventUserNotes } from '@/types/history/events/schemas';
 import { assert, HistoryEventEntryType } from '@rotki/common';
 import useVuelidate from '@vuelidate/core';
 import dayjs from 'dayjs';
-import { omit, pick } from 'es-toolkit';
+import { omit } from 'es-toolkit';
 import { isEmpty } from 'es-toolkit/compat';
 import { useFormStateWatcher } from '@/composables/form';
 import { useHistoryEvents } from '@/composables/history/events';
 import { useEditModeStateTracker } from '@/composables/history/events/edit-mode-state';
 import EventDateLocation from '@/modules/history/management/forms/common/EventDateLocation.vue';
+import SimpleFeeList from '@/modules/history/management/forms/common/SimpleFeeList.vue';
 import HistoryEventAssetPriceForm from '@/modules/history/management/forms/HistoryEventAssetPriceForm.vue';
 import SwapEventNotes from '@/modules/history/management/forms/swap/SwapEventNotes.vue';
 import { useEventFormValidation } from '@/modules/history/management/forms/use-event-form-validation';
@@ -18,7 +19,18 @@ import { useMessageStore } from '@/store/message';
 import { useRefPropVModel } from '@/utils/model';
 import { toMessages } from '@/utils/validation';
 
-type FormData = Required<AddSwapEventPayload>;
+interface FormData {
+  entryType: typeof HistoryEventEntryType.SWAP_EVENT;
+  fees: FeeEntry[];
+  location: string;
+  receiveAmount: string;
+  receiveAsset: string;
+  spendAmount: string;
+  spendAsset: string;
+  timestamp: number;
+  uniqueId: string;
+  userNotes: SwapEventUserNotes;
+}
 
 const stateUpdated = defineModel<boolean>('stateUpdated', { default: false, required: false });
 
@@ -27,8 +39,7 @@ const props = defineProps<{ data: GroupEventData<SwapEvent> }>();
 function emptyEvent(): FormData {
   return {
     entryType: HistoryEventEntryType.SWAP_EVENT,
-    feeAmount: '',
-    feeAsset: '',
+    fees: [],
     location: '',
     receiveAmount: '0',
     receiveAsset: '',
@@ -36,17 +47,20 @@ function emptyEvent(): FormData {
     spendAsset: '',
     timestamp: dayjs().valueOf(),
     uniqueId: '',
-    userNotes: ['', '', ''],
+    userNotes: ['', ''],
   };
+}
+
+function createUserNotes(spendNote: string, receiveNote: string, ...feeNotes: string[]): SwapEventUserNotes {
+  return [spendNote, receiveNote, ...feeNotes];
 }
 
 const states = ref<FormData>(emptyEvent());
 const hasFee = ref<boolean>(false);
-const identifiers = ref<{ eventIdentifier: string; identifier: number }>();
+const identifiers = ref<number[]>();
 const errorMessages = ref<Record<string, string[]>>({});
 const spendAssetPriceForm = useTemplateRef<InstanceType<typeof HistoryEventAssetPriceForm>>('spendAssetPriceForm');
 const receiveAssetPriceForm = useTemplateRef<InstanceType<typeof HistoryEventAssetPriceForm>>('receiveAssetPriceForm');
-const feeAssetPriceForm = useTemplateRef<InstanceType<typeof HistoryEventAssetPriceForm>>('feeAssetPriceForm');
 
 const timestamp = useRefPropVModel(states, 'timestamp');
 
@@ -56,8 +70,7 @@ const { createCommonRules } = useEventFormValidation();
 const commonRules = createCommonRules();
 
 const rules = {
-  feeAmount: commonRules.createExternalValidationRule(),
-  feeAsset: commonRules.createExternalValidationRule(),
+  fees: commonRules.createExternalValidationRule(),
   location: commonRules.createRequiredLocationRule(),
   receiveAmount: commonRules.createRequiredAmountRule(),
   receiveAsset: commonRules.createRequiredAssetRule(),
@@ -97,7 +110,6 @@ async function submitAllPrices(): Promise<boolean> {
   const lists = [
     get(spendAssetPriceForm),
     get(receiveAssetPriceForm),
-    get(feeAssetPriceForm),
   ].filter(Boolean);
 
   for (const list of lists) {
@@ -132,19 +144,26 @@ async function save(): Promise<boolean> {
   }
 
   const model = get(states);
-  let payload: AddSwapEventPayload;
-  if (get(hasFee)) {
-    payload = model;
-  }
-  else {
-    payload = omit(model, ['feeAmount', 'feeAsset']);
-    payload.userNotes = [model.userNotes[0], model.userNotes[1]];
-  }
+  const fees = get(hasFee) ? model.fees.filter(fee => fee.amount && fee.asset) : undefined;
+  const feeCount = fees?.length ?? 0;
+  // Only include userNotes for spend, receive, and actual fees (2 + fee count)
+  const userNotes = createUserNotes(model.userNotes[0], model.userNotes[1], ...model.userNotes.slice(2, 2 + feeCount));
 
+  // Generate UUID for uniqueId if not present and not in edit mode
+  const uniqueId = !isEditMode && !model.uniqueId ? crypto.randomUUID() : model.uniqueId;
+
+  const payload: AddSwapEventPayload = {
+    ...omit(model, ['fees', 'userNotes', 'uniqueId']),
+    fees,
+    uniqueId,
+    userNotes,
+  };
+
+  const eventIdentifiers = get(identifiers);
   const result = isEditMode
     ? await editHistoryEvent({
         ...omit(payload, ['uniqueId']),
-        ...get(identifiers),
+        identifiers: eventIdentifiers!,
       })
     : await addHistoryEvent(payload);
 
@@ -176,28 +195,33 @@ watchImmediate(() => props.data, (data) => {
 
   const spend = data.eventsInGroup.find(item => item.eventSubtype === 'spend');
   const receive = data.eventsInGroup.find(item => item.eventSubtype === 'receive');
-  const fee = data.eventsInGroup.find(item => item.eventSubtype === 'fee');
+  const feeEvents = data.eventsInGroup.filter(item => item.eventSubtype === 'fee');
 
   assert(spend);
   assert(receive);
 
-  set(hasFee, fee !== undefined);
-  set(identifiers, pick(spend, ['eventIdentifier', 'identifier']));
+  const hasFeeEvents = feeEvents.length > 0;
+  set(hasFee, hasFeeEvents);
+  // Collect all identifiers: [spendId, receiveId, ...feeIds]
+  const allIdentifiers = [
+    spend.identifier,
+    receive.identifier,
+    ...feeEvents.map(fee => fee.identifier),
+  ];
+  set(identifiers, allIdentifiers);
 
-  const userNotes: [string, string, string] | [string, string] = fee !== undefined
-    ? [
-        getNotes(spend),
-        getNotes(receive),
-        getNotes(fee),
-      ]
-    : [
-        getNotes(spend),
-        getNotes(receive),
-      ];
+  const fees: FeeEntry[] = feeEvents.map(fee => ({
+    amount: fee.amount.toString(),
+    asset: fee.asset,
+  }));
+
+  const userNotes: SwapEventUserNotes = hasFeeEvents
+    ? [getNotes(spend), getNotes(receive), ...feeEvents.map(fee => getNotes(fee))]
+    : [getNotes(spend), getNotes(receive)];
+
   set(states, {
     entryType: HistoryEventEntryType.SWAP_EVENT,
-    feeAmount: fee?.amount?.toString() ?? '',
-    feeAsset: fee?.asset ?? '',
+    fees,
     location: spend.location,
     receiveAmount: receive.amount.toString(),
     receiveAsset: receive.asset,
@@ -212,16 +236,55 @@ watchImmediate(() => props.data, (data) => {
 });
 
 watch(hasFee, (hasFee) => {
+  const oldStates = get(states);
   if (hasFee) {
+    // When enabling fees, ensure there's at least one empty fee entry and fee note
+    const updates: Partial<FormData> = {};
+    if (oldStates.fees.length === 0) {
+      updates.fees = [{ amount: '', asset: '' }];
+    }
+    // Add empty fee note if not present
+    if (oldStates.userNotes.length < 3) {
+      updates.userNotes = createUserNotes(oldStates.userNotes[0], oldStates.userNotes[1], ...oldStates.userNotes.slice(2), '');
+    }
+    if (Object.keys(updates).length > 0) {
+      set(states, {
+        ...oldStates,
+        ...updates,
+      });
+    }
     return;
   }
-  const oldStates = get(states);
+  // When disabling fees, remove fee entries and keep only spend/receive notes
   set(states, {
     ...oldStates,
-    feeAmount: '',
-    feeAsset: '',
-    userNotes: [oldStates.userNotes[0], oldStates.userNotes[1]],
+    fees: [],
+    userNotes: createUserNotes(oldStates.userNotes[0], oldStates.userNotes[1]),
   });
+});
+
+// Sync userNotes array with fees array when fees are added/removed
+watch(() => get(states).fees.length, (newLength, oldLength) => {
+  if (!get(hasFee))
+    return;
+
+  const currentNotes = get(states).userNotes;
+  const expectedLength = 2 + newLength; // 2 for spend/receive + fee count
+
+  if (currentNotes.length === expectedLength)
+    return;
+
+  if (newLength > oldLength) {
+    // Fee added - add empty notes
+    const notesToAdd = newLength - oldLength;
+    const newNotes = createUserNotes(currentNotes[0], currentNotes[1], ...currentNotes.slice(2), ...new Array<string>(notesToAdd).fill(''));
+    set(states, { ...get(states), userNotes: newNotes });
+  }
+  else {
+    // Fee removed - remove corresponding notes from the end
+    const newNotes = createUserNotes(currentNotes[0], currentNotes[1], ...currentNotes.slice(2, expectedLength));
+    set(states, { ...get(states), userNotes: newNotes });
+  }
 });
 
 watch(errorMessages, (errors) => {
@@ -231,6 +294,7 @@ watch(errorMessages, (errors) => {
 
 defineExpose({
   save,
+  v$,
 });
 </script>
 
@@ -299,25 +363,15 @@ defineExpose({
       color="primary"
     />
 
-    <HistoryEventAssetPriceForm
-      ref="feeAssetPriceForm"
-      v-model:amount="states.feeAmount"
-      v-model:asset="states.feeAsset"
-      hide-price-fields
-      :timestamp="timestamp"
+    <SimpleFeeList
+      v-model="states.fees"
       :disabled="!hasFee"
-      :v$="{
-        ...v$,
-        asset: v$.feeAsset,
-        amount: v$.feeAmount,
-      }"
       :location="states.location"
-      type="fee"
     />
 
     <SwapEventNotes
       v-model="states.userNotes"
-      :has-fee="hasFee"
+      :fee-count="hasFee ? states.fees.length : 0"
       :error-messages="toMessages(v$.userNotes)"
       @blur="v$.userNotes.$touch()"
     />

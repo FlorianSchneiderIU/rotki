@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import type { ValidationErrors } from '@/types/api/errors';
 import { toSentenceCase } from '@rotki/common';
+import { RuiRevealableTextField, RuiTextField } from '@rotki/ui-library';
 import useVuelidate from '@vuelidate/core';
 import { helpers, requiredIf, requiredUnless } from '@vuelidate/validators';
 import BinancePairsSelector from '@/components/helper/BinancePairsSelector.vue';
 import ExchangeInput from '@/components/inputs/ExchangeInput.vue';
 import ExchangeKeysFormStructure from '@/components/settings/api-keys/exchange/ExchangeKeysFormStructure.vue';
+import OkxRegionSelectorItem from '@/components/settings/api-keys/exchange/OkxRegionSelectorItem.vue';
 import { useFormStateWatcher } from '@/composables/form';
 import { useLocations } from '@/composables/locations';
 import { useRefMap } from '@/composables/utils/useRefMap';
 import { useLocationStore } from '@/store/locations';
 import { useSessionSettingsStore } from '@/store/settings/session';
-import { type ExchangeFormData, KrakenAccountType } from '@/types/exchanges';
+import { type ExchangeFormData, KrakenAccountType, OkxLocation } from '@/types/exchanges';
 import { useRefPropVModel } from '@/utils/model';
 import { toMessages } from '@/utils/validation';
 
@@ -59,6 +61,11 @@ const isCoinbasePro = computed(() => {
   return ['coinbaseprime'].includes(location);
 });
 
+const isOkx = computed(() => {
+  const { location } = get(modelValue);
+  return ['okx'].includes(location);
+});
+
 const location = useRefMap(modelValue, item => item.location);
 const experimental = useIsExperimentalExchange(location);
 
@@ -97,6 +104,7 @@ const apiSecretModel = refWithAsterisk(apiSecret);
 const passphrase = useRefPropVModel(modelValue, 'passphrase');
 const krakenAccountType = useRefPropVModel(modelValue, 'krakenAccountType');
 const binanceMarkets = useRefPropVModel(modelValue, 'binanceMarkets');
+const okxLocation = useRefPropVModel(modelValue, 'okxLocation');
 
 const name = computed<string>({
   get() {
@@ -118,6 +126,7 @@ useFormStateWatcher({
   binanceMarkets,
   krakenAccountType,
   name,
+  okxLocation,
   passphrase,
 }, stateUpdated);
 
@@ -142,6 +151,16 @@ function toggleEdit() {
 const krakenAccountTypes = KrakenAccountType.options.map((item) => {
   const translationKey = `backend_mappings.exchanges.kraken.type.${item}`;
   const label = te(translationKey) ? t(translationKey) : toSentenceCase(item);
+
+  return {
+    identifier: item,
+    label,
+  };
+});
+
+const okxLocations = OkxLocation.options.map((item) => {
+  const translationKey = `backend_mappings.exchanges.okx.location.${item.toLowerCase()}`;
+  const label = te(translationKey) ? t(translationKey) : item;
 
   return {
     identifier: item,
@@ -182,6 +201,12 @@ const v$ = useVuelidate({
       requiredIf(editMode),
     ),
   },
+  okxLocation: {
+    required: helpers.withMessage(
+      t('exchange_keys_form.validation.non_empty'),
+      requiredIf(isOkx),
+    ),
+  },
   passphrase: {
     required: helpers.withMessage(
       t('exchange_keys_form.validation.non_empty'),
@@ -194,6 +219,7 @@ const v$ = useVuelidate({
   binanceMarkets,
   name: nameProp,
   newName: newNameProp,
+  okxLocation,
   passphrase,
 }, { $autoDirty: true, $externalResults: errorMessages });
 
@@ -208,6 +234,7 @@ function onExchangeChange(exchange?: string) {
     mode: get(modelValue, 'mode'),
     name: suggestedName(name),
     newName: '',
+    okxLocation: name === 'okx' ? 'global' : undefined,
     passphrase: '',
   });
 
@@ -229,6 +256,13 @@ onMounted(() => {
   });
 });
 
+const sensitiveInputComponent = computed(() => {
+  if (!get(editMode) || get(editKeys)) {
+    return RuiRevealableTextField;
+  }
+  return RuiTextField;
+});
+
 defineExpose({
   validate: async (): Promise<boolean> => await get(v$).$validate(),
 });
@@ -243,7 +277,7 @@ defineExpose({
       <ExchangeInput
         show-with-key-only
         :model-value="modelValue.location"
-        :label="t('exchange_keys_form.exchange')"
+        :label="t('common.exchange')"
         data-cy="exchange"
         :disabled="editMode"
         @update:model-value="onExchangeChange($event)"
@@ -269,6 +303,30 @@ defineExpose({
       text-attr="label"
       variant="outlined"
     />
+
+    <RuiMenuSelect
+      v-if="isOkx"
+      v-model="okxLocation"
+      data-cy="okx-location"
+      :options="okxLocations"
+      :label="t('exchange_keys_form.region')"
+      key-attr="identifier"
+      text-attr="label"
+      variant="outlined"
+    >
+      <template #selection="{ item }">
+        <OkxRegionSelectorItem
+          :identifier="item.identifier"
+          :label="item.label"
+        />
+      </template>
+      <template #item="{ item }">
+        <OkxRegionSelectorItem
+          :identifier="item.identifier"
+          :label="item.label"
+        />
+      </template>
+    </RuiMenuSelect>
 
     <div
       v-if="editMode"
@@ -300,7 +358,8 @@ defineExpose({
 
     <ExchangeKeysFormStructure :location="modelValue.location">
       <template #apiKey="{ label, hint, className }">
-        <RuiRevealableTextField
+        <Component
+          :is="sensitiveInputComponent"
           v-model.trim="apiKeyModel"
           :text-color="editMode && !editKeys && toMessages(v$.apiKey).length === 0 ? 'success' : undefined"
           variant="outlined"
@@ -316,7 +375,8 @@ defineExpose({
       </template>
 
       <template #apiSecret="{ label, hint, className }">
-        <RuiRevealableTextField
+        <Component
+          :is="sensitiveInputComponent"
           v-if="requiresApiSecret"
           v-model.trim="apiSecretModel"
           variant="outlined"
@@ -333,7 +393,8 @@ defineExpose({
       </template>
 
       <template #passphrase="{ label, hint, className }">
-        <RuiRevealableTextField
+        <Component
+          :is="sensitiveInputComponent"
           v-if="requiresPassphrase"
           v-model.trim="passphrase"
           :disabled="editMode && !editKeys"
@@ -349,6 +410,13 @@ defineExpose({
       </template>
     </ExchangeKeysFormStructure>
 
+    <RuiAlert
+      v-if="isBinance"
+      type="info"
+    >
+      {{ t('exchange_keys_form.binance_markets_required') }}
+    </RuiAlert>
+
     <BinancePairsSelector
       v-if="isBinance"
       :name="modelValue.name"
@@ -358,14 +426,6 @@ defineExpose({
       @update:selection="modelValue = { ...modelValue, binanceMarkets: $event }"
     />
   </div>
-
-  <RuiAlert
-    v-if="isBinance"
-    class="mt-4"
-    type="info"
-  >
-    {{ t('exchange_keys_form.binance_markets_required') }}
-  </RuiAlert>
 
   <RuiAlert
     v-if="showKeyWaitingTimeWarning"

@@ -3,15 +3,15 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
+from rotkehlchen.assets.utils import token_normalized_value_decimals
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
 from rotkehlchen.chain.ethereum.modules.aave.constants import STK_AAVE_ADDR
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import DEFAULT_TOKEN_DECIMALS
 from rotkehlchen.chain.evm.decoding.aave.constants import CPT_AAVE
 from rotkehlchen.chain.evm.tokens import get_chunk_size_call_order
 from rotkehlchen.constants.assets import A_AAVE
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.history.events.structures.evm_event import EvmProduct
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -45,7 +45,7 @@ class AaveBalances(ProtocolWithBalance):
         much AAVE is staked, that is the stkAAVE balance which should appear as
         part of balance queries and is 1-1 to AAVE."""
         balances: BalancesSheetType = defaultdict(BalanceSheet)
-        if len(addresses_with_deposits := list(self.addresses_with_deposits(products=[EvmProduct.STAKING]))) == 0:  # noqa: E501
+        if len(addresses_with_deposits := list(self.addresses_with_deposits())) == 0:
             return balances
 
         staking_contract = self.evm_inquirer.contracts.contract(address=STK_AAVE_ADDR)
@@ -63,7 +63,10 @@ class AaveBalances(ProtocolWithBalance):
         )) == 0:
             return balances
 
-        token_price = Inquirer.find_usd_price(A_AAVE)
+        token_price = Inquirer.find_price(
+            from_asset=A_AAVE,
+            to_asset=CachedSettings().main_currency,
+        )
         for user, result in zip(addresses_with_deposits, staked_rewards, strict=True):
             balance: int
             if (balance := staking_contract.decode(
@@ -79,7 +82,7 @@ class AaveBalances(ProtocolWithBalance):
             )) > ZERO:
                 balances[user].assets[A_AAVE][self.counterparty] += Balance(
                     amount=balance_norm,
-                    usd_value=token_price * balance_norm,
+                    value=token_price * balance_norm,
                 )
 
         return balances

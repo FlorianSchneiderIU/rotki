@@ -4,16 +4,19 @@ import string
 from typing import TYPE_CHECKING, Any
 
 from eth_utils.address import to_checksum_address
+from solders.solders import Pubkey, Signature
 
 from rotkehlchen.accounting.types import EventAccountingRuleStatus
 from rotkehlchen.assets.asset import Asset, EvmToken
+from rotkehlchen.chain.ethereum.modules.eth2.constants import CPT_ETH2
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.chain.substrate.types import SubstrateAddress
 from rotkehlchen.constants import ONE
+from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.db.calendar import CalendarEntry
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.eth2 import EthBlockEvent, EthWithdrawalEvent
-from rotkehlchen.history.events.structures.evm_event import EvmEvent, EvmProduct
+from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.types import (
     AddressbookEntry,
@@ -21,19 +24,22 @@ from rotkehlchen.types import (
     ApiSecret,
     BlockchainAddress,
     BTCAddress,
+    BTCTxId,
     ChainID,
     ChecksumEvmAddress,
+    Eth2PubKey,
     EvmTransaction,
     EVMTxHash,
     HexColorCode,
     Location,
+    SolanaAddress,
     SupportedBlockchain,
     Timestamp,
     TimestampMS,
     TokenKind,
     deserialize_evm_tx_hash,
 )
-from rotkehlchen.utils.misc import ts_now
+from rotkehlchen.utils.misc import ts_now, ts_sec_to_ms
 
 if TYPE_CHECKING:
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry
@@ -88,8 +94,8 @@ def make_evm_tx_hash() -> EVMTxHash:
     return deserialize_evm_tx_hash(make_random_bytes(32))
 
 
-def make_btc_tx_hash() -> str:
-    return make_random_bytes(32).hex()
+def make_btc_tx_id() -> BTCTxId:
+    return BTCTxId(make_random_bytes(32).hex())
 
 
 def make_ethereum_transaction(
@@ -133,7 +139,7 @@ CUSTOM_USDT = EvmToken.initialize(
 
 def make_ethereum_event(
         index: int,
-        tx_hash: bytes | None = None,
+        tx_ref: bytes | None = None,
         location_label: str | None = None,
         asset: Asset = CUSTOM_USDT,
         counterparty: str | None = None,
@@ -141,12 +147,11 @@ def make_ethereum_event(
         event_subtype: HistoryEventSubType = HistoryEventSubType.NONE,
         timestamp: TimestampMS = ZERO_TIMESTAMP_MS,
         address: ChecksumEvmAddress | None = None,
-        product: EvmProduct | None = None,
 ) -> EvmEvent:
-    if tx_hash is None:
-        tx_hash = make_random_bytes(32)
+    if tx_ref is None:
+        tx_ref = make_random_bytes(32)
     return EvmEvent(
-        tx_hash=deserialize_evm_tx_hash(tx_hash),
+        tx_ref=deserialize_evm_tx_hash(tx_ref),
         sequence_index=index,
         location_label=location_label,
         identifier=index,
@@ -158,7 +163,6 @@ def make_ethereum_event(
         amount=ONE,
         counterparty=counterparty,
         address=address,
-        product=product,
     )
 
 
@@ -256,7 +260,7 @@ def make_eth_withdrawal_and_block_events() -> list[EthWithdrawalEvent | EthBlock
         amount=FVal('0.1'),
         withdrawal_address=string_to_evm_address('0x1234567890123456789012345678901234567890'),
         is_exit=False,
-        event_identifier='eth_withdrawal_1',
+        group_identifier='eth_withdrawal_1',
     ), EthBlockEvent(
         validator_index=123456,
         timestamp=TimestampMS(1620000300000),
@@ -265,7 +269,7 @@ def make_eth_withdrawal_and_block_events() -> list[EthWithdrawalEvent | EthBlock
         fee_recipient_tracked=True,
         block_number=15000000,
         is_mev_reward=False,
-        event_identifier='eth_block_1',
+        group_identifier='eth_block_1',
     )]
 
 
@@ -301,4 +305,29 @@ def make_google_calendar_entry(
         color=color,
         auto_delete=auto_delete,
         identifier=identifier,
+    )
+
+
+def make_solana_address() -> SolanaAddress:
+    return SolanaAddress(str(Pubkey(make_random_bytes(32))))
+
+
+def make_solana_signature() -> Signature:
+    return Signature.new_unique()
+
+
+def make_eth2_deposit_event(pubkey: Eth2PubKey, depositor: ChecksumEvmAddress) -> EvmEvent:
+    """Utility function to create a standard ETH2 deposit event."""
+    return EvmEvent(
+        tx_ref=make_evm_tx_hash(),
+        sequence_index=0,
+        timestamp=ts_sec_to_ms(make_random_timestamp()),
+        location=Location.ETHEREUM,
+        location_label=depositor,
+        event_type=HistoryEventType.STAKING,
+        event_subtype=HistoryEventSubType.DEPOSIT_ASSET,
+        asset=A_ETH,
+        amount=FVal(32),
+        notes=f'Deposit 32 ETH to validator with pubkey {pubkey}. Deposit index: 123.',
+        counterparty=CPT_ETH2,
     )

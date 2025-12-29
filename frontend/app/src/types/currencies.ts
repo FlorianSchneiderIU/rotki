@@ -31,6 +31,11 @@ const CURRENCY_INR = 'INR';
 const CURRENCY_DKK = 'DKK';
 const CURRENCY_PLN = 'PLN';
 const CURRENCY_NGN = 'NGN';
+const CURRENCY_AED = 'AED';
+const CURRENCY_CZK = 'CZK';
+const CURRENCY_ILS = 'ILS';
+const CURRENCY_MXN = 'MXN';
+const CURRENCY_PHP = 'PHP';
 
 // eslint-disable-next-line unused-imports/no-unused-vars
 const SUPPORTED_CURRENCIES = [
@@ -58,6 +63,11 @@ const SUPPORTED_CURRENCIES = [
   CURRENCY_DKK,
   CURRENCY_PLN,
   CURRENCY_NGN,
+  CURRENCY_AED,
+  CURRENCY_CZK,
+  CURRENCY_ILS,
+  CURRENCY_MXN,
+  CURRENCY_PHP,
 ] as const;
 
 export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
@@ -87,6 +97,11 @@ export const useCurrencies = createSharedComposable(() => {
     new Currency(t('currencies.dkk'), CURRENCY_DKK, 'kr'),
     new Currency(t('currencies.pln'), CURRENCY_PLN, 'zł'),
     new Currency(t('currencies.ngn'), CURRENCY_NGN, '₦'),
+    new Currency(t('currencies.aed'), CURRENCY_AED, 'Dh'),
+    new Currency(t('currencies.czk'), CURRENCY_CZK, 'Kč'),
+    new Currency(t('currencies.ils'), CURRENCY_ILS, '₪'),
+    new Currency(t('currencies.mxn'), CURRENCY_MXN, 'Mex$'),
+    new Currency(t('currencies.php'), CURRENCY_PHP, '₱'),
     new Currency('Bitcoin', CURRENCY_BTC, '₿', true),
     new Currency('Ether', CURRENCY_ETH, 'Ξ', true),
   ]);

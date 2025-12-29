@@ -1,6 +1,7 @@
 import pytest
 
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS, CPT_GITCOIN
+from rotkehlchen.chain.decoding.constants import CPT_GAS
+from rotkehlchen.chain.evm.decoding.constants import CPT_GITCOIN
 from rotkehlchen.chain.evm.decoding.eas.constants import CPT_EAS
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
@@ -8,22 +9,23 @@ from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import Location, TimestampMS, deserialize_evm_tx_hash
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.parametrize('optimism_accounts', [['0x2B888954421b424C5D3D9Ce9bB67c9bD47537d12']])
 def test_attest_optimism(optimism_inquirer, optimism_accounts):
-    tx_hex = deserialize_evm_tx_hash('0xf843f6d09e8dec2ee2d1b5fdeade9a9744857f598cf593b6c259166c32dfd05a')  # noqa: E501
-    evmhash = deserialize_evm_tx_hash(tx_hex)
+    tx_hash = deserialize_evm_tx_hash('0xf843f6d09e8dec2ee2d1b5fdeade9a9744857f598cf593b6c259166c32dfd05a')  # noqa: E501
     user_address = optimism_accounts[0]
-    events, _ = get_decoded_events_of_transaction(evm_inquirer=optimism_inquirer, tx_hash=tx_hex)
+    events, _ = get_decoded_events_of_transaction(evm_inquirer=optimism_inquirer, tx_hash=tx_hash)
     timestamp = TimestampMS(1700569289000)
     gas_amount_str = '0.000136427902240075'
     expected_events = [
         EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=0,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -35,7 +37,7 @@ def test_attest_optimism(optimism_inquirer, optimism_accounts):
             notes=f'Burn {gas_amount_str} ETH for gas',
             counterparty=CPT_GAS,
         ), EvmEvent(
-            tx_hash=evmhash,
+            tx_ref=tx_hash,
             sequence_index=10,
             timestamp=timestamp,
             location=Location.OPTIMISM,
@@ -63,7 +65,7 @@ def test_attest_gitcoin_mint(arbitrum_one_inquirer, arbitrum_one_accounts):
     )
     user_address, timestamp, gas, amount, uid = arbitrum_one_accounts[0], TimestampMS(1744315569000), '0.000010227716042', '0.0007722', '0x07afc8aecb89b381f08f87491901614b55059f2432c21e46681d9f5de2a13ced'  # noqa: E501
     expected_events = [EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=0,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -75,7 +77,7 @@ def test_attest_gitcoin_mint(arbitrum_one_inquirer, arbitrum_one_accounts):
         notes=f'Burn {gas} ETH for gas',
         counterparty=CPT_GAS,
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=1,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,
@@ -88,7 +90,7 @@ def test_attest_gitcoin_mint(arbitrum_one_inquirer, arbitrum_one_accounts):
         counterparty=CPT_GITCOIN,
         address=string_to_evm_address('0xeb2AddD987c2C4efF3237Ed6d829c214198c0189'),
     ), EvmEvent(
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=11,
         timestamp=timestamp,
         location=Location.ARBITRUM_ONE,

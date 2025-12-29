@@ -3,10 +3,11 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
+from rotkehlchen.assets.utils import asset_normalized_value
 from rotkehlchen.chain.ethereum.interfaces.balances import BalancesSheetType, ProtocolWithBalance
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_GLM
+from rotkehlchen.db.settings import CachedSettings
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.inquirer import Inquirer
@@ -41,7 +42,7 @@ class OctantBalances(ProtocolWithBalance):
         balances: BalancesSheetType = defaultdict(BalanceSheet)
 
         # fetch deposit events
-        addresses_with_deposits = list(self.addresses_with_deposits(products=None))
+        addresses_with_deposits = list(self.addresses_with_deposits())
 
         deposits_contract = self.evm_inquirer.contracts.contract(OCTANT_DEPOSITS)
         try:
@@ -55,7 +56,10 @@ class OctantBalances(ProtocolWithBalance):
             log.error(f'Failed to query octant locked balances due to {e!s}')
             return balances
 
-        glm_price = Inquirer.find_usd_price(self.glm)
+        glm_price = Inquirer.find_price(
+            from_asset=self.glm,
+            to_asset=CachedSettings().main_currency,
+        )
         for idx, result in enumerate(call_output):
             address = addresses_with_deposits[idx]
             amount_raw = deposits_contract.decode(result, 'deposits', arguments=[address])[0]
@@ -63,7 +67,7 @@ class OctantBalances(ProtocolWithBalance):
             if amount == ZERO:
                 continue
 
-            balance = Balance(amount=amount, usd_value=glm_price * amount)
+            balance = Balance(amount=amount, value=glm_price * amount)
             balances[address].assets[self.glm][self.counterparty] += balance
 
         return balances

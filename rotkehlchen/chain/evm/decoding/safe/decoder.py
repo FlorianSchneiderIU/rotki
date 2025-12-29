@@ -1,13 +1,15 @@
 import logging
 from collections.abc import Callable
+from typing import Final
 
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.evm.constants import ZERO_32_BYTES_HEX_NO_PREFIX
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
@@ -19,6 +21,8 @@ from .constants import CPT_SAFE_MULTISIG
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
+
+CHANGED_MASTER_COPY_TOPIC: Final = b'\x75\xe4\x1b\xc3\x5f\xf1\xbf\x14\xd8\x1d\x1d\x2f\x64\x9c\x00\x84\xa0\xf9\x74\xf9\x28\x9c\x80\x3e\xc9\x89\x8e\xee\xc4\xc8\xd0\xb8'  # noqa: E501
 
 
 def _get_maybe_indexed_address(context: DecoderContext, details: str) -> ChecksumEvmAddress | None:
@@ -38,13 +42,13 @@ def _get_maybe_indexed_address(context: DecoderContext, details: str) -> Checksu
     return address
 
 
-class SafemultisigDecoder(DecoderInterface):
-    def _decode_added_owner(self, context: DecoderContext) -> DecodingOutput:
+class SafemultisigDecoder(EvmDecoderInterface):
+    def _decode_added_owner(self, context: DecoderContext) -> EvmDecodingOutput:
         if (address := _get_maybe_indexed_address(context, details='safe owner addition')) is None:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if not self.base.any_tracked([address, context.transaction.from_address, context.tx_log.address]):  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         event = self.base.make_event_from_transaction(
             transaction=context.transaction,
@@ -58,14 +62,14 @@ class SafemultisigDecoder(DecoderInterface):
             counterparty=CPT_SAFE_MULTISIG,
             address=context.tx_log.address,
         )
-        return DecodingOutput(events=[event])
+        return EvmDecodingOutput(events=[event])
 
-    def _decode_removed_owner(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_removed_owner(self, context: DecoderContext) -> EvmDecodingOutput:
         if (address := _get_maybe_indexed_address(context, details='safe owner addition')) is None:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if not self.base.any_tracked([address, context.transaction.from_address, context.tx_log.address]):  # noqa: E501
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         event = self.base.make_event_from_transaction(
             transaction=context.transaction,
@@ -79,12 +83,12 @@ class SafemultisigDecoder(DecoderInterface):
             counterparty=CPT_SAFE_MULTISIG,
             address=context.tx_log.address,
         )
-        return DecodingOutput(events=[event])
+        return EvmDecodingOutput(events=[event])
 
-    def _decode_changed_threshold(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_changed_threshold(self, context: DecoderContext) -> EvmDecodingOutput:
         threshold = int.from_bytes(context.tx_log.data[:32])
         if not self.base.any_tracked([context.transaction.from_address, context.tx_log.address]):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         event = self.base.make_event_from_transaction(
             transaction=context.transaction,
@@ -98,20 +102,23 @@ class SafemultisigDecoder(DecoderInterface):
             counterparty=CPT_SAFE_MULTISIG,
             address=context.tx_log.address,
         )
-        return DecodingOutput(events=[event])
+        return EvmDecodingOutput(events=[event])
 
-    def _decode_execution_success(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_execution_success(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decodes the execution success message. We only add an event only if other
         safe specific events are not included for this safe. That's in order to not
         have too many events spamming if owners are added, removed etc."""
         for event in context.decoded_events:
             if event.counterparty == CPT_SAFE_MULTISIG and event.address == context.tx_log.address:
-                return DEFAULT_DECODING_OUTPUT  # only add if no other safe-specific events exist
+                return DEFAULT_EVM_DECODING_OUTPUT  # only add if no other safe-specific events exist  # noqa: E501
 
         if not self.base.any_tracked([context.transaction.from_address, context.tx_log.address]):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         safe_tx_hash = context.tx_log.data[:32].hex()
+        if safe_tx_hash == ZERO_32_BYTES_HEX_NO_PREFIX and len(context.tx_log.topics) > 1:
+            safe_tx_hash = context.tx_log.topics[1].hex()  # safe tx hash can be in topics in some cases  # noqa: E501
+
         event = self.base.make_event_from_transaction(
             transaction=context.transaction,
             tx_log=context.tx_log,
@@ -124,11 +131,11 @@ class SafemultisigDecoder(DecoderInterface):
             counterparty=CPT_SAFE_MULTISIG,
             address=context.tx_log.address,
         )
-        return DecodingOutput(events=[event])
+        return EvmDecodingOutput(events=[event])
 
-    def decode_safe_creation(self, context: DecoderContext) -> DecodingOutput:
+    def decode_safe_creation(self, context: DecoderContext) -> EvmDecodingOutput:
         if not self.base.any_tracked([context.transaction.from_address, context.tx_log.address]):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         num_owners = (len(context.tx_log.data) // 32) - 5  # data has 5 elements that are not the addresses  # noqa: E501
         owners = []
@@ -155,11 +162,11 @@ class SafemultisigDecoder(DecoderInterface):
             counterparty=CPT_SAFE_MULTISIG,
             address=context.tx_log.address,
         )
-        return DecodingOutput(events=[event])
+        return EvmDecodingOutput(events=[event])
 
-    def _decode_execution_failure(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_execution_failure(self, context: DecoderContext) -> EvmDecodingOutput:
         if not self.base.any_tracked([context.transaction.from_address, context.tx_log.address]):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         safe_tx_hash = context.tx_log.data[:32].hex()
         event = self.base.make_event_from_transaction(
@@ -174,7 +181,28 @@ class SafemultisigDecoder(DecoderInterface):
             counterparty=CPT_SAFE_MULTISIG,
             address=context.tx_log.address,
         )
-        return DecodingOutput(events=[event])
+        return EvmDecodingOutput(events=[event])
+
+    def _decode_changed_master_copy(self, context: DecoderContext) -> EvmDecodingOutput:
+        if (address := _get_maybe_indexed_address(context, details='safe master copy change')) is None:  # noqa: E501
+            return DEFAULT_EVM_DECODING_OUTPUT
+
+        if not self.base.any_tracked([context.transaction.from_address, context.tx_log.address]):
+            return DEFAULT_EVM_DECODING_OUTPUT
+
+        event = self.base.make_event_from_transaction(
+            transaction=context.transaction,
+            tx_log=context.tx_log,
+            event_type=HistoryEventType.INFORMATIONAL,
+            event_subtype=HistoryEventSubType.UPDATE,
+            asset=A_ETH,
+            amount=ZERO,
+            location_label=context.transaction.from_address,
+            notes=f'Upgrade Safe master copy to {address} for multisig {context.tx_log.address}',
+            counterparty=CPT_SAFE_MULTISIG,
+            address=context.tx_log.address,
+        )
+        return EvmDecodingOutput(events=[event])
 
     # -- DecoderInterface methods
 
@@ -186,6 +214,7 @@ class SafemultisigDecoder(DecoderInterface):
                 b'a\x0f\x7f\xf2\xb3\x04\xae\x89\x03\xc3\xdet\xc6\x0cj\xb1\xf7\xd6"k?R\xc5\x16\x19\x05\xbbZ\xd4\x03\x9c\x93': self._decode_changed_threshold,  # noqa: E501
                 b"D.q_bcF\xe8\xc5C\x81\x00-\xa6\x14\xf6+\xee\x8d'8e5\xb2R\x1e\xc8T\x08\x98Un": self._decode_execution_success,  # noqa: E501
                 b'#B\x8b\x18\xac\xfb>\xa6K\x08\xdc\x0c\x1d)n\xa9\xc0\x97\x02\xc0\x90\x83\xcaRr\xe6M\x11[h}#': self._decode_execution_failure,  # noqa: E501
+                CHANGED_MASTER_COPY_TOPIC: self._decode_changed_master_copy,
             },
             b'\x16\x88\xf0\xb9': {  # createProxyWithNonce
                 b'\x14\x1d\xf8h\xa63\x1a\xf5(\xe3\x8c\x83\xb7\xaa\x03\xed\xc1\x9b\xe6n7\xaeg\xf9([\xf4\xf8\xe3\xc6\xa1\xa8': self.decode_safe_creation,  # noqa: E501

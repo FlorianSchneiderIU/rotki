@@ -1,10 +1,11 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 from unittest.mock import patch
 
 import pytest
 
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.accounts import BlockchainAccountData
+from rotkehlchen.chain.decoding.constants import CPT_GAS
 from rotkehlchen.chain.ethereum.modules.eth2.constants import (
     CONSOLIDATION_REQUEST_CONTRACT,
     CPT_ETH2,
@@ -18,7 +19,6 @@ from rotkehlchen.chain.ethereum.modules.eth2.structures import (
     ValidatorStatus,
     ValidatorType,
 )
-from rotkehlchen.chain.evm.decoding.constants import CPT_GAS
 from rotkehlchen.chain.evm.types import string_to_evm_address
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_ETH
@@ -36,7 +36,11 @@ from rotkehlchen.history.events.structures.eth2 import (
 )
 from rotkehlchen.history.events.structures.evm_event import EvmEvent
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.tests.utils.factories import make_evm_address, make_evm_tx_hash
+from rotkehlchen.tests.utils.factories import (
+    make_eth2_deposit_event,
+    make_evm_address,
+    make_evm_tx_hash,
+)
 from rotkehlchen.types import (
     ChainID,
     Eth2PubKey,
@@ -55,8 +59,9 @@ if TYPE_CHECKING:
     from rotkehlchen.history.events.structures.base import HistoryBaseEntry
     from rotkehlchen.types import ChecksumEvmAddress
 
-ADDR1 = string_to_evm_address('0xfeF0E7635281eF8E3B705e9C5B86e1d3B0eAb397')
-ADDR2 = string_to_evm_address('0x00F8a0D8EE1c21151BCcB416bCa1C152f9952D19')
+HOUR_IN_MILLISECONDS: Final = 3600000
+ADDR1: Final = string_to_evm_address('0xfeF0E7635281eF8E3B705e9C5B86e1d3B0eAb397')
+ADDR2: Final = string_to_evm_address('0x00F8a0D8EE1c21151BCcB416bCa1C152f9952D19')
 
 
 @pytest.mark.parametrize('eth2_mock_data', [{
@@ -141,12 +146,12 @@ def test_ownership_proportion(eth2: 'Eth2', database):
     validators = [
         ValidatorDetails(
             validator_index=9,
-            public_key=Eth2PubKey('0xb016e31f633a21fbe42a015152399361184f1e2c0803d89823c224994af74a561c4ad8cfc94b18781d589d03e952cd5b'),
+            public_key=(pubkey_1 := Eth2PubKey('0xb016e31f633a21fbe42a015152399361184f1e2c0803d89823c224994af74a561c4ad8cfc94b18781d589d03e952cd5b')),  # noqa: E501
             ownership_proportion=FVal(0.5),
             validator_type=ValidatorType.BLS,
         ), ValidatorDetails(
             validator_index=1647,
-            public_key=Eth2PubKey('0xb80777b022a115579f22674883996d0a904e51afaf0ddef4e577c7bc72ec4e14fc7714b8c58fb77ceb7b5162809d1475'),
+            public_key=(pubkey_2 := Eth2PubKey('0xb80777b022a115579f22674883996d0a904e51afaf0ddef4e577c7bc72ec4e14fc7714b8c58fb77ceb7b5162809d1475')),  # noqa: E501
             ownership_proportion=FVal(0.7),
             validator_type=ValidatorType.DISTRIBUTING,
         ), ValidatorDetails(  # This validator is tracked but not owned by any of the addresses
@@ -158,6 +163,14 @@ def test_ownership_proportion(eth2: 'Eth2', database):
     ]
     with database.user_write() as write_cursor:
         dbeth2.add_or_update_validators(write_cursor, validators)
+        # Create deposit events to link depositor addresses with validators
+        DBHistoryEvents(database).add_history_events(
+            write_cursor=write_cursor,
+            history=[
+                make_eth2_deposit_event(pubkey=pubkey_1, depositor=ADDR1),
+                make_eth2_deposit_event(pubkey=pubkey_2, depositor=ADDR2),
+            ],
+        )
 
     result = eth2.get_validators(ignore_cache=True, addresses=[ADDR1, ADDR2], validator_indices=None)  # noqa: E501
     assert result[0].validator_index == 9 and result[0].ownership_proportion == FVal(0.5), 'Proportion from the DB should be used'  # noqa: E501
@@ -176,11 +189,12 @@ def test_deposits_pubkey_re(eth2: 'Eth2', database):
     pubkey2 = Eth2PubKey('0x96dab7564980306b3052649e523747fb613ebf91308a788350bbd16435f55f8d3a7090a2ec73fe636eed66ada6e52ad5')  # noqa: E501
     tx_hash1 = make_evm_tx_hash()
     tx_hash2 = make_evm_tx_hash()
+    tx_hash3 = make_evm_tx_hash()
     with database.user_write() as cursor:
         dbevents.add_history_events(
             write_cursor=cursor,
             history=[EvmEvent(
-                tx_hash=tx_hash1,
+                tx_ref=tx_hash1,
                 sequence_index=0,
                 timestamp=TimestampMS(1),
                 location=Location.ETHEREUM,
@@ -192,7 +206,7 @@ def test_deposits_pubkey_re(eth2: 'Eth2', database):
                 notes=f'Deposit 32 ETH to validator with pubkey {pubkey1}. Deposit index: 519464. Withdrawal credentials: 0x00c5af874f28011e2f559e1214131da5f11b12845921b0d8e436f0cd37d683a8',  # noqa: E501
                 counterparty=CPT_ETH2,
             ), EvmEvent(
-                tx_hash=tx_hash1,
+                tx_ref=tx_hash1,
                 sequence_index=1,
                 timestamp=TimestampMS(2),
                 location=Location.ETHEREUM,
@@ -203,7 +217,7 @@ def test_deposits_pubkey_re(eth2: 'Eth2', database):
                 notes='Some fees',
                 counterparty=CPT_GAS,
             ), EvmEvent(
-                tx_hash=tx_hash2,
+                tx_ref=tx_hash2,
                 sequence_index=0,
                 timestamp=TimestampMS(3),
                 location=Location.ETHEREUM,
@@ -214,13 +228,17 @@ def test_deposits_pubkey_re(eth2: 'Eth2', database):
                 amount=FVal(32),
                 notes=f'Deposit 32 ETH to validator with pubkey {pubkey2}. Deposit index: 529464. Withdrawal credentials: 0x00a5a0074f28011e2f559e1214131da5f11b12845921b0d8e436f0cd37d683a8',  # noqa: E501
                 counterparty=CPT_ETH2,
+            ), EthDepositEvent(
+                tx_ref=tx_hash3,
+                validator_index=100,
+                sequence_index=178,
+                timestamp=TimestampMS(1674558203000),
+                amount=FVal('32'),
+                depositor=(depositer_3 := make_evm_address()),
             )],
         )
 
-    result = eth2._get_saved_pubkey_to_deposit_address()
-    assert len(result) == 2
-    assert result[pubkey1] == ADDR1
-    assert result[pubkey2] == ADDR2
+    assert eth2._get_saved_deposit_addresses() == {ADDR1, ADDR2, depositer_3}
 
 
 @pytest.mark.parametrize('ethereum_accounts', [['0x0fdAe061cAE1Ad4Af83b27A96ba5496ca992139b', '0xF4fEae08C1Fa864B64024238E33Bfb4A3Ea7741d']])  # noqa: E501
@@ -300,7 +318,7 @@ def test_eth_validators_performance(eth2, database, ethereum_accounts):
                 block_number=block_number + 1,
                 is_mev_reward=True,
             ), EvmEvent(
-                tx_hash=tx_hash,
+                tx_ref=tx_hash,
                 sequence_index=0,
                 timestamp=TimestampMS(timestampms + (4 * (HOUR_IN_SECONDS * 1000))),
                 location=Location.ETHEREUM,
@@ -312,7 +330,7 @@ def test_eth_validators_performance(eth2, database, ethereum_accounts):
                 notes=f'Received {mev_reward_1} ETH from {mev_builder_address}',
                 extra_data={'validator_index': vindex1},
             ), EvmEvent(
-                tx_hash=tx_hash_2,
+                tx_ref=tx_hash_2,
                 sequence_index=0,
                 timestamp=TimestampMS(timestampms + (5 * (HOUR_IN_SECONDS * 1000))),
                 location=Location.ETHEREUM,
@@ -399,9 +417,11 @@ def test_eth_validators_performance(eth2, database, ethereum_accounts):
     assert performance['validators'] == {}
 
 
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.parametrize('ethereum_accounts', [['0x0fdAe061cAE1Ad4Af83b27A96ba5496ca992139b']])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
+@pytest.mark.parametrize('premium_limits_override', [{'eth_staked_limit': 8096}])
 def test_eth_accumulating_validators_performance(
         eth2: 'Eth2',
         database: 'DBHandler',
@@ -425,7 +445,6 @@ def test_eth_accumulating_validators_performance(
     - exit of validator 4
     - block reward of 0.05 ETH for validator 1
     """
-    eth2.premium._cached_limits = {'eth_staked_limit': 8096}  # type: ignore  # todo: Set those by fixture. ignore is since we only set the one relevant limit
     dbevents = DBHistoryEvents(database)
     dbeth2 = DBEth2(database)
     validators = [(validator1 := ValidatorDetails(
@@ -448,7 +467,7 @@ def test_eth_accumulating_validators_performance(
 
     tx_hash_1, timestamp, user_address, hour_in_ms = make_evm_tx_hash(), TimestampMS(1746119141000), ethereum_accounts[0], ts_sec_to_ms(Timestamp(HOUR_IN_SECONDS))  # noqa: E501
     events: list[HistoryBaseEntry] = [EthDepositEvent(
-        tx_hash=tx_hash_1,
+        tx_ref=tx_hash_1,
         validator_index=validator.validator_index,  # type: ignore[arg-type]  # validator_index has been set
         sequence_index=idx,
         timestamp=timestamp,
@@ -456,14 +475,14 @@ def test_eth_accumulating_validators_performance(
         depositor=user_address,
     ) for idx, validator in enumerate(validators)]
     events.extend([EthDepositEvent(
-        tx_hash=make_evm_tx_hash(),
+        tx_ref=make_evm_tx_hash(),
         validator_index=validator3.validator_index,  # type: ignore[arg-type]
         sequence_index=1,
         timestamp=TimestampMS(timestamp + (1 * hour_in_ms)),
         amount=FVal('64'),
         depositor=user_address,
     ), EthDepositEvent(
-        tx_hash=make_evm_tx_hash(),
+        tx_ref=make_evm_tx_hash(),
         validator_index=validator4.validator_index,  # type: ignore[arg-type]
         sequence_index=1,
         timestamp=TimestampMS(timestamp + (1 * hour_in_ms)),
@@ -476,7 +495,7 @@ def test_eth_accumulating_validators_performance(
         withdrawal_address=user_address,
         is_exit=False,
     ), EvmEvent(
-        tx_hash=make_evm_tx_hash(),
+        tx_ref=make_evm_tx_hash(),
         sequence_index=1,
         timestamp=TimestampMS(timestamp + (3 * hour_in_ms)),
         location=Location.ETHEREUM,
@@ -511,7 +530,7 @@ def test_eth_accumulating_validators_performance(
         is_mev_reward=False,
     )])
     events.extend([EvmEvent(
-        tx_hash=make_evm_tx_hash(),
+        tx_ref=make_evm_tx_hash(),
         sequence_index=1,
         timestamp=TimestampMS(timestamp + (40 * hour_in_ms)),
         location=Location.ETHEREUM,
@@ -557,7 +576,7 @@ def test_eth_accumulating_validators_performance(
         }
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.parametrize('ethereum_accounts', [['0x0fdAe061cAE1Ad4Af83b27A96ba5496ca992139b', '0xF4fEae08C1Fa864B64024238E33Bfb4A3Ea7741d']])  # noqa: E501
 def test_eth_validators_performance_recent(eth2, database, ethereum_accounts):
@@ -651,7 +670,7 @@ def test_combine_block_with_tx_events(eth2, database):
         ])
         database.add_blockchain_accounts(write_cursor, [BlockchainAccountData(chain=SupportedBlockchain.ETHEREUM, address=vindex1_address)])  # noqa: E501
 
-        dbevmtx.add_evm_transactions(
+        dbevmtx.add_transactions(
             write_cursor=write_cursor,
             evm_transactions=[EvmTransaction(
                 tx_hash=tx_hash,
@@ -688,7 +707,7 @@ def test_combine_block_with_tx_events(eth2, database):
                 block_number=block_number,
                 is_mev_reward=True,
             ), EvmEvent(
-                tx_hash=tx_hash,
+                tx_ref=tx_hash,
                 sequence_index=0,
                 timestamp=timestampms,
                 location=Location.ETHEREUM,
@@ -707,12 +726,12 @@ def test_combine_block_with_tx_events(eth2, database):
         events = dbevents.get_history_events_internal(
             cursor=cursor,
             filter_query=HistoryEventFilterQuery.make(),
-                        group_by_event_ids=False,
+                        aggregate_by_group_ids=False,
         )
 
     modified_event = EvmEvent(
         identifier=3,
-        tx_hash=tx_hash,
+        tx_ref=tx_hash,
         sequence_index=2,
         timestamp=timestampms,
         location=Location.ETHEREUM,
@@ -721,8 +740,8 @@ def test_combine_block_with_tx_events(eth2, database):
         asset=A_ETH,
         amount=mev_reward,
         location_label=vindex1_address,
-        notes=f'Received {mev_reward} ETH from {mev_builder_address} as mev reward for block {block_number} in {tx_hash.hex()}',  # pylint: disable=no-member  # noqa: E501
-        event_identifier=EthBlockEvent.form_event_identifier(block_number),
+        notes=f'Received {mev_reward} ETH from {mev_builder_address} as mev reward for block {block_number} in {tx_hash!s}',  # noqa: E501
+        group_identifier=EthBlockEvent.form_group_identifier(block_number),
         extra_data={'validator_index': vindex1},
     )
     assert modified_event == events[2]
@@ -732,7 +751,7 @@ def test_combine_block_with_tx_events(eth2, database):
         assert hidden_ids == [2]
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.freeze_time('2023-04-30 21:52:55 GMT')
 def test_refresh_activated_validators_deposits(eth2, database):
@@ -759,7 +778,7 @@ def test_refresh_activated_validators_deposits(eth2, database):
 
     starting_events = [EthDepositEvent(
         identifier=1,
-        tx_hash=make_evm_tx_hash(),
+        tx_ref=make_evm_tx_hash(),
         validator_index=validator1.validator_index,
         sequence_index=1,
         timestamp=TimestampMS(360000),
@@ -767,7 +786,7 @@ def test_refresh_activated_validators_deposits(eth2, database):
         depositor=string_to_evm_address('0xA3E5ff1230a38243BB64Dc1423Df40B63a4CA0c3'),
     ), EthDepositEvent(
         identifier=2,
-        tx_hash=make_evm_tx_hash(),
+        tx_ref=make_evm_tx_hash(),
         validator_index=UNKNOWN_VALIDATOR_INDEX,  # actual value should be 207003
         sequence_index=2,
         timestamp=TimestampMS(460000),
@@ -776,7 +795,7 @@ def test_refresh_activated_validators_deposits(eth2, database):
         extra_data={'public_key': validator2.public_key},
     ), EthDepositEvent(
         identifier=3,
-        tx_hash=make_evm_tx_hash(),
+        tx_ref=make_evm_tx_hash(),
         validator_index=UNKNOWN_VALIDATOR_INDEX,  # actual value should be 4523
         sequence_index=3,
         timestamp=TimestampMS(660000),
@@ -816,7 +835,7 @@ def test_refresh_activated_validators_deposits(eth2, database):
         assert set(dbeth2.get_validators(cursor)) == {validator3, validator1, validator2}
 
 
-@pytest.mark.vcr
+@pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.freeze_time('2024-02-04 09:00:00 GMT')
 def test_query_chunked_endpoint_with_offset_pagination(eth2):
@@ -865,7 +884,7 @@ def test_get_active_validator_indices(database):
 
         # Add consolidation event to make consolidated_index consolidated
         dbevents.add_history_events(write_cursor, [EvmEvent(
-            tx_hash=make_evm_tx_hash(),
+            tx_ref=make_evm_tx_hash(),
             sequence_index=1,
             timestamp=TimestampMS(1699801559000),
             location=Location.ETHEREUM,
@@ -963,6 +982,97 @@ def test_staking_performance_division_by_zero_protection(eth2) -> None:
         assert FVal(validator_apr['apr']) == ZERO
 
 
+@pytest.mark.parametrize('start_with_valid_premium', [True])
+@pytest.mark.parametrize('ethereum_accounts', [[make_evm_address()]])
+def test_accumulating_validator_exit_pnl_with_multiple_deposits(
+        eth2: 'Eth2',
+        database: 'DBHandler',
+        ethereum_accounts: list['ChecksumEvmAddress'],
+) -> None:
+    """Test that exit PnL calculation for accumulating validators with multiple deposits is correct.
+    Regression test for https://github.com/rotki/rotki/issues/11146
+
+    It reproduces the issue where an accumulating validator (0x02 type) with:
+    - Initial 32 ETH deposit
+    - Multiple additional 8 ETH deposits (total 64 ETH deposited)
+    - Accumulated consensus rewards through skimming withdrawals
+    - Exits with a balance higher than deposits
+
+    The issue was that the exit PnL incorrectly counted the entire difference between
+    exit amount and deposits as profit, even though consensus rewards were already
+    accounted for in withdrawals.
+    """  # noqa: E501
+    validator = ValidatorDetails(
+        validator_index=123456,
+        validator_type=ValidatorType.ACCUMULATING,
+        public_key=Eth2PubKey('0xb016e31f633a21fbe42a015152399361184f1e2c0803d89823c224994af74a561c4ad8cfc94b18781d589d03e952cd5b'),
+    )
+    assert validator.validator_index is not None
+    events = [EthDepositEvent(  # First deposit
+            tx_ref=make_evm_tx_hash(),
+            validator_index=validator.validator_index,
+            sequence_index=0,
+            timestamp=(start_ts := TimestampMS(1700000000000)),
+            amount=MIN_EFFECTIVE_BALANCE,
+            depositor=(user_address := ethereum_accounts[0]),
+        ), *[  # Additional deposits of 8 ETH
+            EthDepositEvent(
+                tx_ref=make_evm_tx_hash(),
+                validator_index=validator.validator_index,
+                sequence_index=i + 1,
+                timestamp=TimestampMS(start_ts + (i + 1) * HOUR_IN_MILLISECONDS),
+                amount=FVal('8'),
+                depositor=user_address,
+            )
+            for i in range(4)
+        ], EthWithdrawalEvent(  # first skimming withdrawal
+            validator_index=validator.validator_index,
+            timestamp=TimestampMS(start_ts + 24 * HOUR_IN_MILLISECONDS),
+            amount=FVal('1'),
+            withdrawal_address=user_address,
+            is_exit=False,
+        ), EthWithdrawalEvent(  # second skimming withdrawal
+            validator_index=validator.validator_index,
+            timestamp=TimestampMS(start_ts + 48 * HOUR_IN_MILLISECONDS),
+            amount=FVal('1'),
+            withdrawal_address=user_address,
+            is_exit=False,
+        ), EthWithdrawalEvent(  # exit withdrawal
+            validator_index=validator.validator_index,
+            timestamp=TimestampMS(start_ts + 72 * HOUR_IN_MILLISECONDS),
+            amount=FVal('66'),
+            withdrawal_address=user_address,
+            is_exit=True,
+        ),
+    ]
+
+    with database.user_write() as write_cursor:
+        DBEth2(database).add_or_update_validators(write_cursor, [validator])
+        DBHistoryEvents(database).add_history_events(write_cursor, events)
+
+    with (
+        patch('rotkehlchen.chain.ethereum.modules.eth2.beacon.BeaconInquirer.get_validator_data', return_value=[validator]),  # noqa: E501
+        patch('rotkehlchen.chain.ethereum.modules.eth2.eth2.Eth2._check_eth_staking_limit'),
+    ):
+        performance = eth2.get_performance(
+            from_ts=ts_ms_to_sec(start_ts),
+            to_ts=ts_ms_to_sec(TimestampMS(start_ts + 100 * HOUR_IN_MILLISECONDS)),
+            limit=10,
+            offset=0,
+            ignore_cache=True,
+        )
+
+    validator_performance = performance['validators'][validator.validator_index]
+    # The validator earned 2 ETH in consensus rewards through skimming withdrawals.
+    # When it exits with 66 ETH (64 deposited + 2 rewards), the exit PnL should be 0
+    # since the 2 ETH profit was already accounted for in withdrawals.
+    assert validator_performance['withdrawals'] == FVal('2')
+    # Exit PnL should be 0 (or absent) to avoid double-counting the rewards
+    assert validator_performance.get('exits', ZERO) == ZERO
+    # Total sum should equal just the consensus rewards (2 ETH)
+    assert validator_performance['sum'] == FVal('2')
+
+
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
 @pytest.mark.parametrize('network_mocking', [False])
 @pytest.mark.parametrize('ethereum_accounts', [['0xa966b01E2136953DF4F4914CfA9D37724E99a187']])
@@ -1007,7 +1117,7 @@ def test_consolidated_validator_pending_withdrawal_outstanding_rewards(
         )])
 
     with (
-        patch('rotkehlchen.chain.ethereum.modules.eth2.beacon.BeaconInquirer.get_balances', return_value={pub_key: Balance(amount=(small_balance := FVal('0.5')), usd_value=small_balance)}),  # mock a small balance (pending withdrawal) that's less than MIN_EFFECTIVE_BALANCE  # noqa: E501
+        patch('rotkehlchen.chain.ethereum.modules.eth2.beacon.BeaconInquirer.get_balances', return_value={pub_key: Balance(amount=(small_balance := FVal('0.5')), value=small_balance)}),  # mock a small balance (pending withdrawal) that's less than MIN_EFFECTIVE_BALANCE  # noqa: E501
         patch('rotkehlchen.chain.ethereum.modules.eth2.eth2.DBEth2.group_validators_by_type', return_value=(set(), set())),  # no accumulating validators  # noqa: E501
     ):
         result = eth2.get_performance(
@@ -1019,3 +1129,29 @@ def test_consolidated_validator_pending_withdrawal_outstanding_rewards(
         )
         assert result['validators'][validator_index]['outstanding_consensus_pnl'] == small_balance
         assert result['sums']['outstanding_consensus_pnl'] == small_balance
+
+
+def test_detect_and_refresh_validators_only_processes_addresses_with_deposits(eth2: 'Eth2'):
+    """Test that detect_and_refresh_validators only processes addresses that have deposit events"""
+    with eth2.database.user_write() as cursor:
+        DBHistoryEvents(eth2.database).add_history_event(
+            write_cursor=cursor,
+            event=make_eth2_deposit_event(
+                pubkey=Eth2PubKey('0xa685b19738ac8d7ee301f434f77fdbca50f7a2b8d287f4ab6f75cae251aa821576262b79ae9d58d9b458ba748968dfda'),
+                depositor=(addr_with_deposit := make_evm_address()),
+            ),
+        )
+
+    addresses_queried = []
+
+    def mock_get_eth1_address_validators(address):
+        addresses_queried.append(address)
+        return []
+
+    with (
+        patch.object(eth2.beacon_inquirer, 'get_eth1_address_validators', side_effect=mock_get_eth1_address_validators),  # noqa: E501
+        patch.object(eth2.beacon_inquirer, 'get_validator_data', return_value=[]),
+    ):
+        eth2.detect_and_refresh_validators([addr_with_deposit, make_evm_address()])
+
+    assert addresses_queried == [addr_with_deposit]

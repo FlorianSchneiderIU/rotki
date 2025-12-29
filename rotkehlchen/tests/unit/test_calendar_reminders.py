@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+import requests
 from freezegun import freeze_time
 
 from rotkehlchen.chain.base.modules.basenames.constants import CPT_BASENAMES
@@ -23,6 +24,7 @@ from rotkehlchen.tasks.calendar import (
     CalendarReminderCreator,
 )
 from rotkehlchen.tests.unit.test_ethereum_airdrops import prepare_airdrop_mock_response
+from rotkehlchen.tests.unit.test_types import LEGACY_TESTS_INDEXER_ORDER
 from rotkehlchen.tests.utils.ethereum import get_decoded_events_of_transaction
 from rotkehlchen.types import (
     ChainID,
@@ -140,13 +142,27 @@ def test_ens_expiry_calendar_reminders(
     calendar_db = DBCalendar(database)
     all_calendar_entries = calendar_db.query_calendar_entry(CalendarFilterQuery.make())
     assert all_calendar_entries['entries_total'] == 0
+    original_requests_get = requests.get
 
-    ens_events = [
-        next(x for x in get_decoded_events_of_transaction(  # decode ENS registration/renewal event and get the event with the metadata  # noqa: E501
-            evm_inquirer=ethereum_inquirer if counterparty == CPT_ENS else base_inquirer,
-            tx_hash=ens_tx_hash,
-        )[0] if x.extra_data is not None) for ens_tx_hash in ens_tx_hashes
-    ]
+    def mock_basenames_request_get(url, timeout):
+        """There is a basenames api request that fails and is excluded from the VCR. So force
+        it to fail here to avoid VCR problems.
+        """
+        if 'basenames/metadata/45236693060355741244193735256859290971350174497390063529678304497551635844272' in url:  # noqa: E501
+            raise requests.exceptions.RequestException('BOOM')
+
+        return original_requests_get(url=url, timeout=timeout)
+
+    with patch(
+        target='rotkehlchen.chain.base.modules.basenames.decoder.requests.get',
+        side_effect=mock_basenames_request_get,
+    ):
+        ens_events = [
+            next(x for x in get_decoded_events_of_transaction(  # decode ENS registration/renewal event and get the event with the metadata  # noqa: E501
+                evm_inquirer=ethereum_inquirer if counterparty == CPT_ENS else base_inquirer,
+                tx_hash=ens_tx_hash,
+            )[0] if x.extra_data is not None) for ens_tx_hash in ens_tx_hashes
+        ]
 
     reminder_creator = CalendarReminderCreator(database=database, current_ts=ts_now())
     reminder_creator.maybe_create_ens_reminders()
@@ -258,7 +274,10 @@ def test_airdrop_claim_calendar_reminders(
     assert myso_airdrop_file.exists() is False
     reminder_creator = CalendarReminderCreator(database=database, current_ts=ts_now())
 
-    with patch('rotkehlchen.chain.ethereum.airdrops.requests.get', side_effect=get_airdrop_request_mock(user_address)):  # noqa: E501
+    with (
+        patch('rotkehlchen.chain.ethereum.airdrops.requests.get', side_effect=get_airdrop_request_mock(user_address)),  # noqa: E501
+        patch('rotkehlchen.chain.ethereum.airdrops.check_linea_airdrop', side_effect=lambda addresses, database, found_data: found_data),  # noqa: E501
+    ):
         reminder_creator.maybe_create_airdrop_claim_reminder()
 
     assert (database.user_data_dir / APPDIR_NAME / AIRDROPSDIR_NAME).exists() is False  # regression check for an issue creating the airdrops folder in the wrong directory.  # noqa: E501
@@ -303,7 +322,10 @@ def test_airdrop_claim_calendar_reminders_wrong_chain(
     """
     reminder_creator = CalendarReminderCreator(database=database, current_ts=ts_now())
 
-    with patch('rotkehlchen.chain.ethereum.airdrops.requests.get', side_effect=get_airdrop_request_mock(arbitrum_one_accounts[0])):  # noqa: E501
+    with (
+        patch('rotkehlchen.chain.ethereum.airdrops.requests.get', side_effect=get_airdrop_request_mock(arbitrum_one_accounts[0])),  # noqa: E501
+        patch('rotkehlchen.chain.ethereum.airdrops._query_linea_airdrop_contract', return_value=None),  # noqa: E501
+    ):
         reminder_creator.maybe_create_airdrop_claim_reminder()
 
     new_calendar_entries = DBCalendar(database).query_calendar_entry(CalendarFilterQuery.make())
@@ -371,6 +393,7 @@ def test_l2_bridge_claim_reminders(arbitrum_one_accounts, arbitrum_one_inquirer,
 
 
 @pytest.mark.vcr(filter_query_parameters=['apikey'])
+@pytest.mark.parametrize('db_settings', LEGACY_TESTS_INDEXER_ORDER)
 @pytest.mark.freeze_time('2025-03-05 00:00:00 GMT')
 @pytest.mark.parametrize('optimism_accounts', [['0xD4dd9a1FAc6D7bBe327c2b4A5Dc3197D0B10874b']])
 def test_locked_velo_calendar_reminders(

@@ -8,17 +8,21 @@ import AccountBalanceDetails from '@/components/accounts/balances/AccountBalance
 import { useBlockchainAccountLoading } from '@/composables/accounts/blockchain/use-account-loading';
 import { usePaginationFilters } from '@/composables/use-pagination-filter';
 import { AccountBalancesTable } from '@/modules/accounts/table';
+import { useBlockchainAccountsStore } from '@/modules/accounts/use-blockchain-accounts-store';
 import { useBlockchainAccountData } from '@/modules/balances/blockchain/use-blockchain-account-data';
+import { useBalancesStore } from '@/modules/balances/use-balances-store';
 import { type LocationQuery, RouterExpandedIdsSchema } from '@/types/route';
 import { getAccountAddress } from '@/utils/blockchain/accounts/utils';
 
 const query = defineModel<LocationQuery>('query', { default: () => ({}), required: false });
+const selected = defineModel<string[] | undefined>('selected', { required: true });
 
 const props = defineProps<{
   groupId: string;
   chains: string[];
   tags?: string[];
   category: string;
+  selectionMode?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -31,6 +35,9 @@ const expanded = ref<string[]>([]);
 
 const { fetchGroupAccounts } = useBlockchainAccountData();
 
+const { balances } = storeToRefs(useBalancesStore());
+const { accounts: accountsState } = storeToRefs(useBlockchainAccountsStore());
+
 const {
   fetchData,
   pagination,
@@ -38,7 +45,7 @@ const {
   state: accounts,
 } = usePaginationFilters<BlockchainAccountWithBalance, BlockchainAccountGroupRequestPayload>(fetchGroupAccounts, {
   defaultSortBy: {
-    column: 'usdValue',
+    column: 'value',
     direction: 'desc',
   },
   extraParams: computed(() => ({
@@ -56,11 +63,10 @@ const {
     tags: props.tags,
   })),
 });
-
 useBlockchainAccountLoading(category);
 
-onMounted(() => {
-  nextTick(() => fetchData());
+watchImmediate([accountsState, balances], () => {
+  fetchData();
 });
 
 defineExpose({
@@ -81,8 +87,10 @@ defineExpose({
   >
     <template #details="{ row }">
       <AccountBalanceDetails
+        v-model:selected="selected"
         :address="getAccountAddress(row)"
         :chain="row.chain"
+        :selection-mode="selectionMode"
       />
     </template>
   </AccountBalancesTable>

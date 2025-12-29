@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import type { WelcomeMessage } from '@/types/dynamic-messages';
 import { checkIfDevelopment } from '@shared/utils';
+import { ofetch } from 'ofetch';
 import ExternalLink from '@/components/helper/ExternalLink.vue';
 import FadeTransition from '@/components/helper/FadeTransition.vue';
 import { useRandomStepper } from '@/composables/random-stepper';
-import { api } from '@/services/rotkehlchen-api';
 import { logger } from '@/utils/logging';
 
 const props = defineProps<{
@@ -17,15 +17,14 @@ const { onNavigate, onPause, onResume, step, steps } = useRandomStepper(props.me
 
 const activeItem = computed(() => props.messages[get(step) - 1]);
 
-async function fetchSvg() {
+async function fetchSvg(): Promise<string | null> {
   const url = get(activeItem).icon;
 
   if (!url || !(checkIfDevelopment() || url.startsWith(`https://raw.githubusercontent.com/rotki/data`)))
-    return;
+    return null;
 
   try {
-    const response = await api.instance.get(url);
-    return response.data;
+    return await ofetch(url, { responseType: 'text' });
   }
   catch (error: any) {
     logger.error(error);
@@ -47,8 +46,7 @@ onMounted(async () => {
 <template>
   <div
     v-if="activeItem"
-    class="flex flex-col items-start gap-4 w-full p-6 overflow-hidden rounded-lg"
-    :class="$style.card"
+    class="flex flex-col items-start gap-4 w-full p-6 overflow-hidden rounded-lg bg-[rgba(78,91,166,0.04)]"
   >
     <FadeTransition tag="div">
       <div
@@ -62,8 +60,7 @@ onMounted(async () => {
           class="bg-white rounded-[0.625rem] p-3"
         >
           <div
-            class="object-contain text-rui-primary h-6 w-6"
-            :class="$style.icon"
+            class="object-contain text-rui-primary h-6 w-6 [&_svg_path]:!fill-rui-primary"
             v-html="svg"
           />
         </div>
@@ -73,7 +70,7 @@ onMounted(async () => {
         >
           {{ activeItem.header }}
         </div>
-        <div class="text-body-1 text-rui-text-secondary">
+        <div class="text-body-1 text-rui-text-secondary whitespace-break-spaces">
           {{ activeItem.text }}
         </div>
       </div>
@@ -103,17 +100,3 @@ onMounted(async () => {
     </div>
   </div>
 </template>
-
-<style module lang="scss">
-.card {
-  background: rgba(78, 91, 166, 0.04);
-}
-
-.icon {
-  svg {
-    path {
-      fill: rgb(var(--rui-primary-main)) !important;
-    }
-  }
-}
-</style>

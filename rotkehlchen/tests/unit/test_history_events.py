@@ -32,7 +32,7 @@ def test_serialize_with_invalid_type_subtype():
     event_subtype = HistoryEventSubType.SPEND
     assert event_subtype not in EVENT_CATEGORY_MAPPINGS[event_type]
     event = HistoryEvent(
-        event_identifier='1',
+        group_identifier='1',
         sequence_index=1,
         timestamp=TimestampMS(1),
         location=Location.KRAKEN,
@@ -53,7 +53,7 @@ def test_serialize_with_invalid_type_subtype():
             'asset': 'ETH',
             'amount': '1',
             'entry_type': 'history event',
-            'event_identifier': '1',
+            'group_identifier': '1',
             'event_subtype': 'spend',
             'event_type': 'transfer',
             'extra_data': None,
@@ -74,12 +74,12 @@ def test_informational_events(database: 'DBHandler', base_accounts: list[Checksu
     tx = make_ethereum_transaction()
     dbevmtx = DBEvmTx(database)
     with dbevmtx.db.user_write() as cursor:
-        dbevmtx.add_evm_transactions(cursor, [tx], relevant_address=base_accounts[0])
+        dbevmtx.add_transactions(cursor, [tx], relevant_address=base_accounts[0])
 
     with database.user_write() as write_cursor:
         dbevents.add_history_events(write_cursor, [
             EvmEvent(
-                tx_hash=tx.tx_hash,
+                tx_ref=tx.tx_hash,
                 sequence_index=174,
                 timestamp=TimestampMS(0),
                 location=Location.BASE,
@@ -91,7 +91,7 @@ def test_informational_events(database: 'DBHandler', base_accounts: list[Checksu
                 notes='HOP-LP-ETH spending approval of by 0x0ce6c85cF43553DE10FC56cecA0aef6Ff0DD444d',  # noqa: E501
                 address=string_to_evm_address('0x0ce6c85cF43553DE10FC56cecA0aef6Ff0DD444d'),
             ), EvmEvent(
-                tx_hash=tx.tx_hash,
+                tx_ref=tx.tx_hash,
                 sequence_index=10,
                 timestamp=TimestampMS(0),
                 location=Location.BASE,

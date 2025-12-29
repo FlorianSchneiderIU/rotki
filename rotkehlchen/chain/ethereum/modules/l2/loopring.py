@@ -9,7 +9,7 @@ import requests
 
 from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import CryptoAsset
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import (
     A_1INCH,
@@ -358,7 +358,7 @@ class Loopring(ExternalServiceWithApiKey, EthereumModule, LockableQueryMixIn):
                         # is not valid is 104002 https://docs3.loopring.io/en/?q=104002
                         if code == 104002:
                             raise LoopringInvalidApiKey
-                        # This code is returned when an user is not found at loopring
+                        # This code is returned when a user is not found at loopring
                         # https://docs3.loopring.io/en/?q=101002
                         if code == 101002:
                             raise LoopringUserNotFound
@@ -459,15 +459,15 @@ class Loopring(ExternalServiceWithApiKey, EthereumModule, LockableQueryMixIn):
             # to the mapping above
             amount = asset_normalized_value(amount=total, asset=asset)
             try:
-                usd_price = Inquirer.find_usd_price(asset)
+                price = Inquirer.find_main_currency_price(asset)
             except RemoteError as e:
                 self.msg_aggregator.add_error(
                     f'Error processing loopring balance entry due to inability to '
-                    f'query USD price: {e!s}. Skipping balance entry',
+                    f'query price: {e!s}. Skipping balance entry',
                 )
                 continue
 
-            balances[asset] = Balance(amount=amount, usd_value=amount * usd_price)
+            balances[asset] = Balance(amount=amount, value=amount * price)
 
         return balances
 

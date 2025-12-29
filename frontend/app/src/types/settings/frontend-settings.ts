@@ -12,8 +12,8 @@ import { isEmpty } from 'es-toolkit/compat';
 import { z } from 'zod/v4';
 import { Constraints, MINIMUM_DIGIT_TO_BE_ABBREVIATED } from '@/data/constraints';
 import { Defaults } from '@/data/defaults';
+import { camelCaseTransformer } from '@/modules/api/transformers';
 import { DARK_COLORS, LIGHT_COLORS } from '@/plugins/theme';
-import { camelCaseTransformer } from '@/services/axios-transformers';
 import { CurrencyLocationEnum } from '@/types/currency-location';
 import { DateFormatEnum } from '@/types/date-format';
 import { BaseSuggestion, SavedFilterLocation } from '@/types/filtering';
@@ -21,7 +21,7 @@ import { PrivacyMode } from '@/types/session';
 import { TableColumnEnum } from '@/types/table-column';
 import { generateRandomScrambleMultiplier } from '@/utils/session';
 
-export const FRONTEND_SETTINGS_SCHEMA_VERSION = 1;
+export const FRONTEND_SETTINGS_SCHEMA_VERSION = 2;
 
 export enum Quarter {
   Q1 = 'Q1',
@@ -106,23 +106,27 @@ export enum BalanceSource {
   MANUAL = 'MANUAL',
 }
 
-export const BalanceUsdValueThresholdV0 = z.object({
+export const BalanceValueThresholdV0 = z.object({
   [BalanceSource.BLOCKCHAIN]: z.string().default('0'),
   [BalanceSource.EXCHANGES]: z.string().default('0'),
   [BalanceSource.MANUAL]: z.string().default('0'),
 }).optional();
 
-export const BalanceUsdValueThresholdV1 = z.partialRecord(z.enum(BalanceSource), z.string().optional());
+export const BalanceValueThreshold = z.partialRecord(z.enum(BalanceSource), z.string().optional());
 
-export type BalanceUsdValueThreshold = z.infer<typeof BalanceUsdValueThresholdV1>;
+export type BalanceValueThreshold = z.infer<typeof BalanceValueThreshold>;
 
 const EvmQueryIndicatorMinOutOfSyncPeriod = z.number().min(1).max(Constraints.MAX_HOURS_DELAY).int();
 const EvmQueryIndicatorDismissalThreshold = z.number().min(1).max(Constraints.MAX_HOURS_DELAY).int();
 
+const PasswordConfirmationInterval = z.number().min(Constraints.PASSWORD_CONFIRMATION_MIN_SECONDS).max(Constraints.PASSWORD_CONFIRMATION_MAX_SECONDS).int();
+const LastPasswordConfirmed = z.number().int().nonnegative();
+const EnablePasswordConfirmation = z.boolean();
+
 export const FrontendSettings = z.object({
   abbreviateNumber: z.boolean().default(false),
   amountRoundingMode: RoundingMode.default(BigNumber.ROUND_UP),
-  balanceUsdValueThreshold: BalanceUsdValueThresholdV1.default({}),
+  balanceValueThreshold: BalanceValueThreshold.default({}),
   blockchainRefreshButtonBehaviour: BlockchainRefreshButtonBehaviourEnum.default(
     BlockchainRefreshButtonBehaviour.ONLY_REFRESH_BALANCES,
   ),
@@ -140,6 +144,7 @@ export const FrontendSettings = z.object({
   defaultThemeVersion: z.number().default(1),
   defiSetupDone: z.boolean().default(false),
   enableAliasNames: z.boolean().default(true),
+  enablePasswordConfirmation: EnablePasswordConfirmation.default(true),
   evmQueryIndicatorDismissalThreshold: EvmQueryIndicatorDismissalThreshold.default(Defaults.DEFAULT_EVM_QUERY_INDICATOR_DISMISSAL_THRESHOLD),
   evmQueryIndicatorMinOutOfSyncPeriod: EvmQueryIndicatorMinOutOfSyncPeriod.default(Defaults.DEFAULT_EVM_QUERY_INDICATOR_MIN_OUT_OF_SYNC_PERIOD),
   explorers: ExplorersSettings.default({}),
@@ -148,10 +153,12 @@ export const FrontendSettings = z.object({
   itemsPerPage: z.number().positive().int().default(10),
   language: SupportedLanguageEnum.default(SupportedLanguage.EN),
   lastKnownTimeframe: TimeFramePeriodEnum.default(TimeFramePeriod.ALL),
+  lastPasswordConfirmed: LastPasswordConfirmed.default(0),
   lightTheme: ThemeColors.default(LIGHT_COLORS),
   minimumDigitToBeAbbreviated: z.number().default(MINIMUM_DIGIT_TO_BE_ABBREVIATED),
   nftsInNetValue: z.boolean().default(true),
   notifyNewNfts: z.boolean().optional().default(false),
+  passwordConfirmationInterval: PasswordConfirmationInterval.default(Defaults.DEFAULT_PASSWORD_CONFIRMATION_INTERVAL),
   persistPrivacySettings: z.boolean().default(false),
   persistTableSorting: z.boolean().default(false),
   privacyMode: PrivacyModeEnum.default(PrivacyMode.NORMAL),
@@ -174,7 +181,7 @@ export const FrontendSettings = z.object({
     .default({})
     // eslint-disable-next-line unicorn/prefer-top-level-await
     .catch({}),
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   scrambleData: z.boolean().default(false),
   scrambleMultiplier: z.number().optional().default(generateRandomScrambleMultiplier()),
   selectedTheme: ThemeEnum.default(Theme.AUTO),

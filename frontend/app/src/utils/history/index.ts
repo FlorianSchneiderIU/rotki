@@ -1,5 +1,5 @@
 import type { Collection } from '@/types/collection';
-import type { EvmChainAndTxHash } from '@/types/history/events';
+import type { LocationAndTxRef } from '@/types/history/events';
 import type { EntryMeta, EntryWithMeta } from '@/types/history/meta';
 import { isValidEthAddress } from '@rotki/common';
 import { snakeCase } from 'es-toolkit';
@@ -30,9 +30,9 @@ export function getEthAddressesFromText(notes: string): string[] {
   return filterAddressesFromWords(notes.split(/\s|\\n/));
 }
 
-export function toEvmChainAndTxHash({ location, txHash }: { location: string; txHash?: string }): EvmChainAndTxHash {
+export function toLocationAndTxRef(params: LocationAndTxRef): LocationAndTxRef {
   return {
-    evmChain: snakeCase(location),
-    txHash: txHash || '',
+    location: snakeCase(params.location),
+    txRef: params.txRef,
   };
 }

@@ -1,16 +1,17 @@
 import logging
-import re
 import urllib
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from enum import Enum, StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Generic, Literal
 
 import webargs
 from eth_utils import to_checksum_address
 from marshmallow import fields
 from marshmallow.exceptions import ValidationError
 from marshmallow.utils import is_iterable_but_not_string
+from solders.solders import Signature
 from werkzeug.datastructures import FileStorage
 
 from rotkehlchen.api.v1.types import IncludeExcludeFilterData
@@ -26,11 +27,15 @@ from rotkehlchen.assets.asset import (
 from rotkehlchen.assets.types import AssetType
 from rotkehlchen.chain.bitcoin.hdkey import HDKey
 from rotkehlchen.chain.bitcoin.utils import is_valid_derivation_path
+from rotkehlchen.chain.evm.types import EvmIndexer
+from rotkehlchen.chain.solana.validation import is_valid_solana_address
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.misc import NFT_DIRECTIVE
+from rotkehlchen.db.dbtx import T_TxHash
 from rotkehlchen.errors.asset import UnknownAsset, WrongAssetType
 from rotkehlchen.errors.misc import XPUBError
 from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.exchanges.okx import OkxLocation
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.deserialization import deserialize_price
 from rotkehlchen.history.types import HistoricalPriceOracle
@@ -40,6 +45,7 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_fval,
     deserialize_hex_color_code,
     deserialize_timestamp,
+    deserialize_tx_signature,
 )
 from rotkehlchen.types import (
     SUPPORTED_CHAIN_IDS,
@@ -68,8 +74,6 @@ from rotkehlchen.utils.mixins.enums import (
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
-
-SOLANA_ADDRESS_RE = re.compile(r'^[1-9A-HJ-NP-Za-km-z]{32,44}$')  # Solana addresses are base58 encoded, 32-44 characters  # noqa: E501
 
 
 class IncludeExcludeListField(fields.Field[IncludeExcludeFilterData]):
@@ -415,7 +419,7 @@ class SerializableEnumField(fields.Field):
     """A field that takes an enum following the SerializableEnumMixin interface"""
     def __init__(
             self,
-            enum_class: type[SerializableEnumNameMixin | (SerializableEnumIntValueMixin | (DBCharEnumMixIn | DBIntEnumMixIn))],  # noqa: E501
+            enum_class: type[SerializableEnumNameMixin | (SerializableEnumIntValueMixin | (DBCharEnumMixIn | DBIntEnumMixIn | OkxLocation))],  # noqa: E501
             exclude_types: Sequence[Enum] | None = None,
             allow_only: Sequence[Enum] | None = None,
             **kwargs: Any,
@@ -720,7 +724,7 @@ class SolanaAddressField(fields.Field):
             data: Mapping[str, Any] | None,
             **_kwargs: Any,
     ) -> SolanaAddress:
-        if not SOLANA_ADDRESS_RE.match(value):
+        if not is_valid_solana_address(value):
             raise ValidationError(
                 f'Given value {value} is not a solana address',
                 field_name='address',
@@ -729,32 +733,22 @@ class SolanaAddressField(fields.Field):
         return SolanaAddress(value)
 
 
-def validate_and_deserialize_evm_tx_hash(value: str) -> EVMTxHash:
-    """Ensure that the given value is a valid evm transaction hash and deserialize it.
-    May raise ValidationError or DeserializationError.
-    """
-    try:
-        txhash = bytes.fromhex(value.removeprefix('0x'))
-    except ValueError as e:
-        raise ValidationError(f'Could not turn transaction hash {value} to bytes') from e
+class BaseTransactionHashField(fields.Field, ABC, Generic[T_TxHash]):
 
-    if (length := len(txhash)) != 32:
-        raise ValidationError(f'EVM transaction hashes should be 32 bytes in length. Given {length=}')  # noqa: E501
-
-    return deserialize_evm_tx_hash(txhash)
-
-
-class EVMTransactionHashField(fields.Field):
+    @staticmethod
+    @abstractmethod
+    def deserialize_string_value(value: str) -> T_TxHash:
+        ...
 
     @staticmethod
     def _serialize(
-            value: EVMTxHash | None,
+            value: T_TxHash | None,
             attr: str | None,  # pylint: disable=unused-argument
             obj: Any,
             **_kwargs: Any,
     ) -> str:
         assert value, 'should never be called with None'  # type kept due to Liskov principle
-        return value.hex()
+        return str(value)
 
     def _deserialize(
             self,
@@ -762,11 +756,36 @@ class EVMTransactionHashField(fields.Field):
             attr: str | None,  # pylint: disable=unused-argument
             data: Mapping[str, Any] | None,
             **_kwargs: Any,
-    ) -> EVMTxHash:
+    ) -> T_TxHash:
         if not isinstance(value, str):
             raise ValidationError('Transaction hash should be a string')
 
-        return validate_and_deserialize_evm_tx_hash(value)
+        return self.deserialize_string_value(value)
+
+
+class EVMTransactionHashField(BaseTransactionHashField[EVMTxHash]):
+
+    @staticmethod
+    def deserialize_string_value(value: str) -> EVMTxHash:
+        """Ensure that the given value is a valid evm transaction hash and deserialize it.
+        May raise ValidationError or DeserializationError.
+        """
+        try:
+            txhash = bytes.fromhex(value.removeprefix('0x'))
+        except ValueError as e:
+            raise ValidationError(f'Could not turn transaction hash {value} to bytes') from e
+
+        if (length := len(txhash)) != 32:
+            raise ValidationError(f'EVM transaction hashes should be 32 bytes in length. Given {length=}')  # noqa: E501
+
+        return deserialize_evm_tx_hash(txhash)
+
+
+class SolanaSignatureField(BaseTransactionHashField[Signature]):
+
+    @staticmethod
+    def deserialize_string_value(value: str) -> Signature:
+        return deserialize_tx_signature(value)
 
 
 class AssetTypeField(fields.Field):
@@ -1051,6 +1070,21 @@ class HistoricalPriceOracleField(fields.Field):
             raise ValidationError(f'Invalid historical price oracle: {value}') from e
 
         return historical_price_oracle
+
+
+class EvmIndexerField(fields.Field):
+
+    def _deserialize(
+            self,
+            value: str,
+            attr: str | None,  # pylint: disable=unused-argument
+            data: Mapping[str, Any] | None,
+            **_kwargs: Any,
+    ) -> EvmIndexer:
+        try:
+            return EvmIndexer.deserialize(value)
+        except DeserializationError as e:
+            raise ValidationError(f'Invalid EVM indexer: {value}') from e
 
 
 class NonEmptyList(fields.List):

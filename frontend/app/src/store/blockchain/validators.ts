@@ -1,7 +1,10 @@
 import type { MaybeRef } from '@vueuse/core';
-import type { EthereumValidator, EthereumValidatorRequestPayload } from '@/types/blockchain/accounts';
+import type {
+  EthereumValidator,
+  EthereumValidatorRequestPayload,
+} from '@/types/blockchain/accounts';
 import type { Collection } from '@/types/collection';
-import { assert, type Balance, Blockchain, Zero } from '@rotki/common';
+import { assert, type Balance, Blockchain, type EthValidatorFilter, Zero } from '@rotki/common';
 import { useBlockchainAccountsApi } from '@/composables/api/blockchain/accounts';
 import { useSupportedChains } from '@/composables/info/chains';
 import { usePremium } from '@/composables/premium';
@@ -17,8 +20,9 @@ import { logger } from '@/utils/logging';
 
 export const useBlockchainValidatorsStore = defineStore('blockchain/validators', () => {
   const { fetchBlockchainBalances } = useBlockchainBalances();
-  const { accounts } = storeToRefs(useBlockchainAccountsStore());
-  const { updateAccounts } = useBlockchainAccountsStore();
+  const blockchainAccountsStore = useBlockchainAccountsStore();
+  const { accounts } = storeToRefs(blockchainAccountsStore);
+  const { updateAccounts } = blockchainAccountsStore;
   const { balances } = storeToRefs(useBalancesStore());
 
   const { getEth2Validators } = useBlockchainAccountsApi();
@@ -43,7 +47,7 @@ export const useBlockchainValidatorsStore = defineStore('blockchain/validators',
       assert(account.data.type === 'validator');
       const accountBalance: Balance = accountBalances[account.data.publicKey]?.assets?.ETH2?.address ?? {
         amount: Zero,
-        usdValue: Zero,
+        value: Zero,
       };
       validators.push({
         ...account.data,
@@ -65,12 +69,12 @@ export const useBlockchainValidatorsStore = defineStore('blockchain/validators',
     },
   );
 
-  const fetchEthStakingValidators = async (): Promise<void> => {
+  const fetchEthStakingValidators = async (payload?: EthValidatorFilter): Promise<void> => {
     if (!isEth2Enabled())
       return;
 
     try {
-      const validators = await getEth2Validators();
+      const validators = await getEth2Validators(payload);
       updateAccounts(
         Blockchain.ETH2,
         validators.entries.map(validator =>
@@ -99,7 +103,9 @@ export const useBlockchainValidatorsStore = defineStore('blockchain/validators',
 
   watch(premium, async () => {
     if (isEth2Enabled()) {
-      await fetchEthStakingValidators();
+      await fetchEthStakingValidators({
+        ignoreCache: true,
+      });
       await fetchBlockchainBalances({
         blockchain: Blockchain.ETH2,
         ignoreCache: true,

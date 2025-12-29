@@ -11,7 +11,7 @@ from rotkehlchen.db.history_events import DBHistoryEvents
 from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
-from rotkehlchen.history.price import query_usd_price_or_use_default
+from rotkehlchen.history.price import query_price_or_use_default
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_fval
 from rotkehlchen.types import ChecksumEvmAddress
@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 # staking. Then we need to consider the rewards in other assets that appear in the same
 # transaction and this is why we use the IN operator as filter.
 QUERY_STAKING_EVENTS = """
-WHERE event_identifier IN
-(SELECT A.event_identifier FROM history_events AS A JOIN history_events AS B ON A.event_identifier = B.event_identifier
-    JOIN evm_events_info AS C ON A.identifier=C.identifier WHERE C.counterparty=? AND A.asset=?
+WHERE group_identifier IN
+(SELECT A.group_identifier FROM history_events AS A JOIN history_events AS B ON A.group_identifier = B.group_identifier
+    JOIN chain_events_info AS C ON A.identifier=C.identifier WHERE C.counterparty=? AND A.asset=?
     AND B.asset=? AND B.subtype != ? AND B.type == ?
 ) AND type=? AND subtype=?
 """  # noqa: E501
@@ -40,12 +40,12 @@ BINDINGS_STAKING_EVENTS = [
 ]
 # stability pool rewards
 QUERY_STABILITY_POOL_EVENTS = """
-WHERE event_identifier IN (
-    SELECT A.event_identifier FROM history_events AS A JOIN history_events AS B ON
-    A.event_identifier = B.event_identifier JOIN evm_events_info AS C ON A.identifier=C.identifier
+WHERE group_identifier IN (
+    SELECT A.group_identifier FROM history_events AS A JOIN history_events AS B ON
+    A.group_identifier = B.group_identifier JOIN chain_events_info AS C ON A.identifier=C.identifier
     WHERE C.counterparty = 'liquity' AND B.asset=? AND B.subtype=?
 ) AND type=? AND subtype=?
-"""
+"""  # noqa: E501
 BINDINGS_STABILITY_POOL_EVENTS = [
     A_LQTY.identifier,
     HistoryEventSubType.REWARD.serialize(),
@@ -53,8 +53,8 @@ BINDINGS_STABILITY_POOL_EVENTS = [
     HistoryEventSubType.REWARD.serialize(),
 ]
 QUERY_STABILITY_POOL_DEPOSITS = (
-    'SELECT amount, timestamp, asset FROM history_events JOIN evm_events_info ON '
-    'history_events.identifier=evm_events_info.identifier WHERE counterparty=? '
+    'SELECT amount, timestamp, asset FROM history_events JOIN chain_events_info ON '
+    'history_events.identifier=chain_events_info.identifier WHERE counterparty=? '
     'AND asset=? AND type=? AND subtype=?'
 )
 
@@ -71,7 +71,7 @@ def calculate_pool_metrics(
     cursor.execute(query, bindings)
     total_amount, total_value = ZERO, ZERO
     for raw_amount, timestamp, asset in cursor:
-        price = query_usd_price_or_use_default(
+        price = query_price_or_use_default(
             asset=Asset(asset),
             time=ts_ms_to_sec(timestamp),
             default_value=ZERO,
@@ -124,14 +124,14 @@ def _get_amount_and_value_stats(
     with all the information related to staking
     """
     staking_query_progress(msg_aggregator=msg_aggregator, step=0)
-    staking_rewards_breakdown, total_usd_gains_staking = history_events_db.get_amount_and_value_stats(  # noqa: E501
+    staking_rewards_breakdown, total_value_gains_staking = history_events_db.get_amount_and_value_stats(  # noqa: E501
         cursor=cursor,
         query_filters=query_staking,
         bindings=bindings_staking,
         counterparty=CPT_LIQUITY,
     )
     staking_query_progress(msg_aggregator=msg_aggregator, step=1)
-    stability_rewards_breakdown, total_usd_gains_stability_pool = history_events_db.get_amount_and_value_stats(  # noqa: E501
+    stability_rewards_breakdown, total_value_gains_stability_pool = history_events_db.get_amount_and_value_stats(  # noqa: E501
         cursor=cursor,
         query_filters=query_stability_pool,
         bindings=bindings_stability_pool,
@@ -153,24 +153,24 @@ def _get_amount_and_value_stats(
     staking_query_progress(msg_aggregator=msg_aggregator, step=4)
 
     return {
-        'total_usd_gains_stability_pool': total_usd_gains_stability_pool,
-        'total_usd_gains_staking': total_usd_gains_staking,
+        'total_value_gains_stability_pool': total_value_gains_stability_pool,
+        'total_value_gains_staking': total_value_gains_staking,
         'total_deposited_stability_pool': stability_pool_amount_deposited,
         'total_withdrawn_stability_pool': stability_pool_amount_withdrawn,
-        'total_deposited_stability_pool_usd_value': stability_pool_value_deposited,
-        'total_withdrawn_stability_pool_usd_value': stability_pool_value_withdrawn,
+        'total_deposited_stability_pool_value': stability_pool_value_deposited,
+        'total_withdrawn_stability_pool_value': stability_pool_value_withdrawn,
         'staking_gains': [
             {
                 'asset': entry[0],
                 'amount': entry[1],
-                'usd_value': entry[2],
+                'value': entry[2],
             } for entry in staking_rewards_breakdown
         ],
         'stability_pool_gains': [
             {
                 'asset': entry[0],
                 'amount': entry[1],
-                'usd_value': entry[2],
+                'value': entry[2],
             } for entry in stability_rewards_breakdown
         ],
     }

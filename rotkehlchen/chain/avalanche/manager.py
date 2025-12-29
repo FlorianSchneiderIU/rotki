@@ -6,9 +6,14 @@ from web3 import HTTPProvider, Web3
 from web3.datastructures import MutableAttributeDict
 from web3.exceptions import Web3Exception
 
+from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.chain.constants import DEFAULT_RPC_TIMEOUT
+from rotkehlchen.chain.manager import ChainManager, ChainWithEoA
+from rotkehlchen.constants import DEFAULT_BALANCE_LABEL
+from rotkehlchen.constants.assets import A_AVAX
 from rotkehlchen.errors.misc import BlockchainQueryError
 from rotkehlchen.fval import FVal
+from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.types import ChecksumEvmAddress
 from rotkehlchen.user_messages import MessagesAggregator
@@ -20,7 +25,7 @@ log = RotkehlchenLogsAdapter(logger)
 WEB3_LOGQUERY_BLOCK_RANGE = 250000
 
 
-class AvalancheManager:
+class AvalancheManager(ChainManager[ChecksumEvmAddress], ChainWithEoA):
     def __init__(
             self,
             avaxrpc_endpoint: str,
@@ -37,9 +42,6 @@ class AvalancheManager:
         )
         self.msg_aggregator = msg_aggregator
 
-    def connected_to_any_web3(self) -> bool:
-        return self.w3.is_connected()
-
     def get_latest_block_number(self) -> int:
         return self.w3.eth.block_number
 
@@ -50,16 +52,6 @@ class AvalancheManager:
         - Web3Exception: if there is any error querying the AVAX rpc node.
         """
         return from_wei(FVal(self.w3.eth.get_balance(account)))
-
-    def get_multiavax_balance(
-            self,
-            accounts: Sequence[ChecksumEvmAddress],
-    ) -> dict[ChecksumEvmAddress, FVal]:
-        """Returns a dict with keys being accounts and balances in AVAX"""
-        balances = {}
-        for account in accounts:
-            balances[account] = self.get_avax_balance(account)
-        return balances
 
     def get_block_by_number(self, num: int) -> dict[str, Any]:
         """Returns the block object corresponding to the given block number
@@ -98,3 +90,21 @@ class AvalancheManager:
                 f'Error doing call on contract {contract_address}: {e!s}',
             ) from e
         return result
+
+    def query_balances(
+            self,
+            addresses: Sequence[ChecksumEvmAddress],
+    ) -> dict[ChecksumEvmAddress, BalanceSheet]:
+        """Queries the AVAX balances of the accounts via Avalanche rpcs.
+        May raise RemoteError if no nodes are available or the balances request fails.
+        """
+        balances: dict[ChecksumEvmAddress, BalanceSheet] = {}
+        avax_price = Inquirer.find_main_currency_price(A_AVAX)
+        for account in addresses:
+            balances[account] = BalanceSheet()
+            balances[account].assets[A_AVAX][DEFAULT_BALANCE_LABEL] = Balance(
+                amount=(amount := self.get_avax_balance(account)),
+                value=amount * avax_price,
+            )
+
+        return balances

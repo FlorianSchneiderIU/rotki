@@ -1,18 +1,18 @@
 import logging
 from typing import TYPE_CHECKING, Any
 
+from rotkehlchen.assets.utils import token_normalized_value_decimals
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.ethereum.decoding.constants import AIRDROP_CLAIM
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.chain.evm.constants import ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.constants.resolver import ethaddress_to_identifier
 from rotkehlchen.history.events.structures.types import HistoryEventSubType, HistoryEventType
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -22,7 +22,7 @@ from rotkehlchen.utils.misc import bytes_to_address
 from .constants import CPT_FLUENCE, DEV_REWARD_DISTRIBUTOR, FLUENCE_IDENTIFIER
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.user_messages import MessagesAggregator
 
@@ -30,12 +30,12 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class FluenceDecoder(DecoderInterface):
+class FluenceDecoder(EvmDecoderInterface):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
     ) -> None:
         super().__init__(
@@ -48,7 +48,7 @@ class FluenceDecoder(DecoderInterface):
             self,
             context: DecoderContext,
             user_address: ChecksumEvmAddress,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         amount = token_normalized_value_decimals(int.from_bytes(context.tx_log.data[32:64]), 18)
 
         for event in context.decoded_events:
@@ -59,15 +59,15 @@ class FluenceDecoder(DecoderInterface):
                 break
 
         else:
-            log.error(f'Could not find the FLT-drop transfer in {context.transaction.tx_hash.hex()}')  # noqa: E501
+            log.error(f'Could not find the FLT-drop transfer in {context.transaction.tx_hash!s}')
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _decode_fluence_swap_claim(
             self,
             context: DecoderContext,
             user_address: ChecksumEvmAddress,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         amount = token_normalized_value_decimals(int.from_bytes(context.tx_log.data[0:32]), 18)
         # need to also create the FLT-DROP burn event
         out_event = self.base.make_event_from_transaction(
@@ -94,15 +94,15 @@ class FluenceDecoder(DecoderInterface):
                 break
 
         else:
-            log.error(f'Could not find the FLT transfer in {context.transaction.tx_hash.hex()}')
+            log.error(f'Could not find the FLT transfer in {context.transaction.tx_hash!s}')
 
         maybe_reshuffle_events(  # Make sure that the out event comes first
             ordered_events=[out_event, in_event],
             events_list=context.decoded_events,
         )
-        return DecodingOutput(events=[out_event])
+        return EvmDecodingOutput(events=[out_event])
 
-    def _decode_events(self, context: DecoderContext) -> DecodingOutput:
+    def _decode_events(self, context: DecoderContext) -> EvmDecodingOutput:
         if (
             context.tx_log.topics[0] == AIRDROP_CLAIM and
             self.base.is_tracked(user_address := bytes_to_address(context.tx_log.data[0:32]))
@@ -115,7 +115,7 @@ class FluenceDecoder(DecoderInterface):
         ):
             return self._decode_fluence_swap_claim(context, user_address)
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     # -- DecoderInterface methods
 

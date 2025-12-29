@@ -42,7 +42,7 @@ from rotkehlchen.tests.utils.constants import ETH_ADDRESS1, ETH_ADDRESS2, ETH_AD
 from rotkehlchen.tests.utils.factories import make_evm_tx_hash
 from rotkehlchen.tests.utils.history import (
     assert_pnl_debug_import,
-    mock_etherscan_transaction_response,
+    mock_etherscan_like_transaction_response,
     prepare_rotki_for_history_processing_test,
     prices,
 )
@@ -167,6 +167,7 @@ def test_query_history(rotkehlchen_api_server_with_exchanges: 'APIServer', start
     assert result['report_id'] == 1
 
 
+@pytest.mark.vcr  # This test doesn't have any recorded cassette. VCR is used here to ensure that the mocking logic works properly with no external requests made, otherwise a cassette error would be raised.  # noqa: E501
 @pytest.mark.parametrize('have_decoders', [True])
 @pytest.mark.parametrize(
     'added_exchanges',
@@ -219,8 +220,8 @@ def test_fatal_error_during_query_history(rotkehlchen_api_server: 'APIServer') -
         'rotkehlchen.accounting.accountant.Accountant._process_event',
         side_effect=AccountingError(message='mocked error'),
     )
-    etherscan_patch = mock_etherscan_transaction_response(
-        etherscan=rotki.chains_aggregator.ethereum.node_inquirer.etherscan,
+    etherscan_patch = mock_etherscan_like_transaction_response(
+        etherscan_like_api=rotki.chains_aggregator.ethereum.node_inquirer.etherscan,
         remote_errors=True,
     )
 
@@ -477,7 +478,7 @@ def test_missing_prices_in_pnl_report(rotkehlchen_api_server: 'APIServer') -> No
         db.add_history_events(
             write_cursor=write_cursor,
             history=[HistoryEvent(
-                event_identifier='whatever',
+                group_identifier='whatever',
                 sequence_index=0,
                 timestamp=TimestampMS(1665336822000),
                 location=Location.EXTERNAL,
@@ -490,7 +491,7 @@ def test_missing_prices_in_pnl_report(rotkehlchen_api_server: 'APIServer') -> No
                 location=Location.EXTERNAL,
                 spend=AssetAmount(amount=FVal('1'), asset=A_EUR),
                 receive=AssetAmount(amount=FVal('320'), asset=A_DAI),
-                event_identifier='tradeid1',
+                group_identifier='tradeid1',
             )],
         )
 

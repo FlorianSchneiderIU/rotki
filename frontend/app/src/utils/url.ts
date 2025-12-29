@@ -38,7 +38,7 @@ interface ExternalUrl { external: string; route: RouteLocationRaw }
  * Returns the registration url of a specified Etherscan registration link, and the page to fill it
  * @returns {{external: string, route: RouteLocationRaw} | undefined}
  */
-export function getEtherScanRegisterUrl(): ExternalUrl | undefined {
+function getEtherScanRegisterUrl(): ExternalUrl | undefined {
   return {
     external: etherscanLink,
     route: {
@@ -48,12 +48,32 @@ export function getEtherScanRegisterUrl(): ExternalUrl | undefined {
   };
 }
 
-export function getTheGraphRegisterUrl(): ExternalUrl {
+function getTheGraphRegisterUrl(): ExternalUrl {
   return {
     external: externalLinks.applyTheGraphApiKey,
     route: {
       path: Routes.API_KEYS_EXTERNAL_SERVICES.toString(),
       query: { service: 'thegraph' },
+    },
+  };
+}
+
+function getHeliusRegisterUrl(): ExternalUrl {
+  return {
+    external: 'https://dev.helius.xyz/dashboard/app',
+    route: {
+      path: Routes.API_KEYS_EXTERNAL_SERVICES.toString(),
+      query: { service: 'helius' },
+    },
+  };
+}
+
+function getBeaconchainRegisterUrl(): ExternalUrl {
+  return {
+    external: externalLinks.beaconChainApiKey,
+    route: {
+      path: Routes.API_KEYS_EXTERNAL_SERVICES.toString(),
+      query: { service: 'beaconchain' },
     },
   };
 }
@@ -69,6 +89,10 @@ export function getServiceRegisterUrl(service: string): ExternalUrl | undefined 
       return getEtherScanRegisterUrl();
     case 'thegraph':
       return getTheGraphRegisterUrl();
+    case 'helius':
+      return getHeliusRegisterUrl();
+    case 'beaconchain':
+      return getBeaconchainRegisterUrl();
     default:
       logger.warn(`Unsupported service: '${service}'`);
       return undefined;

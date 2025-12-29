@@ -1,5 +1,4 @@
-import type { BitcoinChainAddress, EvmChainAddress } from '@/types/history/events';
-import { useSupportedChains } from '@/composables/info/chains';
+import type { ChainAddress } from '@/types/history/events';
 import {
   TransactionsQueryStatus,
   type UnifiedTransactionStatusData,
@@ -13,38 +12,33 @@ interface BaseTxQueryStatusData {
   status: TransactionsQueryStatus;
 }
 
-export interface EvmTxQueryStatusData extends BaseTxQueryStatusData {
+interface EvmTxQueryStatusData extends BaseTxQueryStatusData {
   subtype: 'evm';
   period: [number, number];
 }
 
-export interface EvmlikeTxQueryStatusData extends BaseTxQueryStatusData {
+interface EvmlikeTxQueryStatusData extends BaseTxQueryStatusData {
   subtype: 'evmlike';
   period: [number, number];
 }
 
-export interface BitcoinTxQueryStatusData extends BaseTxQueryStatusData {
+interface BitcoinTxQueryStatusData extends BaseTxQueryStatusData {
   subtype: 'bitcoin';
 }
 
-export type TxQueryStatusData = EvmTxQueryStatusData | EvmlikeTxQueryStatusData | BitcoinTxQueryStatusData;
-
-export function isEvmTxQueryStatusData(data: TxQueryStatusData): data is EvmTxQueryStatusData {
-  return data.subtype === 'evm';
+interface SolanaTxQueryStatusData extends BaseTxQueryStatusData {
+  subtype: 'solana';
+  period: [number, number];
 }
 
-export function isEvmlikeTxQueryStatusData(data: TxQueryStatusData): data is EvmlikeTxQueryStatusData {
-  return data.subtype === 'evmlike';
-}
+export type TxQueryStatusData = EvmTxQueryStatusData | EvmlikeTxQueryStatusData | BitcoinTxQueryStatusData | SolanaTxQueryStatusData;
 
 export function isBitcoinTxQueryStatusData(data: TxQueryStatusData): data is BitcoinTxQueryStatusData {
   return data.subtype === 'bitcoin';
 }
 
 export const useTxQueryStatusStore = defineStore('history/transaction-query-status', () => {
-  const { getChain } = useSupportedChains();
-
-  const createKey = ({ address, chain }: { address: string; chain: string }): string => address + chain;
+  const createKey = ({ address, chain }: ChainAddress): string => address + chain;
 
   const isStatusFinished = (item: TxQueryStatusData): boolean => {
     if (isBitcoinTxQueryStatusData(item)) {
@@ -60,17 +54,16 @@ export const useTxQueryStatusStore = defineStore('history/transaction-query-stat
     resetQueryStatus,
   } = useQueryStatusStore<TxQueryStatusData>(isStatusFinished, createKey);
 
-  const initializeQueryStatus = (data: EvmChainAddress[]): void => {
+  const initializeQueryStatus = (data: ChainAddress[]): void => {
     resetQueryStatus();
 
     const status = { ...get(queryStatus) };
     const now = millisecondsToSeconds(Date.now());
     for (const item of data) {
-      const chain = getChain(item.evmChain);
-      const key = createKey({ address: item.address, chain });
+      const key = createKey(item);
       status[key] = {
         address: item.address,
-        chain,
+        chain: item.chain,
         period: [0, now],
         status: TransactionsQueryStatus.ACCOUNT_CHANGE,
         subtype: 'evm' as const,
@@ -79,14 +72,8 @@ export const useTxQueryStatusStore = defineStore('history/transaction-query-stat
     set(queryStatus, status);
   };
 
-  const removeQueryStatus = (data: EvmChainAddress | BitcoinChainAddress): void => {
-    if ('evmChain' in data) {
-      const chain = getChain(data.evmChain);
-      remove(createKey({ address: data.address, chain }));
-    }
-    else {
-      remove(createKey({ address: data.address, chain: data.chain }));
-    }
+  const removeQueryStatus = (data: ChainAddress): void => {
+    remove(createKey({ address: data.address, chain: data.chain }));
   };
 
   const setUnifiedTxQueryStatus = (data: UnifiedTransactionStatusData): void => {

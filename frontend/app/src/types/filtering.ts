@@ -1,5 +1,6 @@
+import type { AssetsWithId } from '@/types/asset';
+import { AssetInfoWithId } from '@rotki/common';
 import { z } from 'zod/v4';
-import { AssetInfoWithId, type AssetsWithId } from '@/types/asset';
 
 export enum FilterBehaviour {
   INCLUDE = 'include',
@@ -11,9 +12,9 @@ export interface FilterObjectWithBehaviour<T> {
   values: T;
 }
 
-export type StringSuggestion = () => string[];
+type StringSuggestion = () => string[];
 
-export type AssetSuggestion = (value: string) => Promise<AssetsWithId>;
+type AssetSuggestion = (value: string) => Promise<AssetsWithId>;
 
 interface BaseMatcher<K, KV = void> {
   readonly key: K;

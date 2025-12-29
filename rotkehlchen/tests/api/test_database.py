@@ -43,7 +43,7 @@ def test_query_db_info(
     response = requests.get(api_url_for(rotkehlchen_api_server, 'databaseinforesource'))
     result = assert_proper_sync_response_with_result(response)
     assert len(result) == 2
-    assert result['globaldb'] == {'globaldb_assets_version': 37, 'globaldb_schema_version': 13}
+    assert result['globaldb'] == {'globaldb_assets_version': 38, 'globaldb_schema_version': 14}
 
     if start_with_logged_in_user:
         userdb = result['userdb']
@@ -111,7 +111,7 @@ def test_delete_download_backup_errors(
 ) -> None:
     """Test that errors are handled properly in backup deletion and download"""
     user_data_dir = Path(data_dir, username)
-    # Make sure deleting file outside  of user data dir fails
+    # Make sure deleting file outside of user data dir fails
     undeletable_file = Path(data_dir / 'notdeletablefile')
     undeletable_file.touch()
     assert undeletable_file.exists()

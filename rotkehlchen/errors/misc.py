@@ -43,6 +43,10 @@ class RemoteError(Exception):
         super().__init__(message)
 
 
+class NoAvailableIndexers(RemoteError):
+    """Raised when there are no available indexers for a given chain."""
+
+
 class XPUBError(Exception):
     """Error XPUB Parsing and address derivation"""
 
@@ -65,6 +69,10 @@ class NotERC20Conformant(Exception):
 
 class NotERC721Conformant(Exception):
     """An address is not conforming to the ERC721 standard"""
+
+
+class NotSPLConformant(Exception):
+    """An address is not conforming to the solana SPL token standard"""
 
 
 class BlockchainQueryError(Exception):
@@ -96,3 +104,15 @@ class AccountingError(Exception):
         """
         super().__init__(message)
         self.report_id = report_id
+
+
+class AddressNotSupported(Exception):
+    """Used when we detect an address with a unknown format for the addressbook"""
+
+
+class ChainNotSupported(RemoteError):
+    """Raised when a chain is not supported by a service/api/etc"""
+
+
+class MissingAPIKey(Exception):
+    """Raised when an API key is missing for a service"""

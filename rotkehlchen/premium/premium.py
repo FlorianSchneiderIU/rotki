@@ -32,6 +32,7 @@ from rotkehlchen.errors.api import (
     IncorrectApiKeyFormat,
     PremiumApiError,
     PremiumAuthenticationError,
+    PremiumPermissionError,
 )
 from rotkehlchen.errors.misc import InputError, RemoteError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -49,6 +50,7 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 DOCKER_PLATFORM_KEY: Final = 'docker'
+DOCKER_SHORT_ID_HASH_LENGTH: Final = 12
 KUBERNETES_PLATFORM_KEY: Final = 'kubernetes'
 
 
@@ -77,6 +79,22 @@ class UserLimits(TypedDict):
     reports_lookup_limit: int
     # Maximum amount of ETH that can be staked (validator balance limit)
     eth_staked_limit: int
+    # tier capabilities
+    eth_staking_view: bool
+    graphs_view: bool
+    event_analysis_view: bool
+
+
+# keys that will be returned as part of the capabilities
+PREMIUM_CAPABILITIES_KEYS: Final[tuple[Literal[  # the type is defined like this due to https://github.com/python/mypy/issues/19961  # noqa: E501
+    'eth_staking_view',
+    'graphs_view',
+    'event_analysis_view',
+], ...]] = (
+    'eth_staking_view',
+    'graphs_view',
+    'event_analysis_view',
+)
 
 
 class UserLimitType(Enum):
@@ -173,6 +191,18 @@ def get_kubernetes_pod_name() -> str | None:
     return None
 
 
+def get_podman_container_id(mountinfo: str) -> str | None:
+    """Gets the container ID created by postman when running the rotki image.
+
+    mountinfo has the contents of /proc/self/mountinfo
+    """
+    if (match := re.search(r'(?<=/overlay-containers/)[a-f0-9]{64}(?=/)', mountinfo)):
+        return match.group(0)
+
+    log.debug('No container ID found in /proc/self/mountinfo')
+    return None
+
+
 def extended_get_machine_id(username: str) -> str:
     """Wrapper around machineid.hashed_id that checks the hostname in the case of
     kubernetes being detected in the environment.
@@ -183,10 +213,11 @@ def extended_get_machine_id(username: str) -> str:
     try:
         return machineid.hashed_id(username)
     except machineid.MachineIdNotFound:
-        if (pod_name := get_kubernetes_pod_name()) is not None:
+        if (container_info := check_docker_container()) is not None:
+            container_identifier, _ = container_info
             return hmac.new(
                 key=bytes(username.encode()),
-                msg=pod_name.encode(),
+                msg=container_identifier.encode(),
                 digestmod=hashlib.sha256,
             ).hexdigest()
 
@@ -204,12 +235,17 @@ def check_docker_container() -> tuple[str, str] | None:
         return (pod_name, KUBERNETES_PLATFORM_KEY)
 
     try:
-        data = Path('/proc/self/mountinfo').read_text(encoding='utf-8').strip()
-        if 'docker' in data:
-            match = re.search(r'docker/containers/([a-f0-9]+)/hostname', data)
-            return (match.group(1)[:12], DOCKER_PLATFORM_KEY) if match else None
+        mountinfo = Path('/proc/self/mountinfo').read_text(encoding='utf-8')
     except OSError as e:
-        log.error(f'Failed at open mountinfo file due to {e}')
+        log.error(f'Failed to read /proc/self/mountinfo due to {e}')
+        return None
+
+    if (podman_container_id := get_podman_container_id(mountinfo)) is not None:
+        return (podman_container_id[:DOCKER_SHORT_ID_HASH_LENGTH], DOCKER_PLATFORM_KEY)
+
+    if 'docker' in mountinfo:
+        match = re.search(r'docker/containers/([a-f0-9]+)/hostname', mountinfo)
+        return (match.group(1)[:DOCKER_SHORT_ID_HASH_LENGTH], DOCKER_PLATFORM_KEY) if match else None  # noqa: E501
 
     return None
 
@@ -488,16 +524,22 @@ class Premium:
 
             return None  # device was created or it already exists
 
-        if (
-            response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY and
-            system_platform in (DOCKER_PLATFORM_KEY, KUBERNETES_PLATFORM_KEY) and
-            self._maybe_register_docker_device(
-                device_id=device_id,
-                device_name=device_name,
-                system_platform=system_platform,
-            )
-        ):
-            return None  # success upgrading the docker device
+        if response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY:  # device limit is exceeded
+            if (  # for Docker/Kubernetes platforms, try to upgrade existing device
+                system_platform in (DOCKER_PLATFORM_KEY, KUBERNETES_PLATFORM_KEY) and
+                self._maybe_register_docker_device(
+                    device_id=device_id,
+                    device_name=device_name,
+                    system_platform=system_platform,
+                )
+            ):
+                return None  # success upgrading the docker device
+
+            try:
+                error_msg = response.json()['error']
+            except (KeyError, JSONDecodeError):
+                error_msg = response.text
+            raise PremiumPermissionError(error_msg)
 
         check_response_status_code(response=response, status_codes=[HTTPStatus.CREATED])
 
@@ -822,6 +864,13 @@ class Premium:
         log.debug(f'Fetched user limits from server: {self._cached_limits}')
         return self._cached_limits
 
+    def get_capabilities(self) -> dict[str, bool]:
+        limits = self.fetch_limits()
+        return {
+            feature_label: limits.get(feature_label, False)  # default to False in case we deprecate the key  # noqa: E501
+            for feature_label in PREMIUM_CAPABILITIES_KEYS
+        }
+
     def watcher_query(
             self,
             method: Literal['GET', 'PUT', 'PATCH', 'DELETE'],
@@ -862,6 +911,7 @@ def premium_create_and_verify(
 
     May Raise:
     - PremiumAuthenticationError if the given key is rejected by the server
+    - PremiumPermissionError if the device limit is exceeded
     - RemoteError if there are problems reaching the server
     """
     premium = Premium(

@@ -1,3 +1,4 @@
+import json
 import logging
 import random
 from abc import ABC, abstractmethod
@@ -8,16 +9,18 @@ from urllib.parse import urlparse
 
 import requests
 from ens import ENS
-from httpx import HTTPError
+from solana.exceptions import SolanaRpcException
 from solana.rpc.api import Client
 from solana.rpc.core import RPCException
+from solders.solders import SerdeJSONError
 from typing_extensions import NamedTuple
 from web3 import HTTPProvider, Web3
 from web3.exceptions import Web3Exception
 from web3.middleware import ExtraDataToPOAMiddleware
 
-from rotkehlchen.chain.ethereum.constants import ETHEREUM_ETHERSCAN_NODE
+from rotkehlchen.chain.ethereum.constants import EVM_INDEXERS_NODE
 from rotkehlchen.chain.evm.types import NodeName, WeightedNode
+from rotkehlchen.chain.solana.constants import SOLANA_GENESIS_BLOCK_HASH
 from rotkehlchen.constants.misc import ONE
 from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
@@ -188,7 +191,7 @@ class EVMRPCMixin(RPCManagerMixin['Web3']):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.etherscan_node = ETHEREUM_ETHERSCAN_NODE
+        self.indexers_node = EVM_INDEXERS_NODE
 
     def determine_capabilities(self, web3: Web3) -> tuple[bool, bool]:
         """This method checks for the capabilities of an rpc node. This includes:
@@ -240,7 +243,7 @@ class EVMRPCMixin(RPCManagerMixin['Web3']):
             with suppress(ValueError):  # If not existing raises ValueError, so ignore
                 web3.middleware_onion.remove(middleware)
 
-        if self.chain_id in (ChainID.OPTIMISM, ChainID.POLYGON_POS, ChainID.ARBITRUM_ONE, ChainID.BASE):  # noqa: E501
+        if self.chain_id in (ChainID.OPTIMISM, ChainID.POLYGON_POS, ChainID.ARBITRUM_ONE, ChainID.BASE, ChainID.BINANCE_SC):  # noqa: E501
             # TODO: Is it needed for all non-mainet EVM chains?
             # https://web3py.readthedocs.io/en/stable/middleware.html#why-is-geth-poa-middleware-necessary
             web3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
@@ -265,6 +268,10 @@ class EVMRPCMixin(RPCManagerMixin['Web3']):
             is_connected = web3.is_connected()
         except requests.RequestException:
             message = f'Failed to connect to {self.chain_name} node {node} at endpoint {rpc_endpoint}'  # noqa: E501
+            log.warning(message)
+            return False, message
+        except json.JSONDecodeError as e:
+            message = f'Failed to connect to {self.chain_name} node {node} at endpoint {rpc_endpoint} due to invalid JSON response: {e!s}'  # noqa: E501
             log.warning(message)
             return False, message
         except AssertionError:
@@ -329,24 +336,25 @@ class EVMRPCMixin(RPCManagerMixin['Web3']):
         log.warning(message)
         return False, message
 
-    def default_call_order(self, skip_etherscan: bool = False) -> list['WeightedNode']:
+    def default_call_order(self, skip_indexers: bool = False) -> list['WeightedNode']:
         """Default call order for evm nodes
 
         Own node always has preference. Then all other node types are randomly queried
         in sequence depending on a weighted probability.
 
-        If skip_etherscan is set to True then etherscan is not included in the list of
+        If skip_indexers is set to True then the indexers are not included in the list of
         nodes to query.
         """
         ordered_list = super().default_call_order()
-        if not skip_etherscan:  # explicitly adding at the end to minimize etherscan API queries
-            ordered_list.append(self.etherscan_node)
+        if not skip_indexers:  # explicitly adding at the end to minimize indexer API queries
+            ordered_list.append(self.indexers_node)
 
         return ordered_list
 
 
 class SolanaRPCMixin(RPCManagerMixin['Client']):
     blockchain: Literal[SupportedBlockchain.SOLANA]
+    chain_name = SupportedBlockchain.SOLANA.serialize()
 
     def attempt_connect(
             self,
@@ -366,7 +374,7 @@ class SolanaRPCMixin(RPCManagerMixin['Client']):
                 endpoint=node.endpoint,
                 timeout=self.rpc_timeout,
             )).is_connected()
-        except (HTTPError, RPCException) as e:
+        except (RPCException, SolanaRpcException, SerdeJSONError) as e:
             return (
                 False,
                 f'Failed to connect to Solana RPC at {node.endpoint} due to {e}',
@@ -376,7 +384,15 @@ class SolanaRPCMixin(RPCManagerMixin['Client']):
         self.rpc_mapping[node] = RPCNode(
             rpc_client=client,
             is_pruned=False,
-            is_archive=True,  # TODO: we need to check this in solana. It is a bit different in solana but the concept of archive and pruned also exist there  # noqa: E501
+            is_archive=self._is_archive(client),
         )
 
         return True, ''
+
+    @staticmethod
+    def _is_archive(client: Client) -> bool:
+        """Returns a boolean representing if the node is an archive one."""
+        try:
+            return client.get_block(0).value.blockhash == SOLANA_GENESIS_BLOCK_HASH
+        except (RPCException, SolanaRpcException, SerdeJSONError):
+            return False

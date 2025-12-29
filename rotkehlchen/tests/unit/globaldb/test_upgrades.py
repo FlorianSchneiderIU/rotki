@@ -2,7 +2,8 @@ import json
 import shutil
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
+from unittest.mock import patch
 
 import pytest
 from eth_utils.address import to_checksum_address
@@ -39,11 +40,11 @@ from rotkehlchen.globaldb.upgrades.v3_v4 import (
 )
 from rotkehlchen.globaldb.upgrades.v5_v6 import V5_V6_UPGRADE_UNIQUE_CACHE_KEYS
 from rotkehlchen.globaldb.utils import GLOBAL_DB_VERSION
+from rotkehlchen.tests.conftest import TestEnvironment, requires_env
 from rotkehlchen.tests.fixtures.globaldb import create_globaldb
 from rotkehlchen.tests.utils.database import column_exists, index_exists
 from rotkehlchen.tests.utils.globaldb import patch_for_globaldb_upgrade_to
 from rotkehlchen.types import (
-    ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE,
     CacheType,
     ChainID,
     Location,
@@ -51,6 +52,7 @@ from rotkehlchen.types import (
     TokenKind,
 )
 from rotkehlchen.utils.misc import ts_now
+from rotkehlchen.utils.upgrades import UpgradeRecord
 
 # TODO: Perhaps have a saved version of that global DB for the tests and query it too?
 ASSETS_IN_V2_GLOBALDB: Final = 3095
@@ -842,8 +844,8 @@ def test_upgrade_v8_v9(globaldb: GlobalDBHandler, messages_aggregator):
             'SELECT * FROM address_book WHERE address IN (?, ?)',
             (bad_address, tether_address),
         ).fetchall() == [
-            (tether_address, ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE, 'Black Tether'),
-            (bad_address, ANY_BLOCKCHAIN_ADDRESSBOOK_VALUE, 'yabirgb.eth'),
+            (tether_address, 'NONE', 'Black Tether'),
+            (bad_address, 'NONE', 'yabirgb.eth'),
         ]
         assert len(cursor.execute(
             "SELECT * FROM price_history_source_types WHERE type IN ('G', 'H') AND seq IN (7, 8);",
@@ -1337,6 +1339,127 @@ def test_unfinished_upgrades(globaldb: GlobalDBHandler, messages_aggregator):
 
 
 @pytest.mark.parametrize('globaldb_upgrades', [[]])
+@pytest.mark.parametrize('custom_globaldb', ['v13_global.db'])
+@pytest.mark.parametrize('target_globaldb_version', [13])
+@pytest.mark.parametrize('reload_user_assets', [False])
+def test_upgrade_v13_v14(globaldb: GlobalDBHandler, messages_aggregator):
+    """Test the global DB upgrade from v13 to v14 (SOL-2 to SOL migration)"""
+    # Check the state before upgrading
+    with globaldb.conn.read_ctx() as cursor:
+        assert globaldb.get_setting_value('version', 0) == 13
+        assert cursor.execute('SELECT identifier, name FROM assets WHERE identifier = ?', ((old_solana_id := 'SOL-2'),)).fetchall() == [  # noqa: E501
+            (old_solana_id, 'Solana'),
+        ]
+        assert cursor.execute('SELECT identifier, symbol FROM common_asset_details WHERE identifier = ?', (old_solana_id,)).fetchall() == [  # noqa: E501
+            (old_solana_id, 'SOL'),
+        ]
+        assert cursor.execute('SELECT COUNT(*) FROM assets WHERE identifier = ?', ((new_solana_id := 'SOL'),)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) FROM common_asset_details WHERE identifier = ?', (new_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT location, exchange_symbol, local_id FROM location_asset_mappings WHERE local_id = ? ORDER BY location, exchange_symbol', (old_solana_id,)).fetchall() == [  # noqa: E501
+            (None, 'SOL', old_solana_id),
+            ('C', 'SOL', old_solana_id),
+            (']', 'Sol', old_solana_id),
+        ]
+        assert cursor.execute('SELECT collection_id, asset FROM multiasset_mappings WHERE asset = ?', (old_solana_id,)).fetchall() == [  # noqa: E501
+            (512, old_solana_id),
+        ]
+        assert cursor.execute('SELECT id, name, symbol, main_asset FROM asset_collections WHERE main_asset = ?', (old_solana_id,)).fetchall() == [  # noqa: E501
+            (512, 'Test Solana Collection', 'TSOL', old_solana_id),
+        ]
+        assert cursor.execute('SELECT asset_id FROM user_owned_assets WHERE asset_id = ?', (old_solana_id,)).fetchall() == [  # noqa: E501
+            (old_solana_id,),
+        ]
+        assert cursor.execute('SELECT from_asset, to_asset FROM price_history WHERE from_asset = ? OR to_asset = ? ORDER BY timestamp', (old_solana_id, old_solana_id)).fetchall() == [  # noqa: E501
+            (old_solana_id, 'USD'),
+            ('BTC', old_solana_id),
+        ]
+        assert cursor.execute('SELECT pair, base_asset, quote_asset FROM binance_pairs WHERE base_asset = ? OR quote_asset = ? ORDER BY pair', (old_solana_id, old_solana_id)).fetchall() == [  # noqa: E501
+            ('BTCSOL', 'BTC', old_solana_id),
+            ('SOLUSD', old_solana_id, 'USD'),
+        ]
+        assert cursor.execute('SELECT counterparty, symbol, local_id FROM counterparty_asset_mappings WHERE local_id = ?', (old_solana_id,)).fetchall() == [  # noqa: E501
+            ('solana', 'SOL', old_solana_id),
+        ]
+        assert globaldb_get_unique_cache_value(
+            cursor=cursor,
+            key_parts=(CacheType.MORPHO_VAULTS,),
+        ) == '123'
+        assert cursor.execute("SELECT address, protocol FROM evm_tokens WHERE protocol LIKE 'balancer-%' ORDER BY address").fetchall() == [  # noqa: E501
+            ('0x3C4D5E6F7890ABCDEF1234567890ABCDEF123456', 'balancer-v1'),  # should become balancer-v2  # noqa: E501
+            ('0x42d9e44eeD903A0ee477C9C04D1D1730c5e87272', 'balancer-v1'),  # should remain balancer-v1  # noqa: E501
+            ('0x46804462f147fF96e9CAFB20cA35A3B2600656DF', 'balancer-v1'),  # should become balancer-v2  # noqa: E501
+            ('0x477a8982515e3A3D3aa6447b019b7c647e4162f8', 'balancer-v1'),  # should remain balancer-v1  # noqa: E501
+            ('0x4E4e08bccC9C3b9852383f868d0240D4D338b46d', 'balancer-v1'),  # should become balancer-v2  # noqa: E501
+            ('0x63E3951212cCCAFE3eDC7588FD4D20Ee5e7Ad73f', 'balancer-v1'),  # should become balancer-v2  # noqa: E501
+            ('0x67A78f23f3eF0eA2b63d6Fb9d75B493930e5A5Fb', 'balancer-v1'),  # should remain balancer-v1  # noqa: E501
+            ('0xa2ccad543FBE9332B87910BEABd941b86dD5F762', 'balancer-v1'),  # should become balancer-v2  # noqa: E501
+        ]
+
+    with ExitStack() as stack:
+        patch_for_globaldb_upgrade_to(stack, 14)
+        maybe_upgrade_globaldb(
+            connection=globaldb.conn,
+            global_dir=globaldb._data_directory / GLOBALDIR_NAME,  # type: ignore
+            db_filename=GLOBALDB_NAME,
+            msg_aggregator=messages_aggregator,
+        )
+
+    assert globaldb.get_setting_value('version', 0) == 14
+    with globaldb.conn.read_ctx() as cursor:
+        assert cursor.execute('SELECT COUNT(*) FROM assets WHERE identifier = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) FROM common_asset_details WHERE identifier = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT identifier, name FROM assets WHERE identifier = ?', (new_solana_id,)).fetchall() == [  # noqa: E501
+            (new_solana_id, 'Solana'),
+        ]
+        assert cursor.execute('SELECT identifier, symbol FROM common_asset_details WHERE identifier = ?', (new_solana_id,)).fetchall() == [  # noqa: E501
+            (new_solana_id, 'SOL'),
+        ]
+        assert cursor.execute('SELECT COUNT(*) FROM location_asset_mappings WHERE local_id = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT location, exchange_symbol, local_id FROM location_asset_mappings WHERE local_id = ? ORDER BY location, exchange_symbol', (new_solana_id,)).fetchall() == [  # noqa: E501
+            (None, 'SOL', new_solana_id),
+            ('C', 'SOL', new_solana_id),
+            (']', 'Sol', new_solana_id),
+        ]
+        assert cursor.execute('SELECT COUNT(*) FROM multiasset_mappings WHERE asset = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT collection_id, asset FROM multiasset_mappings WHERE asset = ?', (new_solana_id,)).fetchall() == [  # noqa: E501
+            (512, new_solana_id),
+        ]
+        assert cursor.execute('SELECT COUNT(*) FROM asset_collections WHERE main_asset = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT id, name, symbol, main_asset FROM asset_collections WHERE main_asset = ?', (new_solana_id,)).fetchall() == [  # noqa: E501
+            (512, 'Solana', 'SOL', new_solana_id),
+        ]
+        assert cursor.execute('SELECT COUNT(*) FROM user_owned_assets WHERE asset_id = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) FROM user_owned_assets WHERE asset_id = ?', (new_solana_id,)).fetchone()[0] == 1  # noqa: E501
+        assert cursor.execute('SELECT COUNT(*) FROM price_history WHERE from_asset = ? OR to_asset = ?', (old_solana_id, old_solana_id)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT from_asset, to_asset FROM price_history WHERE from_asset = ? OR to_asset = ? ORDER BY timestamp', (new_solana_id, new_solana_id)).fetchall() == [  # noqa: E501
+            (new_solana_id, 'USD'),
+            ('BTC', new_solana_id),
+        ]
+        assert cursor.execute('SELECT COUNT(*) FROM binance_pairs WHERE base_asset = ? OR quote_asset = ?', (old_solana_id, old_solana_id)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT pair, base_asset, quote_asset FROM binance_pairs WHERE base_asset = ? OR quote_asset = ? ORDER BY pair', (new_solana_id, new_solana_id)).fetchall() == [  # noqa: E501
+            ('BTCSOL', 'BTC', new_solana_id),
+            ('SOLUSD', new_solana_id, 'USD'),
+        ]
+        assert cursor.execute('SELECT COUNT(*) FROM counterparty_asset_mappings WHERE local_id = ?', (old_solana_id,)).fetchone()[0] == 0  # noqa: E501
+        assert cursor.execute('SELECT counterparty, symbol, local_id FROM counterparty_asset_mappings WHERE local_id = ?', (new_solana_id,)).fetchall() == [  # noqa: E501
+            ('solana', 'SOL', new_solana_id),
+        ]
+        assert globaldb_get_unique_cache_value(
+            cursor=cursor,
+            key_parts=(CacheType.MORPHO_VAULTS,),
+        ) is None
+        assert cursor.execute("SELECT address, protocol FROM evm_tokens WHERE protocol LIKE 'balancer-%' ORDER BY address").fetchall() == [  # noqa: E501
+            ('0x3C4D5E6F7890ABCDEF1234567890ABCDEF123456', 'balancer-v2'),
+            ('0x42d9e44eeD903A0ee477C9C04D1D1730c5e87272', 'balancer-v1'),
+            ('0x46804462f147fF96e9CAFB20cA35A3B2600656DF', 'balancer-v2'),
+            ('0x477a8982515e3A3D3aa6447b019b7c647e4162f8', 'balancer-v1'),
+            ('0x4E4e08bccC9C3b9852383f868d0240D4D338b46d', 'balancer-v2'),
+            ('0x63E3951212cCCAFE3eDC7588FD4D20Ee5e7Ad73f', 'balancer-v2'),
+            ('0x67A78f23f3eF0eA2b63d6Fb9d75B493930e5A5Fb', 'balancer-v1'),
+            ('0xa2ccad543FBE9332B87910BEABd941b86dD5F762', 'balancer-v2'),
+        ]
+
+
 @pytest.mark.parametrize('custom_globaldb', ['v2_global.db'])
 @pytest.mark.parametrize('target_globaldb_version', [2])
 @pytest.mark.parametrize('reload_user_assets', [False])
@@ -1355,6 +1478,7 @@ def test_applying_all_upgrade(globaldb: GlobalDBHandler, messages_aggregator):
 
 @pytest.mark.parametrize('globaldb_upgrades', [[]])
 @pytest.mark.parametrize('custom_globaldb', ['v4_global.db'])
+@requires_env([TestEnvironment.STANDARD])  # skip in nightlies due to github api rate limits
 @pytest.mark.parametrize('target_globaldb_version', [4])
 @pytest.mark.parametrize('reload_user_assets', [False])
 def test_assets_updates_applied_before_v10_change(globaldb, messages_aggregator):
@@ -1395,3 +1519,121 @@ def test_assets_updates_applied_before_v10_change(globaldb, messages_aggregator)
         )
         # see that said assets are now present in the db
         assert cursor.execute('SELECT COUNT(*) FROM assets WHERE identifier IN (?, ?, ?)', (rocket_pool_asset, compound_usdt_asset, morpho_asset)).fetchone()[0] == 3  # noqa: E501
+
+
+def test_foreign_keys_enabled_without_assets_update(tmp_path, messages_aggregator):
+    """Ensure DB upgrades enable PRAGMAs even when asset updates are skipped."""
+    root_dir = Path(__file__).resolve().parent.parent.parent.parent
+    data_dir = tmp_path / GLOBALDIR_NAME
+    data_dir.mkdir(parents=True, exist_ok=True)
+    db_path = data_dir / GLOBALDB_NAME
+    shutil.copy(root_dir / 'data' / GLOBALDB_NAME, db_path)
+
+    connection = DBConnection(
+        path=db_path,
+        connection_type=DBConnectionType.GLOBAL,
+        sql_vm_instructions_cb=0,
+    )
+    try:
+        with connection.write_ctx() as cursor:
+            cursor.execute(
+                'INSERT OR REPLACE INTO settings(name, value) VALUES(?, ?);',
+                ('version', '13'),
+            )
+            cursor.executescript('PRAGMA foreign_keys=OFF;')
+            cursor.executescript('PRAGMA journal_mode=DELETE;')
+
+        with connection.read_ctx() as cursor:
+            cursor.execute('PRAGMA foreign_keys;')
+            assert cursor.fetchone()[0] == 0
+            cursor.execute('PRAGMA journal_mode;')
+            assert cursor.fetchone()[0].lower() == 'delete'
+
+        observed = {}
+
+        def fake_upgrade_step(connection: DBConnection, progress_handler: Any) -> None:
+            with connection.read_ctx() as upgrade_cursor:
+                upgrade_cursor.execute('PRAGMA foreign_keys;')
+                observed['foreign_keys'] = upgrade_cursor.fetchone()[0]
+                upgrade_cursor.execute('PRAGMA journal_mode;')
+                observed['journal_mode'] = upgrade_cursor.fetchone()[0]
+
+        upgrade_record = UpgradeRecord(
+            from_version=13,
+            function=fake_upgrade_step,
+        )
+
+        with ExitStack() as stack:
+            stack.enter_context(patch(
+                'rotkehlchen.globaldb.upgrades.manager.UPGRADES_LIST',
+                [upgrade_record],
+            ))
+            stack.enter_context(patch(
+                'rotkehlchen.globaldb.upgrades.manager.GLOBAL_DB_ASSETS_BREAKING_VERSIONS',
+                set(),
+            ))
+            stack.enter_context(patch(
+                'rotkehlchen.globaldb.utils.GLOBAL_DB_ASSETS_BREAKING_VERSIONS',
+                set(),
+            ))
+            mocked_assets_updater = stack.enter_context(patch(
+                'rotkehlchen.globaldb.upgrades.manager.AssetsUpdater',
+            ))
+            maybe_upgrade_globaldb(
+                globaldb=object(),
+                connection=connection,
+                global_dir=data_dir,
+                db_filename=GLOBALDB_NAME,
+                msg_aggregator=messages_aggregator,
+            )
+
+        mocked_assets_updater.assert_not_called()
+        with connection.read_ctx() as cursor:
+            assert cursor.execute('PRAGMA foreign_keys;').fetchone()[0] == 1
+            assert cursor.execute('PRAGMA journal_mode;').fetchone()[0].lower() == 'wal'
+            cursor.execute("SELECT value FROM settings WHERE name='version';")
+            assert cursor.fetchone()[0] == str(GLOBAL_DB_VERSION)
+    finally:
+        connection.close()
+
+
+def test_asset_upgrade_only_run_on_breaking_version(tmp_path, messages_aggregator):
+    """Ensure that the asset upgrade is only run when the actual globaldb version is a
+    breaking version. Regression test for a bug where it was always run.
+    """
+    (data_dir := tmp_path / GLOBALDIR_NAME).mkdir(parents=True, exist_ok=True)
+    shutil.copy(
+        src=Path(__file__).resolve().parent.parent.parent.parent / 'data' / GLOBALDB_NAME,
+        dst=(db_path := data_dir / GLOBALDB_NAME),
+    )
+    connection = DBConnection(
+        path=db_path,
+        connection_type=DBConnectionType.GLOBAL,
+        sql_vm_instructions_cb=0,
+    )
+    try:
+        for version, expected_calls in (('12', 1), ('13', 0)):  # 12 is a breaking version, 13 is not  # noqa: E501
+            with connection.write_ctx() as cursor:
+                cursor.execute(
+                    'INSERT OR REPLACE INTO settings(name, value) VALUES(?, ?);',
+                    ('version', version),
+                )
+
+            with ExitStack() as stack:
+                mocked_assets_updater = stack.enter_context(patch(
+                    'rotkehlchen.globaldb.upgrades.manager.AssetsUpdater',
+                ))
+                stack.enter_context(patch(
+                    'rotkehlchen.globaldb.upgrades.manager._perform_single_upgrade',
+                ))
+                maybe_upgrade_globaldb(
+                    globaldb=object(),
+                    connection=connection,
+                    global_dir=data_dir,
+                    db_filename=GLOBALDB_NAME,
+                    msg_aggregator=messages_aggregator,
+                )
+
+            assert mocked_assets_updater.call_count == expected_calls
+    finally:
+        connection.close()

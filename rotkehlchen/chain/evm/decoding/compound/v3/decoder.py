@@ -3,19 +3,18 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from rotkehlchen.assets.asset import EvmToken
-from rotkehlchen.assets.utils import get_or_create_evm_token
-from rotkehlchen.chain.ethereum.utils import asset_normalized_value
+from rotkehlchen.assets.utils import asset_normalized_value, get_or_create_evm_token
+from rotkehlchen.chain.decoding.types import CounterpartyDetails
+from rotkehlchen.chain.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.chain.evm.constants import WITHDRAW_TOPIC, ZERO_ADDRESS
 from rotkehlchen.chain.evm.decoding.constants import ERC20_OR_ERC721_TRANSFER
-from rotkehlchen.chain.evm.decoding.interfaces import DecoderInterface
+from rotkehlchen.chain.evm.decoding.interfaces import EvmDecoderInterface
 from rotkehlchen.chain.evm.decoding.structures import (
-    DEFAULT_DECODING_OUTPUT,
+    DEFAULT_EVM_DECODING_OUTPUT,
     ActionItem,
     DecoderContext,
-    DecodingOutput,
+    EvmDecodingOutput,
 )
-from rotkehlchen.chain.evm.decoding.types import CounterpartyDetails
-from rotkehlchen.chain.evm.decoding.utils import maybe_reshuffle_events
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.resolver import evm_address_to_identifier
@@ -35,7 +34,7 @@ from .constants import (
 )
 
 if TYPE_CHECKING:
-    from rotkehlchen.chain.evm.decoding.base import BaseDecoderTools
+    from rotkehlchen.chain.evm.decoding.base import BaseEvmDecoderTools
     from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
     from rotkehlchen.chain.evm.structures import EvmTxReceiptLog
     from rotkehlchen.history.events.structures.evm_event import EvmEvent
@@ -45,12 +44,12 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-class Compoundv3CommonDecoder(DecoderInterface):
+class Compoundv3CommonDecoder(EvmDecoderInterface):
 
     def __init__(
             self,
             evm_inquirer: 'EvmNodeInquirer',
-            base_tools: 'BaseDecoderTools',
+            base_tools: 'BaseEvmDecoderTools',
             msg_aggregator: 'MessagesAggregator',
             rewards_address: 'ChecksumEvmAddress',
             bulker_address: 'ChecksumEvmAddress',
@@ -77,7 +76,7 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 try:  # if not in cached mapping, fetch from DB and add it
                     self.underlying_tokens[compound_token] = EvmToken(evm_address_to_identifier(
                         address=compound_token.underlying_tokens[0].address,
-                        chain_id=self.evm_inquirer.chain_id,
+                        chain_id=self.node_inquirer.chain_id,
                         token_type=compound_token.underlying_tokens[0].token_kind,
                     ))
                 except (WrongAssetType, UnknownAsset) as e:
@@ -85,13 +84,13 @@ class Compoundv3CommonDecoder(DecoderInterface):
 
         return self.underlying_tokens.get(compound_token)  # return from cached mapping
 
-    def decode_reward_claim(self, context: DecoderContext) -> DecodingOutput:
+    def decode_reward_claim(self, context: DecoderContext) -> EvmDecodingOutput:
         """Decode a compound v3 reward claiming"""
         if context.tx_log.topics[0] != REWARD_CLAIMED:
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if not self.base.is_tracked(recipient := bytes_to_address(context.tx_log.topics[2])):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         reward_token = get_or_create_evm_token(
             userdb=self.base.database,
@@ -110,7 +109,7 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 event.notes = f'Collect {event.amount} {reward_token.symbol} from compound'
                 break
 
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def _correct_supply_or_withdraw_event(
             self,
@@ -135,15 +134,15 @@ class Compoundv3CommonDecoder(DecoderInterface):
             self,
             context: DecoderContext,
             compound_token: 'EvmToken',
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """Decode a compound v3 supply or repay event. Takes decoder context and
         the compound v3 wrapped token of the supplied/withdrawn underlying token."""
         if (underlying_token := self._get_compound_underlying_token(compound_token)) is None:
             log.error(
                 f'At compound v3 supply/withdraw decoding of tx '
-                f'{context.transaction.tx_hash.hex()} the underlying token was not found.',
+                f'{context.transaction.tx_hash!s} the underlying token was not found.',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         receiving_ctoken = False
         for tx_log in context.all_logs:
@@ -156,7 +155,7 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 receiving_ctoken = True
                 break
 
-        may_wrap_eth = underlying_token.symbol == 'WETH' and self.evm_inquirer.native_token == A_ETH  # noqa: E501
+        may_wrap_eth = underlying_token.symbol == 'WETH' and self.node_inquirer.native_token == A_ETH  # noqa: E501
         amount = asset_normalized_value(
             amount=int.from_bytes(context.tx_log.data),
             asset=underlying_token,
@@ -196,9 +195,9 @@ class Compoundv3CommonDecoder(DecoderInterface):
         else:  # did not break/find anything
             log.error(
                 'At compound v3 supply/withdraw decoding of tx '
-                f'{context.transaction.tx_hash.hex()} the action item data was not found.',
+                f'{context.transaction.tx_hash!s} the action item data was not found.',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         # create an action item for the receive of the cTokens. It's possible that
         # there is no cToken received if you just supply collateral to the COMET contract
@@ -215,23 +214,23 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 paired_events_data=((paired_event,), True),
             ))
 
-        return DecodingOutput(action_items=action_items)
+        return EvmDecodingOutput(action_items=action_items)
 
     def _decode_withdraw_or_borrow_event(
             self,
             context: DecoderContext,
             compound_token: EvmToken,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """Decode a compound v3 withdraw or borrow event. Takes decoder context and
         the compound v3 wrapped token of the withdrawn/borrowed underlying token."""
         if (underlying_token := self._get_compound_underlying_token(compound_token)) is None:
             log.error(
                 f'At compound v3 supply/withdraw decoding of tx '
-                f'{context.transaction.tx_hash.hex()} the underlying token was not found.',
+                f'{context.transaction.tx_hash!s} the underlying token was not found.',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
-        may_wrap_eth = underlying_token.symbol == 'WETH' and self.evm_inquirer.native_token == A_ETH  # noqa: E501
+        may_wrap_eth = underlying_token.symbol == 'WETH' and self.node_inquirer.native_token == A_ETH  # noqa: E501
         sending_ctoken = False
         for tx_log in context.all_logs:
             if (
@@ -277,7 +276,7 @@ class Compoundv3CommonDecoder(DecoderInterface):
         else:
             log.error(
                 f'Could not find any compound v3 withdraw or borrow event in tx '
-                f'{context.transaction.tx_hash.hex()}.',
+                f'{context.transaction.tx_hash!s}.',
             )
 
         action_items = []  # also create an action item for the spend of the cTokens
@@ -293,17 +292,17 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 paired_events_data=((paired_event,), False),
             ))
 
-        return DecodingOutput(action_items=action_items)
+        return EvmDecodingOutput(action_items=action_items)
 
     def _decode_collateral_movement(
             self,
             context: DecoderContext,
             compound_token: EvmToken,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """Decode compound v3 supply/withdraw collateral events"""
         collateral_asset = EvmToken(evm_address_to_identifier(
             address=bytes_to_address(context.tx_log.topics[3]),
-            chain_id=self.evm_inquirer.chain_id,
+            chain_id=self.node_inquirer.chain_id,
             token_type=TokenKind.ERC20,
         ))
         collateral_amount = asset_normalized_value(
@@ -316,24 +315,29 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 event.event_type in {HistoryEventType.SPEND, HistoryEventType.RECEIVE} and
                 event.event_subtype == HistoryEventSubType.NONE and
                 event.amount == collateral_amount and
-                event.asset == collateral_asset and
-                event.address == compound_token.evm_address
+                (event.asset == collateral_asset or (
+                    event.asset == self.node_inquirer.native_token and
+                    collateral_asset == self.node_inquirer.wrapped_native_token
+                )) and
+                event.address in (compound_token.evm_address, self.bulker_address)
             ):
                 transfer_event = event
                 event.counterparty = CPT_COMPOUND_V3
+                event.address = compound_token.evm_address  # used to query balances later
+                asset_symbol = event.asset.resolve_to_asset_with_symbol().symbol
                 if event.event_type == HistoryEventType.SPEND:
                     notes_action = 'Enable'
                     event.event_type = HistoryEventType.DEPOSIT
                     event.event_subtype = HistoryEventSubType.DEPOSIT_ASSET
-                    event.notes = f'Deposit {collateral_amount} {collateral_asset.symbol} into Compound v3'  # noqa: E501
+                    event.notes = f'Deposit {collateral_amount} {asset_symbol} into Compound v3'
                 else:
                     notes_action = 'Disable'
                     event.event_type = HistoryEventType.WITHDRAWAL
                     event.event_subtype = HistoryEventSubType.REMOVE_ASSET
-                    event.notes = f'Withdraw {collateral_amount} {collateral_asset.symbol} from Compound v3'  # noqa: E501
+                    event.notes = f'Withdraw {collateral_amount} {asset_symbol} from Compound v3'
 
                 collateral_event = self.base.make_event_next_index(
-                    tx_hash=context.transaction.tx_hash,
+                    tx_ref=context.transaction.tx_hash,
                     timestamp=context.transaction.timestamp,
                     event_type=HistoryEventType.INFORMATIONAL,
                     event_subtype=HistoryEventSubType.NONE,
@@ -341,29 +345,29 @@ class Compoundv3CommonDecoder(DecoderInterface):
                     asset=event.asset,
                     location_label=event.location_label,
                     counterparty=event.counterparty,
-                    notes=f'{notes_action} {collateral_amount} {collateral_asset.symbol} as collateral on Compound v3',  # noqa: E501
+                    notes=f'{notes_action} {collateral_amount} {asset_symbol} as collateral on Compound v3',  # noqa: E501
                     address=event.address,
                 )
                 break
         else:
             log.error(
                 f'Could not find any compound v3 supply/withdraw collateral event in tx '
-                f'{context.transaction.tx_hash.hex()}.',
+                f'{context.transaction.tx_hash!s}.',
             )
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         context.decoded_events.append(collateral_event)
         maybe_reshuffle_events(
             events_list=context.decoded_events,
             ordered_events=[transfer_event, collateral_event],
         )
-        return DEFAULT_DECODING_OUTPUT
+        return DEFAULT_EVM_DECODING_OUTPUT
 
     def decode_compound_token_movement(
             self,
             context: DecoderContext,
             compound_token: EvmToken,
-    ) -> DecodingOutput:
+    ) -> EvmDecodingOutput:
         """Decode a compound v3 token movement"""
         if (
             context.tx_log.topics[0] not in {
@@ -374,7 +378,7 @@ class Compoundv3CommonDecoder(DecoderInterface):
                 bytes_to_address(context.tx_log.topics[2]),  # to_address
             ]) is False
         ):
-            return DEFAULT_DECODING_OUTPUT
+            return DEFAULT_EVM_DECODING_OUTPUT
 
         if context.tx_log.topics[0] == COMPOUND_V3_SUPPLY:
             return self._decode_supply_or_repay_event(
@@ -398,14 +402,14 @@ class Compoundv3CommonDecoder(DecoderInterface):
         return {self.rewards_address: (self.decode_reward_claim,)} | {
             token.evm_address: (self.decode_compound_token_movement, token)
             for token in GlobalDBHandler.get_evm_tokens(
-                chain_id=self.evm_inquirer.chain_id,
+                chain_id=self.node_inquirer.chain_id,
                 protocol=CPT_COMPOUND_V3,
             )
         }
 
     def addresses_to_counterparties(self) -> dict['ChecksumEvmAddress', str]:
         return dict.fromkeys(GlobalDBHandler.get_addresses_by_protocol(
-            chain_id=self.evm_inquirer.chain_id,
+            chain_id=self.node_inquirer.chain_id,
             protocol=CPT_COMPOUND_V3,
         ), CPT_COMPOUND_V3)
 

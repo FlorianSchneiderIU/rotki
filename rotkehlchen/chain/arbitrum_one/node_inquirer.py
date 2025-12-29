@@ -6,7 +6,7 @@ from web3.types import BlockIdentifier
 
 from rotkehlchen.chain.constants import DEFAULT_RPC_TIMEOUT
 from rotkehlchen.chain.ethereum.constants import (
-    ETHEREUM_ETHERSCAN_NODE,
+    EVM_INDEXERS_NODE,
 )
 from rotkehlchen.chain.ethereum.utils import MULTICALL_CHUNKS
 from rotkehlchen.chain.evm.constants import BALANCE_SCANNER_ADDRESS
@@ -15,7 +15,6 @@ from rotkehlchen.chain.evm.node_inquirer import EvmNodeInquirer
 from rotkehlchen.chain.evm.types import WeightedNode, string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.errors.misc import BlockchainQueryError, RemoteError
-from rotkehlchen.externalapis.blockscout import Blockscout
 from rotkehlchen.fval import FVal
 from rotkehlchen.greenlets.manager import GreenletManager
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -30,7 +29,9 @@ from .constants import (
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
+    from rotkehlchen.externalapis.blockscout import Blockscout
     from rotkehlchen.externalapis.etherscan import Etherscan
+    from rotkehlchen.externalapis.routescan import Routescan
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -43,6 +44,8 @@ class ArbitrumOneInquirer(EvmNodeInquirer):
             greenlet_manager: GreenletManager,
             database: 'DBHandler',
             etherscan: 'Etherscan',
+            blockscout: 'Blockscout',
+            routescan: 'Routescan',
             rpc_timeout: int = DEFAULT_RPC_TIMEOUT,
     ) -> None:
         contracts = EvmContracts[Literal[ChainID.ARBITRUM_ONE]](chain_id=ChainID.ARBITRUM_ONE)
@@ -50,17 +53,14 @@ class ArbitrumOneInquirer(EvmNodeInquirer):
             greenlet_manager=greenlet_manager,
             database=database,
             etherscan=etherscan,
+            blockscout=blockscout,
+            routescan=routescan,
             blockchain=SupportedBlockchain.ARBITRUM_ONE,
             contracts=contracts,
             rpc_timeout=rpc_timeout,
             contract_multicall=contracts.contract(string_to_evm_address('0xcA11bde05977b3631167028862bE2a173976CA11')),
             contract_scan=contracts.contract(BALANCE_SCANNER_ADDRESS),
             native_token=A_ETH.resolve_to_crypto_asset(),
-            blockscout=Blockscout(
-                blockchain=SupportedBlockchain.ARBITRUM_ONE,
-                database=database,
-                msg_aggregator=database.msg_aggregator,
-            ),
         )
 
     # -- Implementation of EvmNodeInquirer base methods --
@@ -94,7 +94,7 @@ class ArbitrumOneInquirer(EvmNodeInquirer):
             return super().multicall(
                 calls=calls,
                 require_success=require_success,
-                call_order=[node for node in call_order if node != ETHEREUM_ETHERSCAN_NODE],
+                call_order=[node for node in call_order if node != EVM_INDEXERS_NODE],
                 block_identifier=block_identifier,
                 calls_chunk_size=calls_chunk_size,
             )
@@ -102,7 +102,7 @@ class ArbitrumOneInquirer(EvmNodeInquirer):
             return super().multicall(
                 calls=calls,
                 require_success=require_success,
-                call_order=[ETHEREUM_ETHERSCAN_NODE],
+                call_order=[EVM_INDEXERS_NODE],
                 block_identifier=block_identifier,
                 calls_chunk_size=3,
             )
