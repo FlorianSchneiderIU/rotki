@@ -14,7 +14,7 @@ definePage({
 
 const { isFeatureAllowed } = usePremiumHelper();
 
-const allowed = ref<boolean>(true); // All users can now access graphs
+const allowed = computed<boolean>(() => true); // All users can now access graphs
 </script>
 
 <template>
