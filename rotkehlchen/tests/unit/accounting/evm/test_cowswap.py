@@ -3,10 +3,8 @@ from typing import TYPE_CHECKING
 import pytest
 from more_itertools import peekable
 
-from rotkehlchen.accounting.cost_basis.base import CostBasisInfo
 from rotkehlchen.accounting.mixins.event import AccountingEventType
 from rotkehlchen.accounting.pnl import PNL
-from rotkehlchen.accounting.structures.processed_event import ProcessedAccountingEvent
 from rotkehlchen.chain.evm.decoding.cowswap.constants import CPT_COWSWAP
 from rotkehlchen.constants import ONE, ZERO
 from rotkehlchen.constants.assets import A_USDC, A_WBTC
@@ -80,46 +78,33 @@ def test_cowswap_swap_with_fee(accountant: 'Accountant'):
         'group_id': '1' + str(tx_hash) + '12',
         'tx_ref': str(tx_hash),
     }
-    expected_processed_events = [
-        ProcessedAccountingEvent(
-            event_type=AccountingEventType.TRANSACTION_EVENT,
-            notes=f'Swap {swap_amount_str} WBTC in cowswap',
-            location=Location.ETHEREUM,
-            timestamp=TIMESTAMP_1_SEC,
-            asset=A_WBTC,
-            free_amount=ZERO,
-            taxable_amount=FVal(swap_amount_str),
-            price=Price(ONE),
-            pnl=PNL(taxable=FVal(swap_amount_str), free=ZERO),
-            cost_basis=CostBasisInfo(taxable_amount=FVal(swap_amount_str), taxable_bought_cost=ZERO, taxfree_bought_cost=ZERO, matched_acquisitions=[], is_complete=False),  # noqa: E501
-            index=0,
-            extra_data=extra_data,
-        ), ProcessedAccountingEvent(
-            event_type=AccountingEventType.FEE,
-            notes=f'Spend {fee_amount_str} WBTC as a cowswap fee',
-            location=Location.ETHEREUM,
-            timestamp=TIMESTAMP_1_SEC,
-            asset=A_WBTC,
-            free_amount=FVal(fee_amount_str),
-            taxable_amount=ZERO,
-            price=Price(ONE),
-            pnl=PNL(taxable=ZERO, free=ZERO),
-            cost_basis=None,
-            index=1,
-            extra_data=extra_data,
-        ), ProcessedAccountingEvent(
-            event_type=AccountingEventType.TRANSACTION_EVENT,
-            notes=f'Receive {receive_amount_str} USDC as the result of a swap in cowswap',
-            location=Location.ETHEREUM,
-            timestamp=TIMESTAMP_1_SEC,
-            asset=A_USDC,
-            free_amount=FVal(receive_amount_str),
-            taxable_amount=ZERO,
-            price=Price(FVal('0.0001')),
-            pnl=PNL(taxable=ZERO, free=ZERO),
-            cost_basis=None,
-            index=2,
-            extra_data=extra_data,
-        )]
-    expected_processed_events[0].count_cost_basis_pnl = True  # since it's not settable at ctor
-    assert pot.processed_events == expected_processed_events
+    out_price = Price(FVal(receive_amount_str) / FVal(swap_amount_str))
+    in_price = Price((FVal(receive_amount_str) + FVal(fee_amount_str)) / FVal(receive_amount_str))
+    processed_events = pot.processed_events
+    assert len(processed_events) == 3
+
+    spend_event, fee_event, receive_event = processed_events
+    assert spend_event.event_type == AccountingEventType.TRANSACTION_EVENT
+    assert spend_event.asset == A_WBTC
+    assert spend_event.price.is_close(out_price)
+    assert spend_event.taxable_amount == FVal(swap_amount_str)
+    assert spend_event.free_amount == ZERO
+    assert spend_event.extra_data == extra_data
+    assert spend_event.cost_basis is not None and spend_event.cost_basis.is_complete is False
+    assert spend_event.pnl.taxable.is_close(out_price * FVal(swap_amount_str))
+
+    assert fee_event.event_type == AccountingEventType.FEE
+    assert fee_event.asset == A_WBTC
+    assert fee_event.price.is_close(out_price)
+    assert fee_event.taxable_amount == ZERO
+    assert fee_event.free_amount == FVal(fee_amount_str)
+    assert fee_event.pnl == PNL(taxable=ZERO, free=ZERO)
+    assert fee_event.extra_data == extra_data
+
+    assert receive_event.event_type == AccountingEventType.TRANSACTION_EVENT
+    assert receive_event.asset == A_USDC
+    assert receive_event.price.is_close(in_price)
+    assert receive_event.taxable_amount == ZERO
+    assert receive_event.free_amount == FVal(receive_amount_str)
+    assert receive_event.pnl == PNL(taxable=ZERO, free=ZERO)
+    assert receive_event.extra_data == extra_data

@@ -1,6 +1,6 @@
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from rotkehlchen.accounting.cost_basis import CostBasisCalculator
 from rotkehlchen.accounting.cost_basis.prefork import (
@@ -13,7 +13,7 @@ from rotkehlchen.accounting.pnl import PNL, PnlTotals
 from rotkehlchen.accounting.structures.processed_event import ProcessedAccountingEvent
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import ONE, ZERO
-from rotkehlchen.constants.assets import A_KFEE
+from rotkehlchen.constants.assets import A_KFEE, A_USD, A_USDC, A_USDT
 from rotkehlchen.constants.prices import ZERO_PRICE
 from rotkehlchen.db.eth2 import DBEth2
 from rotkehlchen.db.reports import DBAccountingReports
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
+STABLE_SWAP_ASSETS: Final = frozenset((A_USDC, A_USDT))
 
 
 class AccountingPot(CustomizableDateMixin):
@@ -116,6 +117,29 @@ class AccountingPot(CustomizableDateMixin):
                 timestamp=timestamp,
             )
         return rate
+
+    def _get_stable_profit_rate(self, stable_asset: Asset, timestamp: Timestamp) -> Price | None:
+        """Return the profit currency rate for supported stablecoins without extra oracle calls
+
+        If the profit currency is already USD/USDT/USDC (or matches the stable asset) we know
+        the rate is exactly 1. Otherwise fall back to the historical price lookup.
+        """
+        if (
+                stable_asset == self.profit_currency or
+                self.profit_currency in STABLE_SWAP_ASSETS or
+                self.profit_currency == A_USD
+        ):
+            return Price(ONE)
+
+        try:
+            return self.get_rate_in_profit_currency(asset=stable_asset, timestamp=timestamp)
+        except NoPriceForGivenTimestamp as e:
+            if e.rate_limited is True:
+                raise
+        except (PriceQueryUnsupportedAsset, RemoteError):
+            pass
+
+        return None
 
     def reset(
             self,
@@ -383,34 +407,55 @@ class AccountingPot(CustomizableDateMixin):
                 f'{asset_out=} {amount_out=}. Skipping ...')
             return None
 
-        try:
-            out_price = self.get_rate_in_profit_currency(
-                asset=asset_out,
-                timestamp=timestamp,
-            )
-        except (PriceQueryUnsupportedAsset, NoPriceForGivenTimestamp, RemoteError):
-            out_price = None
+        stable_asset: Asset | None = None
+        if asset_in in STABLE_SWAP_ASSETS:
+            stable_asset = asset_in
+        elif asset_out in STABLE_SWAP_ASSETS:
+            stable_asset = asset_out
 
-        try:
-            in_price = self.get_rate_in_profit_currency(
-                asset=asset_in,
+        stable_price: Price | None = None
+        if stable_asset is not None:
+            stable_price = self._get_stable_profit_rate(
+                stable_asset=stable_asset,
                 timestamp=timestamp,
             )
-        except (PriceQueryUnsupportedAsset, RemoteError):
-            in_price = None
-        except NoPriceForGivenTimestamp as e:
-            in_price = None
-            if e.rate_limited is True and out_price is None:
-                raise  # in_price = out_price = None -> notify user
+
+        out_price: Price | None = stable_price if asset_out == stable_asset else None
+        in_price: Price | None = stable_price if asset_in == stable_asset else None
+
+        if out_price is None and (stable_asset is None or stable_price is None):
+            try:
+                out_price = self.get_rate_in_profit_currency(
+                    asset=asset_out,
+                    timestamp=timestamp,
+                )
+            except (PriceQueryUnsupportedAsset, NoPriceForGivenTimestamp, RemoteError):
+                out_price = None
+
+        if in_price is None and (stable_asset is None or stable_price is None):
+            try:
+                in_price = self.get_rate_in_profit_currency(
+                    asset=asset_in,
+                    timestamp=timestamp,
+                )
+            except (PriceQueryUnsupportedAsset, RemoteError):
+                in_price = None
+            except NoPriceForGivenTimestamp as e:
+                in_price = None
+                if e.rate_limited is True and out_price is None:
+                    raise  # in_price = out_price = None -> notify user
 
         # when `self.settings.include_fees_in_cost_basis == False` we completely ignore fees in
         # this function since they are not included in the cost basis
         fee_asset_prices = {}
         if self.settings.include_fees_in_cost_basis:
-            for fee_info in fees_info:
+            for fee_amount, fee_asset in fees_info:
+                if fee_asset in STABLE_SWAP_ASSETS and stable_price is not None:
+                    fee_asset_prices[fee_asset] = stable_price
+                    continue
                 with contextlib.suppress(PriceQueryUnsupportedAsset, RemoteError):
-                    fee_asset_prices[fee_info[1]] = self.get_rate_in_profit_currency(
-                        asset=fee_info[1],
+                    fee_asset_prices[fee_asset] = self.get_rate_in_profit_currency(
+                        asset=fee_asset,
                         timestamp=timestamp,
                     )
 
