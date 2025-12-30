@@ -5,6 +5,7 @@ import platform
 import sys
 from pathlib import Path
 
+import certifi
 from PyInstaller.utils.hooks import collect_submodules
 
 from rotkehlchen.constants.misc import GLOBALDB_NAME
@@ -91,6 +92,7 @@ a = Entrypoint(
             'rotkehlchen/chain/ethereum/modules/dxdaomesa/data/contracts.json',
             'rotkehlchen/chain/ethereum/modules/dxdaomesa/data',
         ),
+        (certifi.where(), 'certifi'),
     ],
     excludes=['FixTk', 'tcl', 'tk', '_tkinter', 'tkinter', 'Tkinter', 'debugimporter'],
 )

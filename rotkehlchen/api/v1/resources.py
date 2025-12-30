@@ -1426,7 +1426,7 @@ class StatisticsAssetBalanceResource(BaseMethodView):
 
     post_schema = StatisticsAssetBalanceSchema()
 
-    @require_premium_user(active_check=False)
+    @require_loggedin_user()
     @use_kwargs(post_schema, location='json')
     def post(
             self,
@@ -1447,7 +1447,7 @@ class StatisticsValueDistributionResource(BaseMethodView):
 
     get_schema = StatisticsValueDistributionSchema()
 
-    @require_premium_user(active_check=False)
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, distribution_by: str) -> Response:
         return self.rest_api.query_value_distribution_data(
@@ -1457,7 +1457,6 @@ class StatisticsValueDistributionResource(BaseMethodView):
 
 class StatisticsRendererResource(BaseMethodView):
 
-    @require_premium_user(active_check=False)
     def get(self) -> Response:
         return self.rest_api.query_premium_components()
 

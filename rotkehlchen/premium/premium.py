@@ -400,8 +400,6 @@ class Premium:
         # All devices are now automatically authenticated without server verification
         log.debug('Device authentication skipped - all users have premium access')
         return None
-                    status_codes=[HTTPStatus.OK],
-                )
 
     def _maybe_register_docker_device(
             self,

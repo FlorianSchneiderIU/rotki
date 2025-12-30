@@ -14,7 +14,7 @@ import TablePageLayout from '@/components/layout/TablePageLayout.vue';
 import { type AssetResolutionOptions, useAssetInfoRetrieval } from '@/composables/assets/retrieval';
 import { useSpamAsset } from '@/composables/assets/spam';
 import { useAggregatedBalances } from '@/composables/balances/use-aggregated-balances';
-import { usePremium } from '@/composables/premium';
+import { usePremiumHelper } from '@/composables/premium';
 import HashLink from '@/modules/common/links/HashLink.vue';
 import { AssetAmountAndValueOverTime } from '@/premium/premium';
 import { useIgnoredAssetsStore } from '@/store/assets/ignored';
@@ -51,13 +51,15 @@ const { ignoreAssetWithConfirmation, unignoreAsset, useIsAssetIgnored } = useIgn
 const { isAssetWhitelisted, unWhitelistAsset, whitelistAsset } = useWhitelistedAssetsStore();
 const { markAssetsAsSpam, removeAssetFromSpamList } = useSpamAsset();
 const { assetContractInfo, assetInfo, assetName, assetSymbol, refetchAssetInfo } = useAssetInfoRetrieval();
-const premium = usePremium();
+const { isFeatureAllowed } = usePremiumHelper();
 const { balances } = useAggregatedBalances();
 
 const aggregatedBalances = balances();
 
 const isIgnored = useIsAssetIgnored(identifier);
 const isWhitelisted = isAssetWhitelisted(identifier);
+
+const allowed = computed<boolean>(() => true); // All users can now access asset graphs
 
 const isCollectionParent = computed<boolean>(() => {
   const currentRoute = get(route);
@@ -285,7 +287,7 @@ async function toggleWhitelistAsset() {
     />
 
     <AssetAmountAndValueOverTime
-      v-if="premium"
+      v-if="allowed"
       :asset="identifier"
       :price-asset="collectionAssetWithPrice"
       :collection-id="collectionId"
