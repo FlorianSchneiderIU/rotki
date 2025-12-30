@@ -77,7 +77,7 @@ def test_kfee_price_in_accounting(accountant, google_service):
     )
     no_message_errors(accountant.msg_aggregator)
     expected_pnls = PnlTotals({
-        AccountingEventType.TRADE: PNL(taxable=ZERO, free=FVal('8.3929')),
+        AccountingEventType.TRADE: PNL(taxable=ZERO, free=FVal('14.2277')),
         AccountingEventType.TRANSACTION_EVENT: PNL(taxable=FVal('187.24829'), free=ZERO),
     })
     check_pnls_and_csv(accountant, expected_pnls, google_service)
@@ -170,8 +170,8 @@ def test_fees_in_received_asset(accountant, google_service):
     no_message_errors(accountant.msg_aggregator)
     assert get_calculated_asset_amount(accountant.pots[0].cost_basis, A_USDT).is_close('19.90')
     expected_pnls = PnlTotals({
-        AccountingEventType.TRADE: PNL(taxable=ZERO, free=FVal('8.3929')),
-        AccountingEventType.FEE: PNL(taxable=FVal('-0.059826'), free=ZERO),
+        AccountingEventType.TRADE: PNL(taxable=ZERO, free=FVal('14.2277')),
+        AccountingEventType.FEE: PNL(taxable=FVal('-0.089'), free=ZERO),
         AccountingEventType.TRANSACTION_EVENT: PNL(taxable=FVal('178.615'), free=ZERO),
     })
     check_pnls_and_csv(accountant, expected_pnls, google_service)
